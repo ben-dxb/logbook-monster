@@ -293,12 +293,12 @@ function adAiRender(){
 $('#ad-keyform').addEventListener('submit',async e=>{
   e.preventDefault();const body={model:$('#ad-model').value.trim()};const k=$('#ad-key').value.trim();if(k)body.key=k;
   try{adAi=await api('PUT','/api/admin/ai',body);$('#ad-key').value='';$('#ad-keymsg').textContent=k?'Key saved.':'Saved.';}
-  catch(err){$('#ad-keymsg').textContent=err.message;}
+  catch(err){if(!err.signedOut)$('#ad-keymsg').textContent=err.message;}
   adAiRender();
 });
 $('#ad-keydel').addEventListener('click',async()=>{
   if(!confirm('Remove the saved OpenRouter key?'))return;
-  try{adAi=await api('PUT','/api/admin/ai',{key:''});$('#ad-keymsg').textContent='Key removed.';}catch(err){$('#ad-keymsg').textContent=err.message;}
+  try{adAi=await api('PUT','/api/admin/ai',{key:''});$('#ad-keymsg').textContent='Key removed.';}catch(err){if(!err.signedOut)$('#ad-keymsg').textContent=err.message;}
   adAiRender();
 });
 $('#ad-aifile').addEventListener('change',async e=>{
@@ -311,6 +311,7 @@ $('#ad-aifile').addEventListener('change',async e=>{
       headers:{'content-type':file.type||'application/pdf','x-csrf-token':csrf},body:file});}
     catch{throw new Error('Can’t reach the server – is it still running?');}
     const j=await r.json().catch(()=>({}));
+    if(r.status===401){location.href='/login'+location.hash;return;}
     if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);
     adApplyJson(j);
     const got=AD_TYPES.filter(([t])=>j.plan&&j.plan[t]).map(([,n])=>n.toLowerCase());
