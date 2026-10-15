@@ -1,0 +1,14 @@
+services:
+  mealswap:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      TRUST_PROXY: "1"
+    ports:
+      - "127.0.0.1:3000:3000"   # only reachable through your reverse proxy
+    volumes:
+      - mealswap-data:/app/data
+volumes:
+  mealswap-data:

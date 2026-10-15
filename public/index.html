@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Meal Swap Calculator</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,400..800&display=swap">
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>Meal Swap</h1>
+    <nav class="views" aria-label="Views">
+      <a href="#day" data-view="day">Day</a>
+      <a href="#history" data-view="history">History</a>
+      <a href="#weight" data-view="weight">Weight</a>
+    </nav>
+    <details class="acct" id="acct">
+      <summary><span id="who">Account</span></summary>
+      <div class="acctpanel">
+        <a class="ghost" href="/api/export" download>Download my data</a>
+        <details id="pwbox"><summary>Change password</summary>
+          <form id="pwform" class="pwform">
+            <label class="f" id="pwcur"><span class="lbl">Current password</span><input id="pw-cur" type="password" autocomplete="current-password"></label>
+            <label class="f"><span class="lbl">New password (10+ characters)</span><input id="pw-new" type="password" autocomplete="new-password" minlength="10"></label>
+            <button class="btn" type="submit">Update password</button>
+            <p id="pwmsg" class="sub" role="status"></p>
+          </form>
+        </details>
+        <button class="btn" id="logout" type="button">Sign out</button>
+      </div>
+    </details>
+  </header>
+
+  <p id="loading" class="note">Loading your data…</p>
+
+  <!-- ===================== DAY ===================== -->
+  <section id="v-day" class="view" hidden>
+    <div class="datebar">
+      <button class="nav" data-act="prev" aria-label="Previous day">‹</button>
+      <div class="dt"><h2 id="dtitle"></h2><span id="dsub" class="sub"></span></div>
+      <button class="nav" data-act="next" aria-label="Next day">›</button>
+      <button class="ghost" data-act="today" id="todaybtn">Today</button>
+      <label class="ghost pick" title="Pick a date"><span>Pick date</span><input type="date" id="datepick" aria-label="Pick a date"></label>
+    </div>
+    <nav id="tabs" aria-label="This week"></nav>
+    <div class="daystate">
+      <div id="status" class="status" role="status"></div>
+      <label class="wt">Weight <input id="wt" type="number" inputmode="decimal" min="20" max="400" step="0.1" aria-label="Weight in kg"><em>kg</em><span id="wtdelta" class="sub"></span></label>
+    </div>
+    <div class="sticky">
+      <div id="sum"></div>
+      <div id="left" hidden></div>
+    </div>
+    <ul id="warn" hidden></ul>
+    <div id="opts"></div>
+    <div id="meals"></div>
+    <section class="panel" aria-labelledby="ph">
+      <h2 id="ph">Rice pudding batch</h2>
+      <p>Enter what went into the pan and what the finished batch weighed. Every rice pudding amount on this page is in grams and works from these numbers, so you can portion it however you like. Your biggest serving is set by the 20g casein limit.</p>
+      <div class="grid6">
+        <label class="f"><span class="lbl">Pudding rice g</span><input id="pd-rice" data-pud="rice" type="number" inputmode="decimal" min="0"></label>
+        <label class="f"><span class="lbl">Almond milk ml</span><input id="pd-almond" data-pud="almond" type="number" inputmode="decimal" min="0"></label>
+        <label class="f"><span class="lbl">Oatly Barista ml</span><input id="pd-oat" data-pud="oat" type="number" inputmode="decimal" min="0"></label>
+        <label class="f"><span class="lbl">Custard powder g</span><input id="pd-custard" data-pud="custard" type="number" inputmode="decimal" min="0"></label>
+        <label class="f"><span class="lbl">Casein g</span><input id="pd-casein" data-pud="casein" type="number" inputmode="decimal" min="0"></label>
+        <label class="f"><span class="lbl">Finished weight g</span><input id="pd-weight" data-pud="weight" type="number" inputmode="decimal" min="1"></label>
+      </div>
+      <div id="pudsum" class="pudsum"></div>
+    </section>
+    <section class="panel" aria-labelledby="oh">
+      <h2 id="oh">Off plan</h2>
+      <p>Changes inside a meal wait until you tap “Save meal”; saving locks that meal and rebalances the rest. Add what you want to eat off plan and the rest of the day shrinks to make room. Lock anything you don't want touched. To free up space by hand instead, turn off auto-balance and trim meals – what you free up shows at the top as “left to spend”.</p>
+      <form id="snackform" class="snackf">
+        <label class="f sn"><span class="lbl">Snack</span><select id="sn"></select></label>
+        <label class="f sq"><span class="lbl" id="su">How many</span><input id="sq" type="number" inputmode="decimal" min="0" step="1" value="1"></label>
+        <button class="btn" type="submit">Add</button>
+      </form>
+      <details id="snackedit"><summary>Snack values (tap to check or correct)</summary><div id="snackvals"></div></details>
+      <h3 class="lbl">Something else</h3>
+      <form id="offform" class="grid5">
+        <label class="f"><span class="lbl">Food</span><input id="o-n" placeholder="e.g. Krispy Kreme"></label>
+        <label class="f"><span class="lbl">kcal</span><input id="o-k" type="number" inputmode="decimal" min="0"></label>
+        <label class="f"><span class="lbl">Protein</span><input id="o-p" type="number" inputmode="decimal" min="0" step="0.1"></label>
+        <label class="f"><span class="lbl">Carbs</span><input id="o-c" type="number" inputmode="decimal" min="0" step="0.1"></label>
+        <label class="f"><span class="lbl">Fat</span><input id="o-f" type="number" inputmode="decimal" min="0" step="0.1"></label>
+        <button class="btn" type="submit">Add</button>
+      </form>
+      <div id="offlist"></div>
+    </section>
+    <section class="panel" aria-labelledby="th">
+      <h2 id="th">Day targets</h2>
+      <p>Change these for this day only. Protein is a minimum and fat a maximum; calories and carbs are matched.</p>
+      <div class="grid4">
+        <label class="f"><span class="lbl">kcal</span><input id="t-k" type="number" inputmode="decimal" min="0"></label>
+        <label class="f"><span class="lbl">Protein g</span><input id="t-p" type="number" inputmode="decimal" min="0"></label>
+        <label class="f"><span class="lbl">Carbs g</span><input id="t-c" type="number" inputmode="decimal" min="0"></label>
+        <label class="f"><span class="lbl">Fat g</span><input id="t-f" type="number" inputmode="decimal" min="0"></label>
+        <button class="btn" id="coach" type="button">Plan targets</button>
+      </div>
+    </section>
+    <footer>Health Road food in cooked weights, home cooking in raw weights. Rice pudding is weighed in grams from the batch. Every change saves to your account automatically. Green/red amounts show the change from the plan.</footer>
+  </section>
+
+  <!-- ===================== HISTORY ===================== -->
+  <section id="v-history" class="view" hidden>
+    <div class="datebar">
+      <button class="nav" data-act="mprev" aria-label="Previous month">‹</button>
+      <div class="dt"><h2 id="mtitle"></h2></div>
+      <button class="nav" data-act="mnext" aria-label="Next month">›</button>
+      <button class="ghost" data-act="mtoday">This month</button>
+    </div>
+    <div class="legend" aria-hidden="true">
+      <span><i class="dot on">✓</i> On target (±100 kcal)</span>
+      <span><i class="dot over">▲</i> Over</span>
+      <span><i class="dot under">▼</i> Under</span>
+    </div>
+    <div id="cal" class="cal" role="grid" aria-labelledby="mtitle"></div>
+    <div id="msum" class="msum"></div>
+  </section>
+
+  <!-- ===================== WEIGHT ===================== -->
+  <section id="v-weight" class="view" hidden>
+    <section class="panel">
+      <h2>Log weight</h2>
+      <form id="wform" class="wform">
+        <label class="f"><span class="lbl">Date</span><input id="w-date" type="date" required></label>
+        <label class="f"><span class="lbl">Weight kg</span><input id="w-kg" type="number" inputmode="decimal" min="20" max="400" step="0.1" required></label>
+        <button class="btn" type="submit">Save</button>
+      </form>
+    </section>
+    <div id="wstats" class="wstats"></div>
+    <section class="panel">
+      <div class="charthead">
+        <h2>Weight trend</h2>
+        <div class="seg" role="group" aria-label="Range" id="wrange">
+          <button data-r="30" aria-pressed="false">30 days</button>
+          <button data-r="90" aria-pressed="true">90 days</button>
+          <button data-r="365" aria-pressed="false">1 year</button>
+          <button data-r="0" aria-pressed="false">All</button>
+        </div>
+      </div>
+      <div class="clegend"><span><i class="sw dots"></i>Weigh-in</span><span><i class="sw line"></i>7-day average</span></div>
+      <div id="chart" class="chart"></div>
+    </section>
+    <section class="panel">
+      <h2>All entries</h2>
+      <div id="wlist" class="wlist"></div>
+    </section>
+  </section>
+</div>
+<script src="/engine.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
