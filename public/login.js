@@ -16,7 +16,7 @@
   if (code) { showErr(ERRORS[code] || 'Sign-in failed.'); history.replaceState(null, '', '/login'); }
 
   fetch('/auth/config', { credentials: 'same-origin' }).then(r => r.json()).then(c => {
-    if (c.signedIn) { location.replace('/'); return; }
+    if (c.signedIn) { location.replace('/' + location.hash); return; }
     csrf = c.csrf;
     $('google').hidden = $('or').hidden = !c.google;
     $('switch').hidden = !c.registration;
@@ -46,7 +46,7 @@
         body: JSON.stringify(body),
       });
       const j = await r.json().catch(() => ({}));
-      if (r.ok) { location.replace('/'); return; }
+      if (r.ok) { location.replace('/' + location.hash); return; }
       if (r.status === 403 && /session/i.test(j.error || '')) { location.reload(); return; }
       showErr(j.error || 'Sign-in failed.');
     } catch { showErr('Can’t reach the server.'); }

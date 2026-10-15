@@ -70,6 +70,18 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       expect(errs.length === 0, `page errors at ${w}px: ${errs.join(' | ')}`);
       const scroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(scroll <= 1, `horizontal overflow of ${scroll}px at ${w}px wide`);
+      if (first) {
+        /* signed out while a change is waiting: it must survive sign-in */
+        await ctx.clearCookies();
+        await pg.selectOption('#sn', 'skittles'); await pg.click('#snackform button');
+        await pg.waitForURL(/\/login/, { timeout: 5000 });
+        await pg.fill('#email', 'smoke@example.com'); await pg.fill('#password', 'smoke-password-1'); await pg.click('#submit');
+        await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
+        await pg.waitForFunction(() => /Skittles/.test(document.querySelector('#offlist').textContent)
+          && /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
+        await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
+        expect(/Skittles/.test(await pg.textContent('#offlist')), 'change made while signed out should be saved after sign-in');
+      }
       await pg.click('#acct summary'); await pg.click('#logout'); await pg.waitForURL(/\/login/);
       await ctx.close();
     }

@@ -33,8 +33,14 @@ if (!config.sessionSecret || config.sessionSecret.length < 32) {
     console.error('SESSION_SECRET must be set to a random string of at least 32 characters in production.');
     process.exit(1);
   }
-  config.sessionSecret = require('crypto').randomBytes(32).toString('hex');
-  console.warn('[dev] SESSION_SECRET not set - using a random one, so sessions reset on every restart.');
+  /* Local testing: keep a random secret next to the database so restarts don't sign you out. */
+  const fs = require('fs'), path = require('path');
+  const file = path.join(path.dirname(config.dbPath), '.session-secret');
+  try { config.sessionSecret = fs.readFileSync(file, 'utf8').trim(); } catch {}
+  if (config.sessionSecret.length < 32) {
+    config.sessionSecret = require('crypto').randomBytes(32).toString('hex');
+    try { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, config.sessionSecret, { mode: 0o600 }); } catch {}
+  }
 }
 
 /* Who may hold an account. With ALLOWED_EMAILS set, only those addresses can sign in at all. */
