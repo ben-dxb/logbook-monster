@@ -118,6 +118,7 @@ test('only the admin can change the defaults, everyone reads them', async () => 
     { schedule: ['T', 'R'] },
     { plan: { T: [{ id: '1', name: 'x', p: [{ f: 'unicorn', g: 10 }] }] } },
     { foods: { 'Bad Id': { n: 'x', k: 1, p: 1, c: 1, f: 1, step: 1 } } },
+    { foods: { constructor: { n: 'x', k: 1, p: 1, c: 1, f: 1, step: 1 } } },
     { foods: { chicken: { n: 'Chicken', k: -5, p: 31, c: 4, f: 3, step: 5 } } },
     { targets: { T: { k: 'lots', p: 1, c: 1, f: 1 } } },
   ]) assert.strictEqual((await admin.req('PUT', '/api/admin/defaults', bad)).status, 400, JSON.stringify(bad));

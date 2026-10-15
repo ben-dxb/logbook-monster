@@ -179,7 +179,7 @@ async function adSave(){
     /* days you haven't saved yet start again from the new plan */
     for(const d of Object.keys(S.days)) if(!LOGGED.has(d)&&!pending.has(d)){delete S.days[d];delete SAVED.days[d];}
     adLoad();adMsg='';adErrs=[];
-  }catch(err){adErrs=[err.message];adMsg='Couldn’t save:';}
+  }catch(err){if(!err.signedOut){adErrs=[err.message];adMsg='Couldn’t save:';}}
   adBusy=false;renderAdmin();
 }
 function adDownload(name,text,type){
