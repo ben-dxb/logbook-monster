@@ -14,6 +14,10 @@ or Google.
   JSON) or edit it in place, download it, choose which weekdays are training or rest, set day
   targets, and edit or add foods. Days already saved keep their own amounts. Admins are the
   emails in `ADMIN_EMAILS`; if that's empty, the first account created is the admin.
+  **Read a PDF with AI** sends your coach's plan PDF (or a photo) to a model on OpenRouter and
+  loads the meals, amounts, new foods and targets into the page for you to check and save. Add
+  your OpenRouter API key on the Admin page (kept on the server, never shown again) or set
+  `OPENROUTER_API_KEY` in `.env`.
 - **Account menu** – download all your data as JSON, set/change password, sign out.
 
 ## Run it locally
@@ -45,6 +49,7 @@ All secrets live only in `.env` on the server – nothing secret is ever sent to
 | `ALLOWED_EMAILS` | Comma-separated. If set, **only** these emails can sign in, and they can create their own account the first time. |
 | `ALLOW_REGISTRATION` | `true` lets anyone sign up. Default `false`. |
 | `ADMIN_EMAILS` | Comma-separated. Who can open the Admin page. Empty = the first account created. |
+| `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | Optional. AI import of plan PDFs. A key saved on the Admin page wins over this one. |
 | `DB_PATH` | SQLite file. Default `./data/mealswap.db`. |
 | `TRUST_PROXY` | Set to `1` when running behind nginx/Caddy (default in production). |
 

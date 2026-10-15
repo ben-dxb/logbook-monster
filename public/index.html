@@ -171,6 +171,24 @@
         <button class="ghost" type="button" data-ad="json">Download all defaults (JSON)</button>
         <button class="ghost" type="button" data-ad="restore" id="ad-restore" hidden>Use the built-in plan</button>
       </div>
+      <section class="adai" id="ad-ai" aria-labelledby="ad-aih">
+        <h3 class="lbl" id="ad-aih">Read a PDF with AI</h3>
+        <p>Upload your coach's meal plan as a PDF (or a photo) and AI breaks it down into meals, foods, amounts and targets. New foods are added to the Foods list. Check everything before you save – nothing changes until you do.</p>
+        <div class="adtools">
+          <label class="btn adfile" id="ad-aibtn">Choose PDF…<input id="ad-aifile" type="file" accept=".pdf,application/pdf,image/png,image/jpeg,image/webp"></label>
+          <span id="ad-aistate" class="sub" role="status"></span>
+        </div>
+        <details id="ad-keybox" class="adhelp"><summary>OpenRouter API key</summary>
+          <p>The AI runs through <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">OpenRouter</a>. Paste your key here; it is kept on the server and never shown again. Pick any OpenRouter model that reads PDFs.</p>
+          <form id="ad-keyform" class="adkey">
+            <label class="f"><span class="lbl">API key</span><input id="ad-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-…"></label>
+            <label class="f"><span class="lbl">Model</span><input id="ad-model" autocomplete="off" spellcheck="false"></label>
+            <button class="btn" type="submit">Save</button>
+            <button class="ghost" type="button" id="ad-keydel" hidden>Remove key</button>
+          </form>
+          <p id="ad-keymsg" class="sub" role="status"></p>
+        </details>
+      </section>
       <details class="adhelp"><summary>CSV format</summary>
         <p>One row per food, with these headings in the first row: <code>day_type, meal, meal_name, box, food, grams, locked, note</code>.
           <b>day_type</b> is training, rest or saturday; <b>meal</b> is the meal number; <b>box</b> is protein, carbs or fats (left blank, it follows the food's swap list);

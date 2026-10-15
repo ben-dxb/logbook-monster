@@ -3,6 +3,7 @@ const express = require('express');
 const db = require('./db');
 const { requireAuth, csrfProtect, csrfToken } = require('./auth');
 const defaults = require('./defaults');
+const ai = require('./ai');
 
 const q = {
   getSettings: db.prepare('SELECT data FROM settings WHERE user_id = ?'),
@@ -57,6 +58,18 @@ router.get('/defaults', (req, res) => res.json(defaults.get()));
 router.put('/admin/defaults', (req, res) => {
   if (!defaults.isAdmin(req.user)) return res.status(403).json({ error: 'Only an admin can change the defaults' });
   try { res.json(defaults.put(req.body, req.user)); } catch (e) { bad(res, e.message); }
+});
+
+/* AI import: an OpenRouter key and model, and reading a plan PDF into the defaults format. */
+const adminOnly = (req, res, next) => (defaults.isAdmin(req.user) ? next() : res.status(403).json({ error: 'Only an admin can do this' }));
+router.get('/admin/ai', adminOnly, (req, res) => res.json(ai.status()));
+router.put('/admin/ai', adminOnly, (req, res) => {
+  if (!isObj(req.body)) return bad(res, 'Settings must be an object');
+  try { res.json(ai.save(req.body, req.user)); } catch (e) { bad(res, e.message); }
+});
+router.post('/admin/ai-import', adminOnly, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), async (req, res) => {
+  try { res.json(await ai.importPlan(Buffer.isBuffer(req.body) ? req.body : null, String(req.get('content-type') || '').split(';')[0].trim())); }
+  catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); if (!e.status) console.error(e); }
 });
 
 router.get('/settings', (req, res) => {
