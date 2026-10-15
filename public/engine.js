@@ -87,9 +87,9 @@ function breakfast(kind,lurpak,noCheese){
 }
 /* spreads, Lurpak and avocado live in their own 'Additional fats' box */
 function withFats(meals){return meals.map(m=>{const x=[...(m.x||[]),...m.c.filter(i=>FAT_SWAPS.includes(i.f))];return {...m,c:m.c.filter(i=>!FAT_SWAPS.includes(i.f)),x};});}
-function planFor(d,bf,pie){return withFats(planForRaw(d,bf,pie));}
-function planForRaw(d,bf,pie){
-  const t=TYPE[d], sauce=SAUCE[d];
+function planFor(d,bf,pie){return withFats(CUSTOM_PLAN&&CUSTOM_PLAN[TYPE[d]]?customPlan(TYPE[d]):planForRaw(d,bf,pie));}
+function planForRaw(d,bf,pie){return builtinPlan(TYPE[d],SAUCE[d],bf,pie);}
+function builtinPlan(t,sauce,bf,pie){
   const hrc=(g,pg)=>({id:'2',name:'Health Road chicken – '+sauce,p:[it('chicken',g)],c:[it('potato',pg)]});
   const hrm=(g,pg)=>({id:'4',name:'Health Road mince',p:[it('mince',g)],c:[it('pasta',pg)]});
   const cor=()=>({id:'3',name:'Cream of rice bowl',p:[],c:[it('cor',80),it('banana',100),it('biscoff',17)]});
@@ -106,6 +106,56 @@ function planForRaw(d,bf,pie){
     hrm(190,170),m5(25)];  /* 25g whey keeps rest-day direct protein inside 220g */
 }
 const clone=o=>JSON.parse(JSON.stringify(o));
+
+/* ---------- admin defaults: food values, week schedule, targets and an uploaded plan ----------
+   The built-in values above are the fallback; applyDefaults() layers the admin's saved defaults on top. */
+let CUSTOM_PLAN=null;                       /* {T:[meals],R:[meals],S:[meals]} or null for the built-in plan */
+const BUILTIN={foods:clone(FOODS),type:[...TYPE],coach:clone(COACH),
+  swaps:{p:[...PROTEIN_SWAPS],c:[...CARB_SWAPS],x:[...FAT_SWAPS]}};
+const SWAP_LISTS={p:PROTEIN_SWAPS,c:CARB_SWAPS,x:FAT_SWAPS};
+const FOOD_FIELDS=['n','k','p','c','f','d','step','unit','min','max','order','group'];
+function builtinGroup(id){for(const g in BUILTIN.swaps)if(BUILTIN.swaps[g].includes(id))return g;return '';}
+/* the editable view of a food: built-in fields plus which swap list it belongs to */
+function foodRecord(id){const F=FOODS[id];const r={group:foodGroup(id)};
+  FOOD_FIELDS.forEach(k=>{if(k!=='group')r[k]=F[k]!=null?F[k]:(k==='unit'?'g':null);});return r;}
+function foodGroup(id){for(const g in SWAP_LISTS)if(SWAP_LISTS[g].includes(id))return g;return '';}
+function applyDefaults(cfg){
+  cfg=cfg||{};
+  for(const id in FOODS) if(!BUILTIN.foods[id]) delete FOODS[id];
+  for(const id in BUILTIN.foods) FOODS[id]=clone(BUILTIN.foods[id]);
+  const groups={p:[...BUILTIN.swaps.p],c:[...BUILTIN.swaps.c],x:[...BUILTIN.swaps.x]};
+  for(const [id,r] of Object.entries(cfg.foods||{})){
+    const F=FOODS[id]||(FOODS[id]={cat:r.group==='p'?'p':'c'});
+    ['n','k','p','c','f','d','step'].forEach(k=>{if(r[k]!=null)F[k]=r[k];});
+    ['min','max','order'].forEach(k=>{if(r[k]!=null)F[k]=r[k];else delete F[k];});
+    if(r.unit==='ml')F.unit='ml';else delete F.unit;
+    if(r.group!=null){for(const g in groups)groups[g]=groups[g].filter(x=>x!==id);if(groups[r.group])groups[r.group].push(id);}
+  }
+  for(const g in SWAP_LISTS)SWAP_LISTS[g].splice(0,SWAP_LISTS[g].length,...groups[g]);
+  const sch=Array.isArray(cfg.schedule)&&cfg.schedule.length===7?cfg.schedule:BUILTIN.type;
+  TYPE.splice(0,7,...sch);
+  for(const t in BUILTIN.coach) COACH[t]={...BUILTIN.coach[t],...((cfg.targets||{})[t]||{})};
+  CUSTOM_PLAN=cfg.plan||null;
+  if(typeof recalcPudding==='function'&&typeof S!=='undefined')recalcPudding();
+}
+/* meals of an uploaded plan for one day type; foods that no longer exist are left out */
+function customPlan(t){
+  return CUSTOM_PLAN[t].map(m=>{const o={id:String(m.id),name:m.name,p:[],c:[],x:[]};if(m.note)o.note=m.note;
+    ['p','c','x'].forEach(b=>(m[b]||[]).forEach(i=>{if(FOODS[i.f])o[b].push(it(i.f,+i.g||0,!!i.lock));}));return o;});
+}
+/* the plan in use for each day type, as plain data (what the admin page shows and downloads) */
+function planData(){
+  const out={};
+  ['T','R','S'].forEach(t=>{
+    let meals;
+    if(CUSTOM_PLAN&&CUSTOM_PLAN[t]) meals=withFats(customPlan(t));
+    else{const d=BUILTIN.type.indexOf(t);meals=withFats(builtinPlan(t,SAUCE[d<0?0:d],'omelette',false));}
+    out[t]=meals.map(m=>({id:m.id,name:m.name,...(m.note?{note:m.note}:{}),
+      ...Object.fromEntries(['p','c','x'].map(b=>[b,(m[b]||[]).map(i=>({f:i.f,g:i.g,lock:!!i.lock}))]))}));
+  });
+  return out;
+}
+
 function freshDay(d){
   const meals=planFor(d,'omelette',false);
   const D={bf:'omelette',pie:false,auto:true,targets:{...COACH[TYPE[d]]},meals,base:null,off:[]};
@@ -224,3 +274,6 @@ function warnings(day){
   return w;
 }
 function fmtG(i){const u=FOODS[i.f].unit||'g';return Math.round(i.g)+u;}
+
+/* lets the server check food ids against the same data */
+if(typeof module!=='undefined') module.exports={FOODS,TYPE,COACH};
