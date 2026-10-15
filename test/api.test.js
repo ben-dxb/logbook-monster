@@ -15,7 +15,7 @@ let srv;
 before(async () => {
   srv = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', path.join(__dirname, '..', 'server', 'index.js')], {
     env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', BASE_URL: BASE, DB_PATH: path.join(dir, 't.db'),
-      SESSION_SECRET: 'x'.repeat(40), ALLOWED_EMAILS: 'me@example.com', ALLOW_REGISTRATION: 'false',
+      SESSION_SECRET: 'x'.repeat(40), ALLOWED_EMAILS: 'me@example.com,friend@example.com', ADMIN_EMAILS: 'me@example.com', ALLOW_REGISTRATION: 'false',
       GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '' },
     stdio: 'ignore',
   });
@@ -91,6 +91,45 @@ test('login, save a day and a weight, read them back, logout', async () => {
 
   assert.strictEqual((await c.req('POST', '/auth/logout', {})).status, 200);
   assert.strictEqual((await c.req('GET', '/api/me')).status, 401);
+});
+
+test('only the admin can change the defaults, everyone reads them', async () => {
+  const admin = client();
+  await admin.req('GET', '/auth/config');
+  assert.strictEqual((await admin.req('POST', '/auth/login', { email: 'me@example.com', password: 'longenough1' })).status, 200);
+  assert.strictEqual((await admin.req('GET', '/api/me')).body.admin, true);
+  assert.deepStrictEqual((await admin.req('GET', '/api/defaults')).body.plan, null);
+
+  const good = {
+    schedule: ['T', 'R', 'T', 'R', 'T', 'S', 'R'],
+    targets: { T: { k: 3000, p: 250, c: 370, f: 60 } },
+    foods: { chicken: { n: 'Chicken', k: 170, p: 31, c: 4, f: 3, d: 31, step: 5, order: 300, group: 'p' },
+      skyr: { n: 'Skyr', k: 63, p: 11, c: 4, f: 0.2, d: 11, step: 5, group: 'p' } },
+    plan: { R: [{ id: '1', name: 'Skyr bowl', p: [{ f: 'skyr', g: 300, lock: true }], c: [{ f: 'banana', g: 100 }], x: [] }] },
+  };
+  const saved = await admin.req('PUT', '/api/admin/defaults', good);
+  assert.strictEqual(saved.status, 200);
+  assert.strictEqual(saved.body.updatedBy, 'me@example.com');
+  assert.strictEqual(saved.body.foods.skyr.unit, 'g');
+  assert.strictEqual(saved.body.foods.skyr.max, null);
+  assert.deepStrictEqual(saved.body.plan.R[0].c, [{ f: 'banana', g: 100, lock: false }]);
+
+  for (const bad of [
+    { schedule: ['T', 'R'] },
+    { plan: { T: [{ id: '1', name: 'x', p: [{ f: 'unicorn', g: 10 }] }] } },
+    { foods: { 'Bad Id': { n: 'x', k: 1, p: 1, c: 1, f: 1, step: 1 } } },
+    { foods: { chicken: { n: 'Chicken', k: -5, p: 31, c: 4, f: 3, step: 5 } } },
+    { targets: { T: { k: 'lots', p: 1, c: 1, f: 1 } } },
+  ]) assert.strictEqual((await admin.req('PUT', '/api/admin/defaults', bad)).status, 400, JSON.stringify(bad));
+
+  const friend = client();
+  await friend.req('GET', '/auth/config');
+  assert.strictEqual((await friend.req('POST', '/auth/register', { email: 'friend@example.com', password: 'longenough2' })).status, 200);
+  assert.strictEqual((await friend.req('GET', '/api/me')).body.admin, false);
+  assert.strictEqual((await friend.req('PUT', '/api/admin/defaults', good)).status, 403);
+  const seen = await friend.req('GET', '/api/defaults');
+  assert.deepStrictEqual(seen.body.schedule, good.schedule);
+  assert.strictEqual(seen.body.plan.R[0].name, 'Skyr bowl');
 });
 
 test('security headers are set', async () => {

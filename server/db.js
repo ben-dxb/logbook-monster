@@ -39,6 +39,12 @@ CREATE TABLE IF NOT EXISTS weights (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (user_id, date)
 );
+CREATE TABLE IF NOT EXISTS app_config (
+  key        TEXT PRIMARY KEY,
+  data       TEXT NOT NULL,
+  updated_by TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS sessions (
   sid     TEXT PRIMARY KEY,
   sess    TEXT NOT NULL,

@@ -10,6 +10,10 @@ or Google.
 - **History** – a month calendar of logged days (calories vs target, protein, weight) with a
   month summary. Tap a day to open it.
 - **Weight** – log weigh-ins, see a chart with a 7-day average, and the full list.
+- **Admin** (admins only) – the baseline every new day starts from: upload a meal plan (CSV or
+  JSON) or edit it in place, download it, choose which weekdays are training or rest, set day
+  targets, and edit or add foods. Days already saved keep their own amounts. Admins are the
+  emails in `ADMIN_EMAILS`; if that's empty, the first account created is the admin.
 - **Account menu** – download all your data as JSON, set/change password, sign out.
 
 ## Run it locally
@@ -40,6 +44,7 @@ All secrets live only in `.env` on the server – nothing secret is ever sent to
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Turn on "Continue with Google". Leave empty to hide it. |
 | `ALLOWED_EMAILS` | Comma-separated. If set, **only** these emails can sign in, and they can create their own account the first time. |
 | `ALLOW_REGISTRATION` | `true` lets anyone sign up. Default `false`. |
+| `ADMIN_EMAILS` | Comma-separated. Who can open the Admin page. Empty = the first account created. |
 | `DB_PATH` | SQLite file. Default `./data/mealswap.db`. |
 | `TRUST_PROXY` | Set to `1` when running behind nginx/Caddy (default in production). |
 

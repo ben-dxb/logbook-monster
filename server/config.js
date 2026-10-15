@@ -20,6 +20,7 @@ const config = {
   trustProxy: process.env.TRUST_PROXY || (isProd ? '1' : ''),
   allowRegistration: bool(process.env.ALLOW_REGISTRATION, false),
   allowedEmails: list(process.env.ALLOWED_EMAILS),
+  adminEmails: list(process.env.ADMIN_EMAILS),
   google: {
     clientId: process.env.GOOGLE_CLIENT_ID || '',
     clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',

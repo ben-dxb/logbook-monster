@@ -22,7 +22,7 @@ const WEIGHTS={};                           /* date -> kg */
 const SAVED={days:{},settings:null};        /* last JSON stored on the server, to spot what changed */
 const LOGGED=new Set();                     /* dates stored on the server */
 let view='day', month=todayStr().slice(0,7)+'-01', wRange=90, csrf='', ME='';
-let resetArmed=false;
+let resetArmed=false, isAdmin=false;
 
 /* ---------- server ---------- */
 async function api(method,url,body){
@@ -215,10 +215,10 @@ function render(){
   const w=warnings(D);
   $('#warn').innerHTML=w.map(x=>`<li>${esc(x)}</li>`).join(''); $('#warn').hidden=!w.length;
   $('#opts').innerHTML=`
-    <div class="seg" role="group" aria-label="Breakfast"><span class="lbl">Breakfast</span>
+    ${CUSTOM_PLAN&&CUSTOM_PLAN[t]?'':`<div class="seg" role="group" aria-label="Breakfast"><span class="lbl">Breakfast</span>
       <button data-act="bf" data-v="omelette" aria-pressed="${D.bf==='omelette'}">Omelette</button>
-      <button data-act="bf" data-v="eggs" aria-pressed="${D.bf==='eggs'}">Egg &amp; egg white</button></div>
-    ${t==='S'?`<label class="tog"><input type="checkbox" id="pie" data-act="pie"${D.pie?' checked':''}> Lemon pie Saturday</label>`:''}
+      <button data-act="bf" data-v="eggs" aria-pressed="${D.bf==='eggs'}">Egg &amp; egg white</button></div>`}
+    ${t==='S'&&!(CUSTOM_PLAN&&CUSTOM_PLAN.S)?`<label class="tog"><input type="checkbox" id="pie" data-act="pie"${D.pie?' checked':''}> Lemon pie Saturday</label>`:''}
     <label class="tog"><input type="checkbox" id="auto" data-act="auto"${D.auto?' checked':''}> Auto-balance the day</label>
     <button class="ghost" data-act="reset">${resetArmed?'Tap again to reset':'Reset day to plan'}</button>`;
   $('#meals').innerHTML=D.meals.map((m,mi)=>{
@@ -264,7 +264,7 @@ function renderHistory(){
     const st=s?dayStatus(s):null;
     const label=[fmtLong(d), s?`${r0(s.k)} kcal, ${r0(s.p)}g protein${st.txt?', '+st.txt:''}`:'not logged', w!=null?`weight ${w} kg`:''].filter(Boolean).join(', ');
     h+=`<button class="cell${out?' out':''}${d===t?' today':''}${s?' logged':''}" data-act="open" data-d="${d}" aria-label="${esc(label)}">
-      <span class="dn">${parse(d).getDate()}<small>${TYPE[(i)%7]==='R'?'Rest':'Train'}</small></span>
+      <span class="dn">${parse(d).getDate()}<small>${((s&&s.type)||TYPE[i%7])==='R'?'Rest':'Train'}</small></span>
       ${s?`<span class="kc"><i class="dot ${st.cls}">${st.sym}</i>${r0(s.k)}</span><span class="pr">P ${r0(s.p)}g</span>`:''}
       ${w!=null?`<span class="wg">${w} kg</span>`:''}
     </button>`;
@@ -359,14 +359,16 @@ async function setWeight(date,kg){
   else{await api('PUT','/api/weights/'+date,{kg});WEIGHTS[date]=Math.round(kg*100)/100;}
 }
 
-/* ---------- routing: #day/2026-10-15, #history/2026-10, #weight ---------- */
+/* ---------- routing: #day/2026-10-15, #history/2026-10, #weight, #admin ---------- */
+const VIEWS=['day','history','weight','admin'];
 function route(){
   const [v,arg]=location.hash.replace(/^#/,'').split('/');
-  view=['day','history','weight'].includes(v)?v:'day';
+  view=VIEWS.includes(v)&&(v!=='admin'||isAdmin)?v:'day';
   document.querySelectorAll('.views a').forEach(a=>{if(a.dataset.view===view)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
-  ['day','history','weight'].forEach(n=>{$('#v-'+n).hidden=n!==view;});
+  VIEWS.forEach(n=>{$('#v-'+n).hidden=n!==view;});
   if(view==='day'){openDay(isDate(arg)?arg:S.cur);}
   else if(view==='history'){if(/^\d{4}-\d{2}$/.test(arg||''))month=arg+'-01';renderHistory();}
+  else if(view==='admin'){renderAdmin();}
   else renderWeight();
 }
 function go(hash){if(location.hash==='#'+hash)route();else location.hash=hash;}
@@ -474,7 +476,9 @@ document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(
     const me=await api('GET','/api/me');csrf=me.csrf;ME=me.email;
     $('#who').textContent=me.name||me.email;$('#who').title=me.email;
     if(!me.hasPassword){$('#pwcur').hidden=true;$('#pwbox').querySelector('summary').textContent='Set a password';}
-    const [settings,sums,weights]=await Promise.all([api('GET','/api/settings'),api('GET','/api/days'),api('GET','/api/weights')]);
+    isAdmin=!!me.admin;$('#adminlink').hidden=!isAdmin;
+    const [settings,sums,weights,defs]=await Promise.all([api('GET','/api/settings'),api('GET','/api/days'),api('GET','/api/weights'),api('GET','/api/defaults')]);
+    applyDefaults(defs);
     S.pud={...PUD_DEFAULT,...((settings||{}).pud||{})};S.snackOv=(settings||{}).snackOv||{};
     SAVED.settings=JSON.stringify({pud:S.pud,snackOv:S.snackOv});
     (sums||[]).forEach(s=>{SUMS[s.date]=s;LOGGED.add(s.date);});

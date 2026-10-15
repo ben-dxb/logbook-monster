@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('./db');
 const { requireAuth, csrfProtect, csrfToken } = require('./auth');
+const defaults = require('./defaults');
 
 const q = {
   getSettings: db.prepare('SELECT data FROM settings WHERE user_id = ?'),
@@ -48,7 +49,14 @@ router.use(csrfProtect);
 
 router.get('/me', (req, res) => {
   res.json({ email: req.user.email, name: req.user.name, hasPassword: !!req.user.password_hash,
-    google: !!req.user.google_sub, csrf: csrfToken(req) });
+    google: !!req.user.google_sub, admin: defaults.isAdmin(req.user), csrf: csrfToken(req) });
+});
+
+/* The baseline plan, food values and week every account starts from. */
+router.get('/defaults', (req, res) => res.json(defaults.get()));
+router.put('/admin/defaults', (req, res) => {
+  if (!defaults.isAdmin(req.user)) return res.status(403).json({ error: 'Only an admin can change the defaults' });
+  try { res.json(defaults.put(req.body, req.user)); } catch (e) { bad(res, e.message); }
 });
 
 router.get('/settings', (req, res) => {
