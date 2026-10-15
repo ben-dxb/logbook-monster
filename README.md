@@ -14,7 +14,7 @@ or Google.
 
 ## Run it locally
 
-Needs Node.js 20 or newer.
+Needs Node.js 22.13 or newer (it uses the SQLite built into Node, so nothing needs compiling).
 
 ```bash
 npm install
@@ -64,7 +64,7 @@ are only created for emails allowed by `ALLOWED_EMAILS` / `ALLOW_REGISTRATION`.
 ```bash
 cp .env.example .env    # set SESSION_SECRET, BASE_URL=https://…, ALLOWED_EMAILS, Google keys
 docker compose up -d --build
-docker compose exec mealswap node scripts/create-user.js you@example.com   # optional
+docker compose exec mealswap node --disable-warning=ExperimentalWarning scripts/create-user.js you@example.com   # optional
 ```
 
 The app listens on `127.0.0.1:3000`; data is kept in the `mealswap-data` volume. Put a

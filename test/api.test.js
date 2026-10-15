@@ -13,7 +13,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mealswap-test-'));
 let srv;
 
 before(async () => {
-  srv = spawn(process.execPath, [path.join(__dirname, '..', 'server', 'index.js')], {
+  srv = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', path.join(__dirname, '..', 'server', 'index.js')], {
     env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', BASE_URL: BASE, DB_PATH: path.join(dir, 't.db'),
       SESSION_SECRET: 'x'.repeat(40), ALLOWED_EMAILS: 'me@example.com', ALLOW_REGISTRATION: 'false',
       GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '' },
