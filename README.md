@@ -23,8 +23,8 @@ npm run create-user -- you@example.com   # asks for a password
 npm run dev                   # http://localhost:3000
 ```
 
-For local testing you can leave `SESSION_SECRET` empty (you'll just be signed out whenever the
-server restarts). Instead of `create-user`, you can put your email in `ALLOWED_EMAILS` and use
+For local testing you can leave `SESSION_SECRET` empty – a random one is made and kept in
+`data/.session-secret`, so restarts don't sign you out. Instead of `create-user`, you can put your email in `ALLOWED_EMAILS` and use
 **Create an account** on the sign-in page.
 
 Run all checks with `npm run check` (syntax, API tests, browser smoke test – the smoke test needs Playwright and skips if it is not installed).
