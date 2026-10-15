@@ -43,7 +43,7 @@ function clean(input) {
   if (!isObj(foods)) throw new Error('Foods must be an object');
   if (Object.keys(foods).length > 300) throw new Error('Too many foods');
   for (const [id, r] of Object.entries(foods)) {
-    if (!FOOD_ID.test(id)) throw new Error(`Food id "${String(id).slice(0, 40)}" must be lowercase letters, digits or _`);
+    if (!FOOD_ID.test(id) || id in Object.prototype) throw new Error(`Food id "${String(id).slice(0, 40)}" must be lowercase letters, digits or _`);
     if (!isObj(r)) throw new Error(`Food ${id} must be an object`);
     const w = `Food "${id}"`;
     out.foods[id] = {
