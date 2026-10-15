@@ -21,19 +21,38 @@ const SUMS={};                              /* date -> saved day summary (for ca
 const WEIGHTS={};                           /* date -> kg */
 const SAVED={days:{},settings:null};        /* last JSON stored on the server, to spot what changed */
 const LOGGED=new Set();                     /* dates stored on the server */
-let view='day', month=todayStr().slice(0,7)+'-01', wRange=90, csrf='';
+let view='day', month=todayStr().slice(0,7)+'-01', wRange=90, csrf='', ME='';
 let resetArmed=false;
 
 /* ---------- server ---------- */
 async function api(method,url,body){
-  const r=await fetch(url,{method,credentials:'same-origin',
+  let r;
+  try{r=await fetch(url,{method,credentials:'same-origin',
     headers:{...(body!==undefined?{'content-type':'application/json'}:{}),'x-csrf-token':csrf},
-    body:body!==undefined?JSON.stringify(body):undefined});
-  if(r.status===401){location.href='/login';throw new Error('signed out');}
+    body:body!==undefined?JSON.stringify(body):undefined});}
+  catch{throw new Error('Can’t reach the server – is it still running?');}
+  if(r.status===401){setTimeout(toLogin,0);const e=new Error('You were signed out');e.signedOut=true;throw e;}
   if(r.status===404&&method==='GET') return null;
   const j=await r.json().catch(()=>({}));
   if(!r.ok) throw new Error(j.error||`HTTP ${r.status}`);
   return j;
+}
+
+/* Signed out with changes still waiting: keep them in this browser and send them after you sign back in. */
+const STASH='mealswap-unsaved';
+function toLogin(){
+  if(pending.size&&ME){try{localStorage.setItem(STASH,JSON.stringify({email:ME,at:Date.now(),jobs:[...pending.entries()]}));}catch{}}
+  pending.clear();location.href='/login'+location.hash;   /* come back to the same day after signing in */
+}
+function restoreStash(){
+  let st;try{st=JSON.parse(localStorage.getItem(STASH)||'null');}catch{}
+  if(!st||st.email!==ME||!Array.isArray(st.jobs))return;
+  try{localStorage.removeItem(STASH);}catch{}
+  if(Date.now()-st.at>14*86400000)return;
+  for(const [key,j] of st.jobs){
+    if(key==='@settings'){const v=JSON.parse(j);S.pud={...PUD_DEFAULT,...(v.pud||{})};S.snackOv=v.snackOv||{};recalcPudding();}
+    else if(isDate(key)){S.days[key]=migrate(JSON.parse(j));SAVED.days[key]=null;}
+  }
 }
 
 /* Older saves have no chosen amounts: take them from the plan */
@@ -74,6 +93,8 @@ async function flush(){
     if(pending.size)saveTimer=setTimeout(flush,600);
   }catch(e){
     jobs.forEach(([k,j])=>{if(!pending.has(k))pending.set(k,j);});
+    inFlight=false;
+    if(e.signedOut)return;               /* toLogin() stashes everything still pending */
     saveState='error';saveErr=e.message;
     saveTimer=setTimeout(flush,5000);
   }
@@ -89,7 +110,7 @@ async function openDay(date){
       showLoading(true);
       try{const r=await api('GET','/api/days/'+date);
         if(r){S.days[date]=migrate(r.data);SAVED.days[date]=JSON.stringify(S.days[date]);}
-      }catch(e){showLoading(false);alert('Couldn’t load that day: '+e.message);return;}
+      }catch(e){showLoading(false);if(!e.signedOut)alert('Couldn’t load that day: '+e.message);return;}
       showLoading(false);
     }
     if(!S.days[date]) S.days[date]=freshDay(wdOf(date));
@@ -163,7 +184,7 @@ function renderStatus(){
   if(view!=='day')return;
   const date=S.cur, logged=LOGGED.has(date), p=pending.has(date);
   let h;
-  if(saveState==='error'&&(p||pending.size)) h=`<span class="chip bad">Not saved</span> ${esc(saveErr)} – retrying… <button class="ghost" data-act="retry">Retry now</button>`;
+  if(saveState==='error'&&(p||pending.size)) h=`<span class="chip bad">Not saved</span> ${esc(saveErr)} Retrying… <button class="ghost" data-act="retry">Retry now</button>`;
   else if(saveState==='saving'||p) h='<span class="chip info">Saving…</span>';
   else if(logged) h=`<span class="chip ok">✓ Saved</span> In your history. <button class="ghost" data-act="unlog">Remove from history</button>`;
   else h='<span class="chip">Plan only</span> Not in your history yet – any change saves it. <button class="btn" data-act="savenow">Save day as is</button>';
@@ -379,7 +400,7 @@ document.addEventListener('click',e=>{
   else if(a==='savenow'){saveNow();}
   else if(a==='unlog'){unlogDay();}
   else if(a==='retry'){clearTimeout(saveTimer);saveState='pending';flush();}
-  else if(a==='wdel'){const d=b.dataset.d;if(confirm(`Delete the weigh-in for ${fmtLong(d)}?`))setWeight(d,null).then(renderWeight,err=>alert(err.message));}
+  else if(a==='wdel'){const d=b.dataset.d;if(confirm(`Delete the weigh-in for ${fmtLong(d)}?`))setWeight(d,null).then(renderWeight,err=>{if(!err.signedOut)alert(err.message);});}
   else if(a==='bf'){act(D=>{if(D.bf===b.dataset.v)return;D.bf=b.dataset.v;const p=planFor(wd(),D.bf,D.pie);D.meals[0]=p[0];D.base[0]=clone(p[0]);});}
   else if(a==='del'){editMeal(+b.dataset.m,b.dataset.b,(D,m)=>{m[b.dataset.b].splice(+b.dataset.i,1);});}
   else if(a==='save'){saveMeal(+b.dataset.m);}
@@ -409,7 +430,7 @@ document.addEventListener('change',e=>{
   else if(el.id==='datepick'){if(isDate(el.value))go('day/'+el.value);}
   else if(el.id==='wt'){const v=el.value.trim(),date=S.cur;const kg=v===''?null:+v;
       if(kg!=null&&!(kg>=20&&kg<=400)){alert('Enter a weight between 20 and 400 kg.');renderWeightInline();return;}
-      setWeight(date,kg).then(renderWeightInline,err=>{alert('Couldn’t save weight: '+err.message);renderWeightInline();});}
+      setWeight(date,kg).then(renderWeightInline,err=>{if(!err.signedOut)alert('Couldn’t save weight: '+err.message);renderWeightInline();});}
 });
 $('#snackform').addEventListener('submit',e=>{
   e.preventDefault();const id=$('#sn').value,q=+$('#sq').value||0;if(!q)return;
@@ -429,7 +450,7 @@ $('#coach').addEventListener('click',()=>act(D=>{D.targets={...(D.pie?PIE_TARGET
 $('#wform').addEventListener('submit',async e=>{
   e.preventDefault();const d=$('#w-date').value,kg=+$('#w-kg').value;
   if(!isDate(d)||!(kg>=20&&kg<=400)){alert('Enter a date and a weight between 20 and 400 kg.');return;}
-  try{await setWeight(d,kg);$('#w-kg').value='';renderWeight();}catch(err){alert(err.message);}
+  try{await setWeight(d,kg);$('#w-kg').value='';renderWeight();}catch(err){if(!err.signedOut)alert(err.message);}
 });
 $('#wrange').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;wRange=+b.dataset.r;renderWeight();});
 let rz;window.addEventListener('resize',()=>{clearTimeout(rz);rz=setTimeout(()=>{if(view==='weight')renderWeight();},150);});
@@ -450,7 +471,7 @@ document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(
 /* ---------- start ---------- */
 (async()=>{
   try{
-    const me=await api('GET','/api/me');csrf=me.csrf;
+    const me=await api('GET','/api/me');csrf=me.csrf;ME=me.email;
     $('#who').textContent=me.name||me.email;$('#who').title=me.email;
     if(!me.hasPassword){$('#pwcur').hidden=true;$('#pwbox').querySelector('summary').textContent='Set a password';}
     const [settings,sums,weights]=await Promise.all([api('GET','/api/settings'),api('GET','/api/days'),api('GET','/api/weights')]);
@@ -459,7 +480,8 @@ document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(
     (sums||[]).forEach(s=>{SUMS[s.date]=s;LOGGED.add(s.date);});
     (weights||[]).forEach(w=>{WEIGHTS[w.date]=w.kg;});
     recalcPudding();
-  }catch(e){if(e.message!=='signed out'){$('#loading').textContent='Couldn’t load your data: '+e.message;}return;}
+    restoreStash();
+  }catch(e){if(!e.signedOut){$('#loading').textContent='Couldn’t load your data: '+e.message;}return;}
   showLoading(false);
   route();
 })();
