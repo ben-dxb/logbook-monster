@@ -5,6 +5,7 @@
 const AD_TYPES=[['T','Training'],['R','Rest'],['S','Saturday training']];
 const AD_BOXES=[['p','Protein'],['c','Carbs'],['x','Additional fats']];
 let AD=null, adSaved='', adType='T', adMsg='', adErrs=[], adBusy=false;
+let adAi=null, adAiBusy=false, adNotes=[];
 const adOpen=new Set();                      /* food editors left open */
 
 /* ---------- draft ---------- */
@@ -34,14 +35,15 @@ function adPlanUses(id){return Object.values(AD.plan).some(ms=>ms.some(m=>['p','
 /* ---------- rendering ---------- */
 function renderAdmin(){
   if(view!=='admin')return;
-  if(!AD)adLoad();
+  if(!AD){adLoad();adAiLoad();}
   const numIn=(id,val,attrs,label)=>`<input id="${id}" type="number" inputmode="decimal" min="0" value="${val==null?'':val}" ${attrs} aria-label="${esc(label)}">`;
   /* plan */
   $('#ad-planstate').innerHTML=AD.custom
     ?'<span class="chip info">Your plan</span> New days start from the plan below.'
     :'<span class="chip">Built-in plan</span> Edit an amount or upload a file to make your own.';
   $('#ad-restore').hidden=!AD.custom;
-  $('#ad-upmsg').innerHTML=(adMsg?`<p class="admsg">${esc(adMsg)}</p>`:'')+(adErrs.length?`<ul class="aderr">${adErrs.slice(0,12).map(e=>`<li>${esc(e)}</li>`).join('')}${adErrs.length>12?`<li>…and ${adErrs.length-12} more</li>`:''}</ul>`:'');
+  $('#ad-upmsg').innerHTML=(adMsg?`<p class="admsg">${esc(adMsg)}</p>`:'')+(adErrs.length?`<ul class="aderr">${adErrs.slice(0,12).map(e=>`<li>${esc(e)}</li>`).join('')}${adErrs.length>12?`<li>…and ${adErrs.length-12} more</li>`:''}</ul>`:'')
+    +(adNotes.length?`<details class="adnotes" open><summary>What the AI estimated or left out (${adNotes.length})</summary><ul>${adNotes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></details>`:'');
   $('#ad-types').innerHTML=AD_TYPES.map(([t,n])=>`<button type="button" data-ad="type" data-t="${t}" aria-pressed="${t===adType}">${n}</button>`).join('');
   const foodOpts=(sel,box)=>{const ids=Object.keys(AD.foods).concat(['pudding']).filter(f=>box==='x'?AD.foods[f]&&AD.foods[f].group==='x':!(AD.foods[f]&&AD.foods[f].group==='x'));
     if(sel&&!ids.includes(sel))ids.unshift(sel);
@@ -153,7 +155,7 @@ document.addEventListener('click',e=>{
     AD.plan=builtinPlanData();AD.custom=false;adMsg='Built-in plan restored – save to use it.';adErrs=[];}
   else if(a==='csv'){adDownload(`mealswap-plan-${todayStr()}.csv`,planCsv(AD.plan),'text/csv');return;}
   else if(a==='json'){adDownload(`mealswap-defaults-${todayStr()}.json`,JSON.stringify({...adPayload(),plan:AD.plan},null,2),'application/json');return;}
-  else if(a==='discard'){adLoad();adMsg='';adErrs=[];}
+  else if(a==='discard'){adLoad();adMsg='';adErrs=[];adNotes=[];}
   else if(a==='save'){adSave();return;}
   else return;
   renderAdmin();
@@ -243,21 +245,25 @@ function csvToPlan(text){
   if(!Object.keys(plan).length&&!errs.length)errs.push('No plan rows found under the headings.');
   return {plan,errs};
 }
+/* load a defaults-shaped object (a JSON file or the AI's reading of a PDF) into the draft */
+function adApplyJson(j){
+  const full=j&&(j.plan||j.foods||j.schedule||j.targets);
+  const plan=full?j.plan:j;
+  if(full&&j.foods&&typeof j.foods==='object'){for(const [id,r] of Object.entries(j.foods)){if(id!=='pudding'&&r&&typeof r==='object')AD.foods[id]={...(AD.foods[id]||{group:'',unit:'g',min:null,max:null,order:null,d:0,step:5}),...r};}}
+  if(full&&Array.isArray(j.schedule)&&j.schedule.length===7&&j.schedule.every(t=>['T','R','S'].includes(t)))AD.schedule=[...j.schedule];
+  if(full&&j.targets&&typeof j.targets==='object')AD_TYPES.forEach(([t])=>{if(j.targets[t])AD.targets[t]={...AD.targets[t],...j.targets[t]};});
+  if(plan&&typeof plan==='object'){const got=AD_TYPES.filter(([t])=>Array.isArray(plan[t])&&plan[t].length);
+    got.forEach(([t])=>{AD.plan[t]=plan[t].map(m=>({id:String(m.id),name:String(m.name||''),...(m.note?{note:String(m.note)}:{}),
+      p:[...(m.p||[])],c:[...(m.c||[])],x:[...(m.x||[])]}));});
+    if(got.length){AD.custom=true;if(!got.some(([t])=>t===adType))adType=got[0][0];}}
+}
 async function adUpload(file){
-  if(!file)return;adMsg='';adErrs=[];
+  if(!file)return;adMsg='';adErrs=[];adNotes=[];
   if(file.size>1024*1024){adErrs=['That file is over 1 MB – is it the right one?'];renderAdmin();return;}
   const text=await file.text();
   if(/\.json$/i.test(file.name)||/^\s*\{/.test(text)){
     let j;try{j=JSON.parse(text);}catch{adErrs=['That JSON file couldn’t be read.'];renderAdmin();return;}
-    const full=j&&(j.plan||j.foods||j.schedule||j.targets);
-    const plan=full?j.plan:j;
-    if(full&&j.foods&&typeof j.foods==='object'){for(const [id,r] of Object.entries(j.foods)){if(id!=='pudding'&&r&&typeof r==='object')AD.foods[id]={...(AD.foods[id]||{group:'',unit:'g',min:null,max:null,order:null,d:0,step:5}),...r};}}
-    if(full&&Array.isArray(j.schedule)&&j.schedule.length===7&&j.schedule.every(t=>['T','R','S'].includes(t)))AD.schedule=[...j.schedule];
-    if(full&&j.targets&&typeof j.targets==='object')AD_TYPES.forEach(([t])=>{if(j.targets[t])AD.targets[t]={...AD.targets[t],...j.targets[t]};});
-    if(plan&&typeof plan==='object'){const got=AD_TYPES.filter(([t])=>Array.isArray(plan[t])&&plan[t].length);
-      got.forEach(([t])=>{AD.plan[t]=plan[t].map(m=>({id:String(m.id),name:String(m.name||''),...(m.note?{note:String(m.note)}:{}),
-        p:[...(m.p||[])],c:[...(m.c||[])],x:[...(m.x||[])]}));});
-      if(got.length)AD.custom=true;}
+    adApplyJson(j);
     adMsg=`Loaded ${file.name}. Check it below, then save.`;
   }else{
     const {plan,errs}=csvToPlan(text);
@@ -270,3 +276,47 @@ async function adUpload(file){
   }
   renderAdmin();
 }
+
+/* ---------- AI import (OpenRouter) ---------- */
+async function adAiLoad(){try{adAi=await api('GET','/api/admin/ai');}catch(e){adAi=null;}adAiRender();}
+function adAiRender(){
+  if(!adAi)return;
+  $('#ad-aistate').textContent=adAiBusy?'Reading the plan – this can take a minute or two…'
+    :adAi.configured?`Using ${adAi.model}`:'Add an OpenRouter API key below to turn this on.';
+  $('#ad-aibtn').classList.toggle('off',!adAi.configured||adAiBusy);
+  $('#ad-aifile').disabled=!adAi.configured||adAiBusy;
+  $('#ad-key').placeholder=adAi.configured?`Saved (${adAi.hint})${adAi.source==='env'?' – from .env':''}. Paste a new one to replace it`:'sk-or-…';
+  if(document.activeElement!==$('#ad-model'))$('#ad-model').value=adAi.model;
+  $('#ad-keydel').hidden=adAi.source!=='admin';
+  if(!adAi.configured&&!$('#ad-keybox').open)$('#ad-keybox').open=true;
+}
+$('#ad-keyform').addEventListener('submit',async e=>{
+  e.preventDefault();const body={model:$('#ad-model').value.trim()};const k=$('#ad-key').value.trim();if(k)body.key=k;
+  try{adAi=await api('PUT','/api/admin/ai',body);$('#ad-key').value='';$('#ad-keymsg').textContent=k?'Key saved.':'Saved.';}
+  catch(err){$('#ad-keymsg').textContent=err.message;}
+  adAiRender();
+});
+$('#ad-keydel').addEventListener('click',async()=>{
+  if(!confirm('Remove the saved OpenRouter key?'))return;
+  try{adAi=await api('PUT','/api/admin/ai',{key:''});$('#ad-keymsg').textContent='Key removed.';}catch(err){$('#ad-keymsg').textContent=err.message;}
+  adAiRender();
+});
+$('#ad-aifile').addEventListener('change',async e=>{
+  const el=e.target, file=el.files&&el.files[0];el.value='';if(!file||adAiBusy)return;
+  if(file.size>10*1024*1024){adErrs=['That file is over 10 MB.'];adMsg='';renderAdmin();return;}
+  adAiBusy=true;adMsg='';adErrs=[];adNotes=[];adAiRender();renderAdmin();
+  try{
+    let r;
+    try{r=await fetch('/api/admin/ai-import',{method:'POST',credentials:'same-origin',
+      headers:{'content-type':file.type||'application/pdf','x-csrf-token':csrf},body:file});}
+    catch{throw new Error('Can’t reach the server – is it still running?');}
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);
+    adApplyJson(j);
+    const got=AD_TYPES.filter(([t])=>j.plan&&j.plan[t]).map(([,n])=>n.toLowerCase());
+    const nf=Object.keys(j.foods||{}).length;
+    adMsg=`AI read ${file.name}: ${got.join(', ')} plan${got.length>1?'s':''}${nf?`, ${nf} new food${nf>1?'s':''}`:''}${j.targets&&Object.keys(j.targets).length?', targets':''}${j.schedule?', week schedule':''}. Check it below, then save.`;
+    adNotes=j.notes||[];
+  }catch(err){adMsg='The AI import didn’t work:';adErrs=[err.message];}
+  adAiBusy=false;adAiRender();renderAdmin();
+});

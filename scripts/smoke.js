@@ -16,7 +16,7 @@ if (!chromium) { console.log('smoke: Playwright not installed – skipped'); pro
 const PORT = 3800 + Math.floor(Math.random() * 90), BASE = `http://127.0.0.1:${PORT}`;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mealswap-smoke-'));
 const env = { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', BASE_URL: BASE, DB_PATH: path.join(dir, 's.db'),
-  SESSION_SECRET: 'x'.repeat(40), ALLOWED_EMAILS: '', ALLOW_REGISTRATION: 'false', GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '' };
+  SESSION_SECRET: 'x'.repeat(40), ALLOWED_EMAILS: '', ALLOW_REGISTRATION: 'false', GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: '' };
 const node = [process.execPath, '--disable-warning=ExperimentalWarning'];
 const root = path.join(__dirname, '..');
 
@@ -58,6 +58,11 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await pg.selectOption('#ad-wd-0', 'R');
         await pg.click('.adfood[data-id=banana] summary'); await pg.fill('#ad-fd-banana-k', '90');
         await pg.click('#ad-save');
+        /* AI import needs a key: the key box starts open, saving it turns the PDF button on */
+        await pg.waitForFunction(() => /OpenRouter API key/.test(document.querySelector('#ad-aistate').textContent));
+        await pg.fill('#ad-key', 'sk-or-v1-smoke-test-key'); await pg.click('#ad-keyform button[type=submit]');
+        await pg.waitForFunction(() => /^Using /.test(document.querySelector('#ad-aistate').textContent), null, { timeout: 5000 });
+        expect(!(await pg.isDisabled('#ad-aifile')), 'PDF upload should be on once a key is saved');
         await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
       }
       await pg.click('#ad-types [data-t=R]');
