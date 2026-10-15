@@ -27,7 +27,7 @@ For local testing you can leave `SESSION_SECRET` empty (you'll just be signed ou
 server restarts). Instead of `create-user`, you can put your email in `ALLOWED_EMAILS` and use
 **Create an account** on the sign-in page.
 
-Run the tests with `npm test`.
+Run all checks with `npm run check` (syntax, API tests, browser smoke test – the smoke test needs Playwright and skips if it is not installed).
 
 ## Settings (`.env`)
 

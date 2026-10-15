@@ -7,6 +7,11 @@
   **session `session_01Esfggck8VJzAvQMTdXhUdR`**. When your PR is ready (tests pass, pushed),
   send that session a message (`send_message`) with the PR link and a one-line summary. It checks
   for conflicts with `main` and with other open PRs, runs the tests and merges.
+- There is no GitHub CI. `npm run check` **is** the CI: syntax check, API/security tests
+  (`npm test`) and a Playwright browser smoke test (`npm run smoke`, desktop + phone, fails on
+  any page error or horizontal overflow). Run it before sending your PR and say it passed; the
+  merge master runs it again on the merged result before merging.
+- New features should come with a test in `test/` or a step in `scripts/smoke.js`.
 - Keep PRs focused on one change so they merge cleanly. If the merge master reports a conflict,
   merge `main` into your branch (no rebase/force-push), resolve, re-run tests, push, and tell it again.
 
