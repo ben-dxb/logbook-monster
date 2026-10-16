@@ -102,6 +102,8 @@ CREATE TABLE IF NOT EXISTS foods (
   public     INTEGER NOT NULL DEFAULT 0,
   kind       TEXT NOT NULL DEFAULT 'ingredient',
   ai         TEXT,
+  state      TEXT NOT NULL DEFAULT '',
+  yield      REAL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -156,6 +158,9 @@ if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'invited_
     db.exec("UPDATE foods SET kind = 'meal' WHERE recipe <> '' OR unit = 'each'");
   }
   if (!cols.includes('ai')) db.exec('ALTER TABLE foods ADD COLUMN ai TEXT');
+  /* state: values weighed 'raw' (dry for rice and pasta), 'cooked' or '' (neither); yield: cooked weight as % of raw */
+  if (!cols.includes('state')) db.exec("ALTER TABLE foods ADD COLUMN state TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('yield')) db.exec('ALTER TABLE foods ADD COLUMN yield REAL');
 }
 
 module.exports = db;

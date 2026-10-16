@@ -5,6 +5,8 @@
    flagged (⚑) and tapping a flag shows the source the AI gave.
    Your meal plan is always in the library too, with nothing to enter: each meal in it as a whole meal and
    each food it uses as an ingredient, worked out from the plan in use, so they follow every plan change.
+   Starter foods (STARTER in starter.js) are there for everyone too. A food weighed raw or cooked with a
+   cooked yield can be shown either way: Weights switches the whole list, the Raw/Cooked buttons one card.
    #foods, #foods/new, #foods/12 (edit one of yours). Uses helpers and LIB from app.js. */
 
 const F_KEY='lm.foodFilters';
@@ -13,6 +15,8 @@ try{const s=JSON.parse(localStorage.getItem(F_KEY)||'null');if(s&&typeof s==='ob
 const fKeep=()=>{try{localStorage.setItem(F_KEY,JSON.stringify(fF));}catch{}};
 let fQuery='', fAdding=null, fMsg='', fTok=0, fAiOn=false, fEdit=null;
 const fOpen=new Set();                                     /* foods whose AI source is showing */
+const fWt=new Map();                                       /* raw/cooked chosen on one card, by food id */
+if(!['raw','cooked'].includes(fF.wt))fF.wt='raw';
 
 /* ---------- your meal plan, as library entries ---------- */
 const F_TYPES={T:'training',R:'rest',S:'Saturday training'};
@@ -51,10 +55,28 @@ function fPlanFoods(){
   for(const g in SWAP_LISTS)SWAP_LISTS[g].forEach(ing);
   return out;
 }
+/* ---------- starter foods ---------- */
+const F_STARTER=STARTER.map(x=>({id:'std:'+x.id,std:true,plan:false,mine:false,public:false,ai:null,by:null,kind:'ingredient',
+  name:x.n,unit:x.u||'g',k:x.k,p:x.p,c:x.c,f:x.f,recipe:'',group:x.g,state:x.s||'',yield:x.y||null,dry:x.s==='raw'&&x.g==='Grains and potatoes'&&!/potato/i.test(x.n)||/lentil/i.test(x.n),
+  about:`${x.note?x.note+' ':''}Typical values from USDA FoodData Central (carbs include fibre) – check your pack.${x.y?` Cooked values assume it weighs about ${x.y}% of the ${x.s==='raw'&&/rice|pasta|quinoa|lentil/i.test(x.n)?'dry':'raw'} weight once cooked.`:''}`}));
+
 let fPlanCache=null;
 /* the plan only changes when the defaults or the pudding batch do; recomputed on each list render */
-const fAll=()=>[...(fPlanCache=fPlanFoods()),...LIB];
-const fById=id=>(fPlanCache&&fPlanCache.find(f=>f.id===String(id)))||LIB.find(f=>String(f.id)===String(id));
+const fAll=()=>[...(fPlanCache=fPlanFoods()),...F_STARTER,...LIB];
+const fById=id=>(fPlanCache&&fPlanCache.find(f=>f.id===String(id)))||F_STARTER.find(f=>f.id===String(id))||LIB.find(f=>String(f.id)===String(id));
+
+/* ---------- raw or cooked ---------- */
+const fCanWt=f=>!!(f.state&&f.yield&&f.unit==='g');
+const fWord=(f,st)=>st==='raw'?(f.dry?'dry':'raw'):'cooked';
+/* the food as shown: values per 100 g in the state picked for its card, or for the whole list */
+function fShown(f){
+  if(!f||!f.state)return f;
+  const want=fCanWt(f)?fWt.get(String(f.id))||fF.wt:f.state;
+  const base=f.name.replace(/\s*\((raw|cooked|dry|uncooked)\)\s*$/i,'');
+  const out={...f,shown:want,name:`${base} (${fWord(f,want)})`};
+  if(want!==f.state){const m=want==='cooked'?100/f.yield:f.yield/100;for(const x of ['k','p','c','f'])out[x]=fRound(f[x]*m);}
+  return out;
+}
 const M_NAME={k:'calories',p:'protein',c:'carbs',f:'fat'};
 const fFlagged=(f,m)=>!!(f.ai&&f.ai.fields.includes(m));
 function fMacros(f,flags){
@@ -83,7 +105,7 @@ async function renderFoods(args){
     const food=p==='new'?null:fById(+p);
     if(p!=='new'&&!(food&&food.mine)){box.innerHTML=gHead('#foods','Food')+gEmpty('That food isn’t in your library.');return;}
     fEdit={ai:food&&food.ai?JSON.parse(JSON.stringify(food.ai)):null,unitSet:!!food};
-    box.innerHTML=fEditPage(food);fPaintAi();$('#f-name').focus();return;
+    box.innerHTML=fEditPage(food);fPaintAi();fPaintState();$('#f-name').focus();return;
   }
   box.innerHTML=fListPage();renderFoodList();
   try{const r=await api('GET','/api/foods');if(tok!==fTok||view!=='foods'||!r)return;LIB=r.foods;fAiOn=!!r.ai;fSort();renderFoodList();}
@@ -103,7 +125,7 @@ const fTest={
 function fMatch(f,skipKind){
   const q=fQuery.trim().toLowerCase();
   return (skipKind||fF.kind==='all'||f.kind===fF.kind)
-    &&(fF.who==='all'||(fF.who==='plan'?f.plan:fF.who==='mine'?f.mine:!f.mine&&!f.plan))
+    &&(fF.who==='all'||(fF.who==='plan'?f.plan:fF.who==='starter'?f.std:fF.who==='mine'?f.mine:!f.mine&&!f.plan&&!f.std))
     &&fF.tags.every(t=>!fTest[t]||fTest[t](f))
     &&(!q||f.name.toLowerCase().includes(q)||f.recipe.toLowerCase().includes(q)||(!!f.by&&f.by.toLowerCase().includes(q)));
 }
@@ -115,15 +137,16 @@ const fBusy=()=>fF.who!=='all'||fF.tags.length||fQuery.trim()||fF.kind!=='all';
 
 /* ---------- the list ---------- */
 function fListPage(){
-  const who=[['all','Everything'],['plan','My meal plan'],['mine','Foods I added'],['shared','Shared with me']].map(([v,l])=>`<option value="${v}"${fF.who===v?' selected':''}>${l}</option>`).join('');
+  const who=[['all','Everything'],['plan','My meal plan'],['starter','Starter foods'],['mine','Foods I added'],['shared','Shared with me']].map(([v,l])=>`<option value="${v}"${fF.who===v?' selected':''}>${l}</option>`).join('');
   const ord=ORDERS.map(([v,l])=>`<option value="${v}"${fF.order===v?' selected':''}>${l}</option>`).join('');
   const tags=TAGS.map(([v,l])=>`<button type="button" data-fa="tag" data-v="${v}" aria-pressed="${fF.tags.includes(v)}">${l}</button>`).join('');
   return `<div class="gbar"><h2>Food Library</h2><a class="btn" href="#foods/new">New food</a></div>
-    <p class="fintro">Your meal plan is already here – every meal in it and every food it uses, kept up to date with the plan. Add your own meals and ingredients too, with a recipe if you like. Share one and everyone can add it to their plan. “Add to plan” puts it in a meal or the off-plan list of any day, and the rest of the day rebalances around it. In the Food Tracker you’ll also find them under “+ Add a food…” in every meal. Values marked ⚑ were estimated by AI – tap one to see where it came from.</p>
+    <p class="fintro">Your meal plan is already here – every meal in it and every food it uses, kept up to date with the plan – along with common fitness foods to start from. “Weights” shows foods per 100 g raw or cooked. Add your own meals and ingredients too, with a recipe if you like. Share one and everyone can add it to their plan. “Add to plan” puts it in a meal or the off-plan list of any day, and the rest of the day rebalances around it. In the Food Tracker you’ll also find them under “+ Add a food…” in every meal. Values marked ⚑ were estimated by AI – tap one to see where it came from.</p>
     <div class="seg fkinds" id="f-kinds" role="group" aria-label="Type"></div>
     <div class="ftools"><input id="f-q" type="search" placeholder="Search names, recipes and people" aria-label="Search foods" value="${esc(fQuery)}">
       <label class="fsel"><span class="lbl">Show</span><select id="f-who">${who}</select></label>
-      <label class="fsel"><span class="lbl">Sort</span><select id="f-order">${ord}</select></label></div>
+      <label class="fsel"><span class="lbl">Sort</span><select id="f-order">${ord}</select></label>
+      <div class="fsel"><span class="lbl">Weights</span><div class="seg" role="group" aria-label="Show weights" id="f-wt">${fWtSeg(fF.wt,'wtall','')}</div></div></div>
     <div class="seg ftags" role="group" aria-label="Filters">${tags}</div>
     <div class="fcount"><span id="f-count" role="status"></span><button type="button" class="ghost" data-fa="clear" id="f-clear">Clear filters</button></div>
     <div id="f-list" class="flist"></div>`;
@@ -131,7 +154,7 @@ function fListPage(){
 function renderFoodList(){
   const el=$('#f-list');if(!el)return;
   /* the type tabs count what the other filters leave */
-  const all=fAll(), base=all.filter(f=>fMatch(f,true));
+  const all=fAll().map(fShown), base=all.filter(f=>fMatch(f,true));
   const n={all:base.length,meal:base.filter(f=>f.kind==='meal').length,ingredient:base.filter(f=>f.kind!=='meal').length};
   $('#f-kinds').innerHTML=[['all','All'],['meal','Meals'],['ingredient','Ingredients']]
     .map(([v,l])=>`<button type="button" data-fa="kind" data-v="${v}" aria-pressed="${fF.kind===v}">${l} <small>${n[v]}</small></button>`).join('');
@@ -153,21 +176,26 @@ function renderFoodList(){
   el.innerHTML=h;
 }
 function fCard(f){
-  const tag=f.plan?`<span class="chip plan">Your meal plan${f.days?' · '+esc(f.days):''}</span>`:f.mine?(f.public?'<span class="chip ok">Shared</span>':'<span class="chip">Only you</span>')
+  const tag=f.std?`<span class="chip std">Starter · ${esc(f.group)}</span>`:f.plan?`<span class="chip plan">Your meal plan${f.days?' · '+esc(f.days):''}</span>`:f.mine?(f.public?'<span class="chip ok">Shared</span>':'<span class="chip">Only you</span>')
     :`<span class="chip info">Shared${f.by?' by '+esc(f.by):''}</span>`;
   const kind=f.kind==='meal'?'<span class="chip kind">Meal</span>':'<span class="chip kind">Ingredient</span>';
-  const canDel=!f.plan&&(f.mine||isAdmin);
+  const canDel=!f.plan&&!f.std&&(f.mine||isAdmin);
   const adding=fAdding&&fAdding.id===f.id;
   return `<article class="fcard" data-id="${f.id}">
     <div class="fhead"><h3>${esc(f.name)}</h3>${kind}${tag}</div>
-    <span class="ml">${fMacros(f,true)} <i>${libPer(f.unit)}</i></span>
+    <span class="ml">${fMacros(f,true)} <i>${libPer(f.unit)}${f.shown?' '+fWord(f,f.shown):''}</i></span>
+    ${fCanWt(f)?`<div class="fwt"><div class="seg" role="group" aria-label="Weighed">${fWtSeg(f.shown,'wt',f.id,f)}</div><span class="muted">cooked ≈ ${f.yield}% of ${fWord(f,'raw')} weight</span></div>`:''}
     ${f.ai&&fOpen.has(String(f.id))?fSource(f.ai):''}
+    ${f.about?`<details class="frecipe"><summary>About these values</summary><p>${esc(f.about)}</p></details>`:''}
     ${f.recipe?`<details class="frecipe"><summary>${f.kind==='meal'?'Recipe':'Notes'}</summary><p>${esc(f.recipe)}</p></details>`:''}
     ${adding?fAddForm(f):`<div class="factions"><button class="btn" type="button" data-fa="add" data-id="${f.id}">Add to plan</button>
       ${f.mine?`<a class="ghost" href="#foods/${f.id}">Edit</a>`:''}
       ${f.plan?'<a class="ghost" href="#account">Change in my plan</a>':''}
       ${canDel?`<button class="ghost" type="button" data-fa="del" data-id="${f.id}">${f.mine?'Delete':'Delete (admin)'}</button>`:''}</div>`}
   </article>`;
+}
+function fWtSeg(cur,act,id,f){
+  return ['raw','cooked'].map(v=>`<button type="button" data-fa="${act}" data-v="${v}"${id!==''?` data-id="${esc(id)}"`:''} aria-pressed="${cur===v}">${v==='raw'?(f&&f.dry?'Dry':f?'Raw':'Raw / dry'):'Cooked'}</button>`).join('');
 }
 function fAddForm(f){
   const a=fAdding, m=libMac({u:f.unit,per:f},+a.qty||0);
@@ -189,7 +217,7 @@ function fWhereOpts(date,sel){
 }
 
 /* ---------- add / edit ---------- */
-const fNotesLabel=k=>k==='meal'?'Recipe (optional)':'Notes (optional) – brand, raw or cooked';
+const fNotesLabel=k=>k==='meal'?'Recipe (optional)':'Notes (optional) – brand, where to buy';
 function fEditPage(f){
   const v=f||{name:'',unit:fF.kind==='meal'?'each':'g',kind:fF.kind==='meal'?'meal':'ingredient',k:'',p:'',c:'',f:'',recipe:'',public:false};
   const unit=[['g','per 100 g'],['ml','per 100 ml'],['each','per item / portion']].map(([u,l])=>`<option value="${u}"${v.unit===u?' selected':''}>${l}</option>`).join('');
@@ -200,6 +228,8 @@ function fEditPage(f){
       <label class="f fwide"><span class="lbl">Name</span><input id="f-name" maxlength="80" required value="${esc(v.name)}" placeholder="e.g. Protein pancakes, or Chicken breast (raw)"></label>
       <div class="f fwide"><span class="lbl">This is a</span><div class="seg" role="group" aria-label="Type">${kinds}</div></div>
       <label class="f fwide"><span class="lbl">Values are</span><select id="f-unit">${unit}</select></label>
+      <label class="f fstate"><span class="lbl">Weighed</span><select id="f-state">${[['','Neither (ready to eat)'],['raw','Raw / dry'],['cooked','Cooked']].map(([x,l])=>`<option value="${x}"${(v.state||'')===x?' selected':''}>${l}</option>`).join('')}</select></label>
+      <label class="f fstate"><span class="lbl">Cooked weight, % of raw</span><input id="f-yield" type="number" inputmode="numeric" min="10" max="1000" step="1" value="${esc(v.yield==null?'':v.yield)}" placeholder="e.g. 75 chicken, 280 rice"></label>
       ${box('k','kcal')}${box('p','Protein g')}${box('c','Carbs g')}${box('f','Fat g')}
       ${fAiOn?`<div class="faifill fwide"><button class="ghost" type="button" data-fa="fill" id="f-fill">⚑ Fill blanks with AI</button>
         <span class="muted">Leave a box empty and AI estimates it from the name, the type and the recipe or notes. Its values are flagged so you can see the source.</span></div>`:''}
@@ -213,6 +243,11 @@ function fEditPage(f){
     </form>`;
 }
 /* Mark the boxes AI filled and show its source under them. */
+/* raw / cooked only means something for foods weighed in grams; the yield only once one is picked */
+function fPaintState(){
+  const g=$('#f-unit').value==='g';
+  $('#f-state').closest('label').hidden=!g;$('#f-yield').closest('label').hidden=!g||!$('#f-state').value;
+}
 function fPaintAi(){
   const ai=fEdit&&fEdit.ai;
   for(const m of ['k','p','c','f']){const on=!!(ai&&ai.fields.includes(m));$('#f-'+m+'-flag').hidden=!on;$('#f-'+m).classList.toggle('aifill',on);}
@@ -220,7 +255,7 @@ function fPaintAi(){
 }
 async function fFill(btn){
   const v=id=>$('#'+id).value, msg=$('#f-aimsg'), err=$('#f-err');
-  const body={name:v('f-name'),unit:v('f-unit'),kind:$('#f-form').dataset.kind,recipe:v('f-recipe')};
+  const body={name:v('f-name'),unit:v('f-unit'),kind:$('#f-form').dataset.kind,recipe:v('f-recipe'),state:v('f-state')};
   /* blank boxes and ones AI filled before get (re)estimated together, so one source covers them all */
   for(const m of ['k','p','c','f'])body[m]=fEdit.ai&&fEdit.ai.fields.includes(m)?'':v('f-'+m).trim();
   err.hidden=true;
@@ -229,6 +264,7 @@ async function fFill(btn){
   try{
     const r=await api('POST','/api/foods/ai-fill',body);
     for(const [m,x] of Object.entries(r.values))$('#f-'+m).value=x;
+    if(r.yield&&!$('#f-yield').value.trim())$('#f-yield').value=r.yield;
     fEdit.ai=r.ai;fPaintAi();
     msg.textContent=`AI filled in ${fList(r.ai.fields.map(m=>M_NAME[m]))}. Check them – its source is below.`;
   }catch(e){msg.hidden=true;if(!e.signedOut){err.textContent=e.message;err.hidden=false;}}
@@ -236,7 +272,7 @@ async function fFill(btn){
 }
 async function fSave(form){
   const v=id=>$('#'+id).value, err=$('#f-err');
-  const body={name:v('f-name'),unit:v('f-unit'),kind:form.dataset.kind,k:v('f-k'),p:v('f-p'),c:v('f-c'),f:v('f-f'),recipe:v('f-recipe'),public:$('#f-public').checked,ai:fEdit&&fEdit.ai};
+  const body={name:v('f-name'),unit:v('f-unit'),kind:form.dataset.kind,k:v('f-k'),p:v('f-p'),c:v('f-c'),f:v('f-f'),recipe:v('f-recipe'),public:$('#f-public').checked,ai:fEdit&&fEdit.ai,state:v('f-state'),yield:v('f-yield')};
   const id=form.dataset.id, btn=form.querySelector('button[type=submit]');
   btn.disabled=true;err.hidden=true;
   try{
@@ -263,7 +299,7 @@ document.addEventListener('click',e=>{
   if(a==='fkind'){
     const form=$('#f-form'),k=b.dataset.v;form.dataset.kind=k;
     form.querySelectorAll('[data-fa=fkind]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
-    if(!fEdit.unitSet)$('#f-unit').value=k==='meal'?'each':'g';
+    if(!fEdit.unitSet){$('#f-unit').value=k==='meal'?'each':'g';fPaintState();}
     $('#f-recipe-lbl').textContent=fNotesLabel(k);return;
   }
   fMsg='';
@@ -271,7 +307,10 @@ document.addEventListener('click',e=>{
   else if(a==='tag'){const t=b.dataset.v;fF.tags=fF.tags.includes(t)?fF.tags.filter(x=>x!==t):[...fF.tags,t];fKeep();b.setAttribute('aria-pressed',String(fF.tags.includes(t)));renderFoodList();}
   else if(a==='clear'){Object.assign(fF,{kind:'all',who:'all',tags:[]});fQuery='';fKeep();$('#f-q').value='';$('#f-who').value='all';
     document.querySelectorAll('[data-fa=tag]').forEach(x=>x.setAttribute('aria-pressed','false'));renderFoodList();}
-  else if(a==='add'){const f=fById(b.dataset.id);if(!f)return;fAdding={id:f.id,date:S.cur,qty:libDefault(f.unit),where:'off'};renderFoodList();const q=$('#f-aqty');if(q)q.focus();}
+  else if(a==='wtall'){fF.wt=b.dataset.v;fWt.clear();fKeep();$('#f-wt').innerHTML=fWtSeg(fF.wt,'wtall','');renderFoodList();}
+  else if(a==='wt'){fWt.set(b.dataset.id,b.dataset.v);if(fAdding&&fAdding.id===b.dataset.id)fAdding=null;renderFoodList();
+    const nb=document.querySelector(`.fcard[data-id="${b.dataset.id}"] [data-fa=wt][data-v=${b.dataset.v}]`);if(nb)nb.focus();}
+  else if(a==='add'){const f=fShown(fById(b.dataset.id));if(!f)return;fAdding={id:f.id,date:S.cur,qty:libDefault(f.unit),where:'off'};renderFoodList();const q=$('#f-aqty');if(q)q.focus();}
   else if(a==='cancel'){fAdding=null;renderFoodList();}
   else if(a==='del'){fDelete(+b.dataset.id);}
 });
@@ -279,7 +318,8 @@ document.addEventListener('change',e=>{
   if(view!=='foods')return;
   if(e.target.id==='f-who'){fF.who=e.target.value;fKeep();renderFoodList();}
   else if(e.target.id==='f-order'){fF.order=e.target.value;fKeep();renderFoodList();}
-  else if(e.target.id==='f-unit'&&fEdit){fEdit.unitSet=true;}
+  else if(e.target.id==='f-unit'&&fEdit){fEdit.unitSet=true;fPaintState();}
+  else if(e.target.id==='f-state'&&fEdit){fPaintState();}
 });
 document.addEventListener('input',e=>{
   if(view!=='foods')return;
@@ -292,13 +332,13 @@ document.addEventListener('input',e=>{
   else if(fAdding&&(id==='f-aqty'||id==='f-adate')){
     fAdding[id==='f-aqty'?'qty':'date']=e.target.value;
     if(id==='f-adate'){fAdding.where='off';$('#f-awhere').innerHTML=fWhereOpts(fAdding.date,'off');}
-    const f=fById(fAdding.id);if(f&&id==='f-aqty')$('#f-aprev').innerHTML=fMacros(libMac({u:f.unit,per:f},+e.target.value||0));
+    const f=fShown(fById(fAdding.id));if(f&&id==='f-aqty')$('#f-aprev').innerHTML=fMacros(libMac({u:f.unit,per:f},+e.target.value||0));
   }
 });
 document.addEventListener('submit',async e=>{
   if(e.target.id==='f-form'){e.preventDefault();fSave(e.target);}
   else if(e.target.id==='f-addform'){
-    e.preventDefault();const f=fById(e.target.dataset.id),date=$('#f-adate').value,qty=+$('#f-aqty').value||0;
+    e.preventDefault();const f=fShown(fById(e.target.dataset.id)),date=$('#f-adate').value,qty=+$('#f-aqty').value||0;
     if(!f)return;
     if(!isDate(date)||!(qty>0)){alert('Pick a day and an amount above 0.');return;}
     const w=$('#f-awhere').value;

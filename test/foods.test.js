@@ -20,7 +20,7 @@ const fakeAi = http.createServer((req, res) => {
     const j = JSON.parse(body); aiSeen.push(j);
     const est = /Mystery/.test(j.messages[1].content) ? { k: 'lots' }
       : { k: 165, p: 31, c: 0, f: 3.6, source: 'USDA FoodData Central – Chicken breast, raw', basis: ['100 g raw breast'],
-        url: 'javascript:alert(1)', confidence: 'high', fields: ['k', 'p', 'c', 'f'] };
+        url: 'javascript:alert(1)', confidence: 'high', fields: ['k', 'p', 'c', 'f'], yield: 74.6 };
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({ model: 'test/model', choices: [{ message: { content: JSON.stringify(est) } }] }));
   });
@@ -175,4 +175,27 @@ test('AI fills in only the blank values, and saved foods keep the flag and sourc
   assert.strictEqual(r.status, 400); assert.match(r.body.error, /name/);
   r = await ann('POST', '/api/foods/ai-fill', { name: 'Mystery stew', kind: 'meal', unit: 'each' });
   assert.strictEqual(r.status, 502); assert.match(r.body.error, /usable number/);
+});
+
+test('foods can be weighed raw or cooked, with a cooked yield', async () => {
+  const bob = await signIn('bob@example.com');
+  let r = await bob('POST', '/api/foods', { name: 'Basmati (dry)', unit: 'g', k: 350, p: 8, c: 78, f: 1, state: 'raw', yield: '280' });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual([r.body.state, r.body.yield], ['raw', 280]);
+  r = await bob('PUT', `/api/foods/${r.body.id}`, { ...r.body, state: 'cooked', yield: '' });
+  assert.deepStrictEqual([r.body.state, r.body.yield], ['cooked', null]);
+  /* only for foods in grams, and the yield has to make sense */
+  r = await bob('POST', '/api/foods', { name: 'Shake', unit: 'ml', k: 60, p: 10, c: 3, f: 1, state: 'raw', yield: 50 });
+  assert.deepStrictEqual([r.body.state, r.body.yield], ['', null]);
+  r = await bob('POST', '/api/foods', { name: 'Odd chicken', unit: 'g', k: 120, p: 22, c: 0, f: 3, state: 'raw', yield: 5000 });
+  assert.strictEqual(r.status, 400); assert.match(r.body.error, /Cooked weight/);
+  r = await bob('POST', '/api/foods', { name: 'Plain', unit: 'g', k: 100, p: 1, c: 1, f: 1, state: 'boiled' });
+  assert.strictEqual(r.body.state, '');
+  /* AI is told how the food is weighed and suggests a yield */
+  r = await bob('POST', '/api/foods/ai-fill', { name: 'Chicken thigh', unit: 'g', state: 'raw', k: '', p: '', c: '', f: '' });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.yield, 75);
+  assert.match(aiSeen.at(-1).messages[1].content, /weighed raw/);
+  r = await bob('POST', '/api/foods/ai-fill', { name: 'Chicken thigh', unit: 'g', k: '', p: '', c: '', f: '' });
+  assert.strictEqual(r.body.yield, undefined);
 });
