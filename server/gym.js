@@ -228,7 +228,7 @@ router.post('/ai-import', aiLimit, express.raw({ type: ai.TYPES_IN, limit: '10mb
   try {
     const names = q.exercises.all(req.user.id).map(e => e.name);
     const type = String(req.get('content-type') || '').split(';')[0].trim();
-    const { reply, model } = await ai.ask(prompt(names), Buffer.isBuffer(req.body) ? req.body : null, type, 'workout plan');
+    const { reply, model } = await ai.ask(prompt(names), Buffer.isBuffer(req.body) ? req.body : null, type, 'workout plan', { task: 'workout' });
     res.json({ ...tidyWorkouts(reply, req.user), model });
   } catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); if (!e.status) console.error(e); }
 });

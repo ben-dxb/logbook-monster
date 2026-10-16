@@ -10,6 +10,15 @@ const { FOODS } = require('../public/engine.js');
 const DEFAULT_MODEL = 'anthropic/claude-sonnet-4.5';
 const BASE = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
 const TYPES_IN = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
+/* Each kind of AI task can use its own OpenRouter model; one left blank uses the default model. */
+const TASKS = {
+  plan: { name: 'Meal plan import', hint: 'Reads a coach’s PDF or photo – needs a model that reads PDFs' },
+  workout: { name: 'Workout plan import', hint: 'Reads a PDF or photo of a training plan – needs a model that reads PDFs' },
+  food: { name: 'Food values', hint: 'Fills in blank calories and macros in the food library (text only)' },
+  pose: { name: 'Photo poses', hint: 'Tells front / side / back from a progress photo – needs a model that sees images' },
+  summary: { name: 'Timeline summary', hint: 'Writes the summary of trends on the Timeline (text only)' },
+};
+const MODEL_RE = /^[\w.\-/:]{3,100}$/;
 
 const q = {
   get: db.prepare("SELECT data FROM app_config WHERE key = 'openrouter'"),
@@ -19,15 +28,17 @@ const q = {
 
 function stored() { const r = q.get.get(); return r ? JSON.parse(r.data) : {}; }
 /* A key saved on the Admin page wins over OPENROUTER_API_KEY in .env. */
-function current() {
+function current(task) {
   const s = stored();
   const key = s.key || process.env.OPENROUTER_API_KEY || '';
-  return { key, source: s.key ? 'admin' : key ? 'env' : null, model: s.model || process.env.OPENROUTER_MODEL || DEFAULT_MODEL };
+  const model = s.model || process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
+  return { key, source: s.key ? 'admin' : key ? 'env' : null, model: (task && s.models && s.models[task]) || model };
 }
-/* What the browser may see: never the key itself. */
+/* What the browser may see: never the key itself. Only the super admin gets this (GET /api/admin/ai). */
 function status() {
-  const c = current();
-  return { configured: !!c.key, source: c.source, hint: c.key ? '…' + c.key.slice(-4) : '', model: c.model, defaultModel: DEFAULT_MODEL };
+  const c = current(), own = stored().models || {};
+  return { configured: !!c.key, source: c.source, hint: c.key ? '…' + c.key.slice(-4) : '', model: c.model, defaultModel: DEFAULT_MODEL,
+    tasks: Object.entries(TASKS).map(([id, t]) => ({ id, name: t.name, hint: t.hint, model: own[id] || '', uses: own[id] || c.model })) };
 }
 function save(body, user) {
   const s = stored();
@@ -38,8 +49,19 @@ function save(body, user) {
   }
   if (body.model !== undefined) {
     const model = String(body.model || '').trim();
-    if (model && !/^[\w.\-/:]{3,100}$/.test(model)) throw new Error('Model should look like provider/model-name');
+    if (model && !MODEL_RE.test(model)) throw new Error('Model should look like provider/model-name');
     if (model) s.model = model; else delete s.model;
+  }
+  if (body.models !== undefined) {
+    if (!body.models || typeof body.models !== 'object' || Array.isArray(body.models)) throw new Error('Task models must be an object');
+    const models = { ...(s.models || {}) };
+    for (const [id, v] of Object.entries(body.models)) {
+      if (!Object.prototype.hasOwnProperty.call(TASKS, id)) throw new Error(`Unknown AI task: ${String(id).slice(0, 40)}`);
+      const model = String(v || '').trim();
+      if (model && !MODEL_RE.test(model)) throw new Error(`${TASKS[id].name}: model should look like provider/model-name`);
+      if (model) models[id] = model; else delete models[id];
+    }
+    if (Object.keys(models).length) s.models = models; else delete s.models;
   }
   q.put.run(JSON.stringify(s), user.email);
   return status();
@@ -129,7 +151,7 @@ function tidy(raw, foods) {
 }
 
 /* One file plus instructions to the model; returns the JSON object in its reply. A quick question about a
-   picture can ask for a shorter reply and wait less (opts.maxTokens, opts.timeout). */
+   picture can ask for a shorter reply and wait less (opts.maxTokens, opts.timeout). opts.task picks the task's model. */
 async function ask(system, buf, type, what, opts = {}) {
   if (!current().key) throw Object.assign(new Error('Add an OpenRouter API key first'), { status: 400 });
   if (!TYPES_IN.includes(type)) throw Object.assign(new Error('Upload a PDF or a PNG, JPEG or WebP image'), { status: 400 });
@@ -138,17 +160,17 @@ async function ask(system, buf, type, what, opts = {}) {
   const part = type === 'application/pdf'
     ? { type: 'file', file: { filename: `${what.replace(/\W+/g, '-')}.pdf`, file_data: data } }
     : { type: 'image_url', image_url: { url: data } };
-  return call(system, [{ type: 'text', text: `Here is the ${what}. Reply with the JSON only.` }, part], opts.maxTokens || 16000, opts.timeout || 240000);
+  return call(system, [{ type: 'text', text: `Here is the ${what}. Reply with the JSON only.` }, part], opts.maxTokens || 16000, opts.timeout || 240000, opts.task);
 }
 
 /* Instructions plus text only (no file). */
-function askText(system, text) {
-  if (!current().key) throw Object.assign(new Error('AI isn’t set up – an admin can add an OpenRouter API key on the Admin page'), { status: 400 });
-  return call(system, String(text), 2000, 60000);
+function askText(system, text, opts = {}) {
+  if (!current().key) throw Object.assign(new Error('AI isn’t set up – the super admin can add an OpenRouter API key on the Super admin page'), { status: 400 });
+  return call(system, String(text), 2000, 60000, opts.task);
 }
 
-async function call(system, content, maxTokens, timeout) {
-  const c = current();
+async function call(system, content, maxTokens, timeout, task) {
+  const c = current(task);
   let r, j;
   try {
     r = await fetch(`${BASE}/chat/completions`, {
@@ -174,8 +196,8 @@ async function call(system, content, maxTokens, timeout) {
 
 async function importPlan(buf, type, user) {
   const foods = foodList(user);
-  const { reply, model } = await ask(prompt(foods), buf, type, 'meal plan');
+  const { reply, model } = await ask(prompt(foods), buf, type, 'meal plan', { task: 'plan' });
   return { ...tidy(reply, foods), model };
 }
 
-module.exports = { status, save, importPlan, ask, askText, TYPES_IN };
+module.exports = { status, save, importPlan, ask, askText, TYPES_IN, TASKS };

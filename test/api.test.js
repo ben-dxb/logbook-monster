@@ -313,8 +313,23 @@ test('AI import: admin-only key that is never shown, and the reply is tidied', a
   await friend.req('POST', '/auth/login', { email: 'friend@example.com', password: 'longenough2' });
   assert.strictEqual((await friend.req('GET', '/api/admin/ai')).status, 403);
   assert.strictEqual((await friend.req('PUT', '/api/admin/ai', { key: 'sk-or-v1-other-key-0000' })).status, 403);
+  assert.strictEqual((await friend.req('PUT', '/api/admin/ai', { models: { plan: 'x/y' } })).status, 403);
   assert.strictEqual((await pdf(friend)).status, 403);
   assert.strictEqual(aiSeen.length, 1);
+
+  /* a model per task: plan import uses its own, a task left blank falls back to the default */
+  assert.strictEqual((await admin.req('PUT', '/api/admin/ai', { models: { nope: 'x/y' } })).status, 400);
+  assert.strictEqual((await admin.req('PUT', '/api/admin/ai', { models: { plan: 'bad model!' } })).status, 400);
+  let ms = await admin.req('PUT', '/api/admin/ai', { models: { plan: 'plan/model', food: 'food/model' } });
+  assert.deepStrictEqual(ms.body.tasks.map(t => [t.id, t.model, t.uses]), [['plan', 'plan/model', 'plan/model'], ['workout', '', 'test/model'],
+    ['food', 'food/model', 'food/model'], ['pose', '', 'test/model'], ['summary', '', 'test/model']]);
+  await pdf(admin);
+  assert.strictEqual(aiSeen.at(-1).body.model, 'plan/model');
+  ms = await admin.req('PUT', '/api/admin/ai', { models: { plan: '' } });
+  assert.deepStrictEqual(ms.body.tasks.filter(t => t.model).map(t => t.id), ['food']);   /* only the one changed */
+  await pdf(admin);
+  assert.strictEqual(aiSeen.at(-1).body.model, 'test/model');
+  await admin.req('PUT', '/api/admin/ai', { models: { food: '' } });
 
   assert.strictEqual((await admin.req('PUT', '/api/admin/ai', { key: '' })).body.configured, false);
 });
