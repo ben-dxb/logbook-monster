@@ -405,6 +405,22 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       const cmpscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(cmpscroll <= 1, `horizontal overflow of ${cmpscroll}px on the photo compare page at ${w}px wide`);
       const cmpUrl = pg.url();
+      if (w > 600) {
+        /* each side zooms on its own; dragging a zoomed side moves it and doesn't open that photo */
+        await pg.waitForFunction(() => [...document.querySelectorAll('#p-cmp .pzoom img')].every(i => i.complete && i.naturalWidth > 0), null, { timeout: 5000 });
+        const cb = await pg.locator('#p-cmp .pzoom >> nth=0').boundingBox(), cx = cb.x + cb.width / 2, cy = cb.y + cb.height / 2;
+        const ct = () => pg.evaluate(() => [...document.querySelectorAll('#p-cmp .pzoom img')].map(i => i.style.transform));
+        await pg.mouse.move(cx, cy); await pg.mouse.wheel(0, -400);
+        await pg.waitForFunction(() => /scale/.test(document.querySelector('#p-cmp .pzoom img').style.transform));
+        const [c1] = await ct();
+        await pg.mouse.down(); await pg.mouse.move(cx - 40, cy - 30, { steps: 4 }); await pg.mouse.up();
+        const [c2, r2] = await ct();
+        expect(c2 !== c1 && /scale/.test(c2) && r2 === '', `dragging the zoomed left photo should move only it: ${c1} → ${c2}, right ${r2}`);
+        expect(pg.url() === cmpUrl, 'dragging a zoomed compare photo should not open it');
+        await pg.mouse.dblclick(cx, cy);
+        expect((await ct())[0] === '' && pg.url() === cmpUrl, 'a double-click should show the whole photo again and stay on Compare');
+        await pg.mouse.move(0, 0);
+      }
       await pg.click('#p-cmp .pside >> nth=0 >> [data-pa=match]'); await pg.waitForFunction(() => document.querySelectorAll('#p-cmp .pside img').length === 2);
       const other = await pg.evaluate(() => [...document.querySelectorAll('#p-ca option')].find(o => !o.selected && !/Oct/.test(o.textContent)).value);
       await pg.selectOption('#p-ca', other); await pg.waitForFunction(u => location.href !== u, cmpUrl);

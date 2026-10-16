@@ -397,7 +397,7 @@ function pCmpPage(x,y){
   const opts=sel=>PHOTOS.map(p=>`<option value="${p.id}"${p===sel?' selected':''}>${esc(pYmd(p.date))} · ${esc(pLabel(p))}${pWeightOn(p.date,ws)?' · '+esc(pKgTxt(pWeightOn(p.date,ws))):''}</option>`).join('');
   const side=(p,w,k,other,ow)=>`<figure class="pside">
       <label class="f"><span class="lbl">${k==='a'?'Before':'After'}</span><select id="p-c${k}" data-other="${other.id}">${opts(p)}</select></label>
-      <a href="#photos/${p.id}"><img src="${pSrc(p)}" alt="${esc(pLabel(p)+' photo, '+fmtLong(p.date))}"></a>
+      <a class="pzoom" href="#photos/${p.id}" title="Scroll to zoom, drag to move around, double-click to reset"><img src="${pSrc(p)}" alt="${esc(pLabel(p)+' photo, '+fmtLong(p.date))}"></a>
       <figcaption><b>${esc(pYmd(p.date))}</b> · ${esc(pLabel(p))}${w?' · '+esc(pKgTxt(w)):''}${p.note?`<br>${esc(p.note)}`:''}</figcaption>
       <button class="ghost" type="button" data-pa="match" data-keep="${other.id}" data-drop="${p.id}"${ow?'':' disabled'} title="Swap this side for the ${esc(pPoseName(other.pose).toLowerCase())} photo from another day when you weighed closest to that">${ow?`Find one at ${esc(ow.kg)} kg`:'No weigh-in to match'}</button></figure>`;
   const gap=pDayGap(a.date,b.date), sum=[gap?`${gap} day${gap===1?'':'s'} apart`:'Same day'];
@@ -423,14 +423,16 @@ function pMatch(keepId,dropId){
   pMsg='';go(`photos/compare/${keepId}/${best.p.id}`);
 }
 
-/* ---------- zoom on one photo ----------
+/* ---------- zoom on a photo (one photo, and each side of Compare) ----------
    The mouse wheel zooms in and out around the pointer (1× to 8×); while zoomed in, dragging moves the view and
-   a double-click goes back to the whole photo. Clicking the photo opens it full size only when it isn't zoomed. */
-let pZ=null;    /* {box, img, s, x, y} for the photo on screen; a new page makes a new one */
+   a double-click goes back to the whole photo. Clicking the photo opens it only when it isn't zoomed. */
+const pZs=new WeakMap();   /* frame → {box, img, s, x, y}; a new page makes new frames */
+let pZ=null;               /* the one being dragged */
 const P_ZMAX=8;
 function pZoomOf(box){
-  if(!pZ||pZ.box!==box)pZ={box,img:box.querySelector('img'),s:1,x:0,y:0,drag:null,moved:false};
-  return pZ;
+  let z=pZs.get(box);
+  if(!z)pZs.set(box,z={box,img:box.querySelector('img'),s:1,x:0,y:0,drag:null,moved:false});
+  return z;
 }
 function pZoomSet(z,s,x,y){
   const w=z.box.clientWidth, h=z.box.clientHeight;
@@ -452,7 +454,7 @@ document.addEventListener('pointerdown',e=>{
   const z=pZoomOf(box);z.moved=false;
   if(z.s===1)return;
   e.preventDefault();
-  z.drag={id:e.pointerId,px:e.clientX,py:e.clientY,x:z.x,y:z.y};
+  pZ=z;z.drag={id:e.pointerId,px:e.clientX,py:e.clientY,x:z.x,y:z.y};
   box.setPointerCapture(e.pointerId);box.classList.add('grab');
 });
 document.addEventListener('pointermove',e=>{
