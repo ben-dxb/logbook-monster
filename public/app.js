@@ -23,6 +23,7 @@ const SAVED={days:{},settings:null};        /* last JSON stored on the server, t
 const LOGGED=new Set();                     /* dates stored on the server */
 let view='day', month=todayStr().slice(0,7)+'-01', wRange=90, csrf='', ME='';
 let resetArmed=false, isAdmin=false;
+let LIB=[], LIBV=0;                         /* the food library (yours and shared), and a version to spot changes */
 
 /* ---------- server ---------- */
 async function api(method,url,body){
@@ -103,18 +104,22 @@ async function flush(){
 }
 window.addEventListener('beforeunload',e=>{if(pending.size||inFlight){e.preventDefault();e.returnValue='';}});
 
+/* Fetch a saved day, or start one from the plan. False if it couldn't be loaded. */
+async function loadDay(date){
+  if(S.days[date])return true;
+  if(LOGGED.has(date)){
+    showLoading(true);
+    try{const r=await api('GET','/api/days/'+date);
+      if(r&&!S.days[date]){S.days[date]=migrate(r.data);SAVED.days[date]=JSON.stringify(S.days[date]);}
+    }catch(e){showLoading(false);if(!e.signedOut)alert('Couldn’t load that day: '+e.message);return false;}
+    showLoading(false);
+  }
+  if(!S.days[date]){S.days[date]=freshDay(wdOf(date));if(SAVED.days[date]===undefined)SAVED.days[date]=JSON.stringify(S.days[date]);}
+  return true;
+}
 async function openDay(date){
   S.cur=date;
-  if(!S.days[date]){
-    if(LOGGED.has(date)){
-      showLoading(true);
-      try{const r=await api('GET','/api/days/'+date);
-        if(r){S.days[date]=migrate(r.data);SAVED.days[date]=JSON.stringify(S.days[date]);}
-      }catch(e){showLoading(false);if(!e.signedOut)alert('Couldn’t load that day: '+e.message);return;}
-      showLoading(false);
-    }
-    if(!S.days[date]) S.days[date]=freshDay(wdOf(date));
-  }
+  if(!await loadDay(date))return;
   if(S.cur===date) render();
 }
 async function saveNow(){                    /* log a plan you haven't changed */
@@ -230,7 +235,7 @@ function render(){
       <div class="boxes">${BOXES.map(([b,l])=>boxHtml(D,mi,b,l)).join('')}</div></section>`;
   }).join('');
   const ot=sum(D.off.map(o=>({k:+o.k||0,p:+o.p||0,c:+o.c||0,f:+o.f||0})));
-  $('#offlist').innerHTML=D.off.map((o,oi)=>`<div class="orow"><span>${esc(o.n||'Off-plan food')}</span>${o.snack?`<label class="qty"><input id="oq-${S.cur}-${oi}" type="number" inputmode="decimal" min="0" step="1" value="${+o.qty||0}" data-act="oqty" data-i="${oi}">${snackVal(o.snack).u==='g'?'g':'×'}</label>`:''}<span class="ml">${r0(+o.k||0)} kcal · P ${r1(+o.p||0)} · C ${r1(+o.c||0)} · F ${r1(+o.f||0)}</span><button class="x" data-act="odel" data-i="${oi}" aria-label="Remove">×</button></div>`).join('')
+  $('#offlist').innerHTML=D.off.map((o,oi)=>`<div class="orow"><span>${esc(o.n||'Off-plan food')}</span>${o.snack||o.lib?`<label class="qty"><input id="oq-${S.cur}-${oi}" type="number" inputmode="decimal" min="0" step="${o.lib&&o.u==='each'?'0.5':'1'}" value="${+o.qty||0}" data-act="oqty" data-i="${oi}">${o.lib?libUnit(o.u):snackVal(o.snack).u==='g'?'g':'×'}</label>`:''}<span class="ml">${r0(+o.k||0)} kcal · P ${r1(+o.p||0)} · C ${r1(+o.c||0)} · F ${r1(+o.f||0)}</span><button class="x" data-act="odel" data-i="${oi}" aria-label="Remove">×</button></div>`).join('')
     +(D.off.length>1?`<div class="orow tot"><span>Total off plan</span>${macLine(ot)}</div>`:'');
   ['k','p','c','f'].forEach(m=>{$('#t-'+m).value=r0(+tg[m]);});
   {const {b,t}=pudBatch();const P=FOODS.pudding,sv=pudServe();
@@ -238,6 +243,7 @@ function render(){
     $('#pudsum').innerHTML=`<b>Per 100g:</b> ${r0(P.k)} kcal · P ${r1(P.p)} · C ${r1(P.c)} · F ${r1(P.f)}<br>`+
       `<b>Whole batch:</b> ${r0(t.k)} kcal · P ${r1(t.p)} · C ${r1(t.c)} · F ${r1(t.f)}<br>`+
       `<b>Biggest serving:</b> ${sv}g (${r0(sv*P.k/100)} kcal · P ${r1(sv*P.p/100)} · C ${r1(sv*P.c/100)} · F ${r1(sv*P.f/100)})`;}
+  renderLibForm();
   if(!$('#sn').options.length){$('#sn').innerHTML=SNACKS.map(x=>`<option value="${x.id}">${esc(x.n)}</option>`).join('');}
   $('#su').textContent=snackVal($('#sn').value).u==='g'?'Grams':'How many';
   $('#snackvals').innerHTML='<div class="sv"><span class="lbl">Per item / 100g</span><span class="lbl">kcal</span><span class="lbl">P</span><span class="lbl">C</span><span class="lbl">F</span>'+
@@ -245,6 +251,39 @@ function render(){
     ['k','p','c','f'].map(m=>`<input id="sv-${x.id}-${m}" type="number" inputmode="decimal" step="0.1" value="${v[m]}" data-act="sv" data-s="${x.id}" data-m="${m}" aria-label="${esc(x.n)} ${m}">`).join('');}).join('')+'</div>';
   persist();
 }
+
+/* ---------- food library on the day page (the library itself is in foods.js) ---------- */
+const libUnit=u=>u==='each'?'×':u;
+const libPer=u=>u==='each'?'per item':`per 100${u}`;
+function libMac(o,qty){const m=o.u==='each'?qty:qty/100;return {k:o.per.k*m,p:o.per.p*m,c:o.per.c*m,f:o.per.f*m};}
+/* what goes in a day's off-plan list: carries its own values, so it still works if the food is later changed or removed */
+function libEntry(food,qty){const o={n:food.name,lib:food.id,u:food.unit,per:{k:food.k,p:food.p,c:food.c,f:food.f},qty};return Object.assign(o,libMac(o,qty));}
+function libAdd(D,food,qty){
+  const ex=D.off.find(o=>o.lib===food.id&&o.u===food.unit&&['k','p','c','f'].every(m=>o.per[m]===food[m]));
+  if(ex){ex.qty+=qty;Object.assign(ex,libMac(ex,ex.qty));}else D.off.push(libEntry(food,qty));
+}
+const libDefault=u=>u==='each'?1:100;
+/* Add a library food to any day (from the Foods page), then show that day. */
+async function addFoodToDay(food,date,qty){
+  if(!(qty>0)||!isDate(date))return false;
+  if(!await loadDay(date))return false;
+  S.cur=date;act(D=>libAdd(D,food,qty));go('day/'+date);
+  return true;
+}
+function renderLibForm(){
+  const sel=$('#ln');$('#libform').hidden=!LIB.length;$('#libnone').hidden=!!LIB.length;
+  if(sel.dataset.v===String(LIBV))return;
+  const keep=sel.value;sel.dataset.v=String(LIBV);
+  const opt=f=>`<option value="${f.id}">${esc(f.name)} (${libPer(f.unit)})</option>`;
+  const mine=LIB.filter(f=>f.mine), shared=LIB.filter(f=>!f.mine);
+  sel.innerHTML=(mine.length?`<optgroup label="Your foods">${mine.map(opt).join('')}</optgroup>`:'')+
+    (shared.length?`<optgroup label="Shared by others">${shared.map(opt).join('')}</optgroup>`:'');
+  if(LIB.some(f=>String(f.id)===keep))sel.value=keep;
+  libQtyLabel(keep!==sel.value);
+}
+function libQtyLabel(reset){const f=LIB.find(x=>String(x.id)===$('#ln').value);if(!f)return;
+  $('#lu').textContent=f.unit==='each'?'How many':f.unit==='ml'?'Millilitres':'Grams';$('#lq').step=f.unit==='each'?'0.5':'1';
+  if(reset)$('#lq').value=libDefault(f.unit);}
 
 /* ---------- history view ---------- */
 function dayStatus(s){
@@ -359,8 +398,8 @@ async function setWeight(date,kg){
   else{await api('PUT','/api/weights/'+date,{kg});WEIGHTS[date]=Math.round(kg*100)/100;}
 }
 
-/* ---------- routing: #day/2026-10-15, #history/2026-10, #weight, #gym/…, #admin ---------- */
-const VIEWS=['day','history','weight','gym','admin'];
+/* ---------- routing: #day/2026-10-15, #history/2026-10, #weight, #gym/…, #foods/…, #admin ---------- */
+const VIEWS=['day','history','weight','gym','foods','admin'];
 function route(){
   const [v,arg,...more]=location.hash.replace(/^#/,'').split('/');
   view=VIEWS.includes(v)&&(v!=='admin'||isAdmin)?v:'day';
@@ -371,6 +410,7 @@ function route(){
   else if(view==='history'){if(/^\d{4}-\d{2}$/.test(arg||''))month=arg+'-01';renderHistory();}
   else if(view==='admin'){renderAdmin();}
   else if(view==='gym'){renderGym(arg?[arg,...more]:[]);}
+  else if(view==='foods'){renderFoods(arg?[arg]:[]);}
   else renderWeight();
 }
 function go(hash){if(location.hash==='#'+hash)route();else location.hash=hash;}
@@ -423,9 +463,10 @@ document.addEventListener('change',e=>{
   else if(a==='auto'){act(D=>{D.auto=el.checked;});}
   else if(el.dataset.add){const mi=+el.dataset.m,box=el.dataset.add,f=el.value;if(!f||!FOODS[f])return;
       editMeal(mi,box,(D,m)=>{const n=it(f,FOODS[f].min||(FOODS[f].step>=5?50:10));(m[box]=m[box]||[]).push(n);});}
-  else if(a==='oqty'){act(D=>{const o=D.off[+el.dataset.i];o.qty=Math.max(0,+el.value||0);Object.assign(o,snackMac(o.snack,o.qty));});}
+  else if(a==='oqty'){act(D=>{const o=D.off[+el.dataset.i];o.qty=Math.max(0,+el.value||0);Object.assign(o,o.lib?libMac(o,o.qty):snackMac(o.snack,o.qty));});}
   else if(a==='sv'){S.snackOv=S.snackOv||{};const id=el.dataset.s;S.snackOv[id]={...(S.snackOv[id]||{}),[el.dataset.m]:+el.value||0};
       act(D=>{D.off.forEach(o=>{if(o.snack===id)Object.assign(o,snackMac(id,o.qty));});});}
+  else if(el.id==='ln'){libQtyLabel(true);}
   else if(el.id==='sn'){const g=snackVal(el.value).u==='g';$('#su').textContent=g?'Grams':'How many';$('#sq').value=g?20:1;}
   else if(el.id&&el.id.startsWith('t-')){act(D=>{D.targets[el.id.slice(2)]=+el.value||0;});}
   else if(el.dataset.pud){S.pud={...PUD_DEFAULT,...(S.pud||{}),[el.dataset.pud]:Math.max(0,+el.value||0)};recalcPudding();
@@ -442,11 +483,21 @@ $('#snackform').addEventListener('submit',e=>{
     if(ex){ex.qty+=q;Object.assign(ex,snackMac(id,ex.qty));}
     else D.off.push({n:snackVal(id).n,snack:id,qty:q,...snackMac(id,q)});});
 });
-$('#offform').addEventListener('submit',e=>{
+$('#libform').addEventListener('submit',e=>{
+  e.preventDefault();const f=LIB.find(x=>String(x.id)===$('#ln').value),q=+$('#lq').value||0;if(!f||!(q>0))return;
+  act(D=>libAdd(D,f,q));
+});
+$('#offform').addEventListener('submit',async e=>{
   e.preventDefault();const v=id=>$('#'+id).value;
   const o={n:v('o-n').trim()||'Off-plan food',k:+v('o-k')||0,p:+v('o-p')||0,c:+v('o-c')||0,f:+v('o-f')||0};
   if(!o.k&&!o.p&&!o.c&&!o.f)return;
-  act(D=>{D.off.push(o);});['o-n','o-k','o-p','o-c','o-f'].forEach(id=>$('#'+id).value='');
+  let food=null;
+  if($('#o-save').checked){   /* keep it in the food library as one item, to add again on other days */
+    try{food=await api('POST','/api/foods',{name:o.n,unit:'each',k:o.k,p:o.p,c:o.c,f:o.f});LIB.push(food);LIB.sort((a,b)=>a.name.localeCompare(b.name));LIBV++;}
+    catch(err){if(!err.signedOut)alert('Couldn’t save it to your food library: '+err.message);return;}
+  }
+  act(D=>{if(food)libAdd(D,food,1);else D.off.push(o);});
+  ['o-n','o-k','o-p','o-c','o-f'].forEach(id=>$('#'+id).value='');$('#o-save').checked=false;
 });
 $('#coach').addEventListener('click',()=>act(D=>{D.targets={...(D.pie?PIE_TARGETS:COACH[TYPE[wd()]])};}));
 
@@ -479,7 +530,8 @@ document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(
     $('#who').textContent=me.name||me.email;$('#who').title=me.email;
     if(!me.hasPassword){$('#pwcur').hidden=true;$('#pwbox').querySelector('summary').textContent='Set a password';}
     isAdmin=!!me.admin;$('#adminlink').hidden=!isAdmin;
-    const [settings,sums,weights,defs]=await Promise.all([api('GET','/api/settings'),api('GET','/api/days'),api('GET','/api/weights'),api('GET','/api/defaults')]);
+    const [settings,sums,weights,defs,lib]=await Promise.all([api('GET','/api/settings'),api('GET','/api/days'),api('GET','/api/weights'),api('GET','/api/defaults'),api('GET','/api/foods')]);
+    LIB=(lib&&lib.foods)||[];LIBV++;
     applyDefaults(defs);
     S.pud={...PUD_DEFAULT,...((settings||{}).pud||{})};S.snackOv=(settings||{}).snackOv||{};
     SAVED.settings=JSON.stringify({pud:S.pud,snackOv:S.snackOv});

@@ -1,6 +1,6 @@
 'use strict';
 /* Browser smoke test: starts a throwaway server, signs in, edits and saves a day, logs a weight,
-   opens History and Weight, logs gym sets, uploads a plan and invites someone on the Admin page, at desktop and phone widths. Fails on any page error.
+   opens History and Weight, logs gym sets, adds a shared food to the library and to a day, uploads a plan and invites someone on the Admin page, at desktop and phone widths. Fails on any page error.
    Needs Playwright (npm i -g playwright, or available in the environment); skips if missing. */
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -90,6 +90,28 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       const cscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(cscroll <= 1, `horizontal overflow of ${cscroll}px on the exercises page at ${w}px wide`);
       await pg.click('[data-g=csvdrop]');
+      /* food library: add a shared food with a recipe, find it, add it to today's plan, then add it again from the Day page */
+      await pg.click('a[data-view=foods]'); await pg.waitForSelector('#v-foods:not([hidden]) #f-list');
+      if (first) {
+        await pg.click('#f-body a[href="#foods/new"]'); await pg.waitForSelector('#f-form');
+        await pg.fill('#f-name', 'Smoke pancakes'); await pg.selectOption('#f-unit', 'each');
+        await pg.fill('#f-k', '420'); await pg.fill('#f-p', '38'); await pg.fill('#f-c', '45'); await pg.fill('#f-f', '9');
+        await pg.fill('#f-recipe', '60g oats\n30g whey\n2 eggs'); await pg.check('#f-public');
+        await pg.click('#f-form button[type=submit]');
+        await pg.waitForFunction(() => /Added “Smoke pancakes”/.test((document.querySelector('#f-list') || {}).textContent), null, { timeout: 5000 });
+      }
+      await pg.fill('#f-q', 'oats'); await pg.waitForFunction(() => document.querySelectorAll('#f-list .fcard').length === 1);
+      expect(/Shared/.test(await pg.textContent('#f-list .fcard')), 'shared food should be marked Shared');
+      await pg.click('#f-list .fcard details summary'); expect(/30g whey/.test(await pg.textContent('#f-list .frecipe')), 'recipe should show');
+      await pg.click('#f-list [data-fa=add]'); await pg.waitForSelector('#f-addform');
+      await pg.fill('#f-aqty', '2'); expect(/840/.test(await pg.textContent('#f-aprev')), 'preview should scale to 2 items');
+      const fscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(fscroll <= 1, `horizontal overflow of ${fscroll}px on the food library at ${w}px wide`);
+      await pg.click('#f-addform button[type=submit]');
+      await pg.waitForSelector('#v-day:not([hidden]) #offlist', { timeout: 5000 });
+      await pg.waitForFunction(() => /Smoke pancakes/.test(document.querySelector('#offlist').textContent) && /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
+      await pg.selectOption('#ln', { label: 'Smoke pancakes (per item)' }); await pg.fill('#lq', '1'); await pg.click('#libform button');
+      await pg.waitForFunction(() => n => [...document.querySelectorAll('#offlist input[data-act=oqty]')].some(i => i.value === n), first ? '3' : '6', { timeout: 5000 });
       /* admin (the only account is the first one, so it is the admin) */
       await pg.click('#acct>summary'); await pg.click('#adminlink'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-meals .admeal');
       if (first) {
