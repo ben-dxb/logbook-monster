@@ -129,13 +129,14 @@ function readHistory(text,opts={}){
     from:sets.length?sets[0].at.slice(0,10):null,to:sets.length?sets[sets.length-1].at.slice(0,10):null};
 }
 
-/* Batches for the server: under ~200 kB each, never splitting sets that share a time and exercise
-   (the server compares those as a group to skip ones already imported). */
-function importBatches(sets,max=200000){
+/* Batches for the server: under ~200 kB and 2000 sets each (it takes 300 kB and 3000 sets), never
+   splitting sets that share a time and exercise (the server compares those as a group to skip ones
+   already imported). */
+function importBatches(sets,max=200000,maxSets=2000){
   const out=[];let cur=[],size=0;
   sets.forEach((s,i)=>{const n=JSON.stringify(s).length+1,prev=sets[i-1];
     const same=prev&&prev.at===s.at&&prev.name.toLowerCase()===s.name.toLowerCase();
-    if(cur.length&&size+n>max&&!same){out.push(cur);cur=[];size=0;}
+    if(cur.length&&(size+n>max||cur.length>=maxSets)&&!same){out.push(cur);cur=[];size=0;}
     cur.push(s);size+=n;});
   if(cur.length)out.push(cur);
   return out;

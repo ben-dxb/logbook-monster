@@ -2,7 +2,8 @@
 /* The history CSV reader (public/gymcsv.js) on the export layouts of Setgraph, Strong and Hevy. */
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parseCsv, readWhen, readHistory, importBatches } = require('../public/gymcsv.js');
+const GymCsv = require('../public/gymcsv.js');
+const { parseCsv, readWhen, readHistory, importBatches } = GymCsv;
 
 test('CSV fields: quotes, commas and line breaks inside quotes, semicolons, BOM', () => {
   assert.deepStrictEqual(parseCsv('﻿a,b,c\r\n"x, y","say ""hi""","two\nlines"\r\n\r\n'), [['a', 'b', 'c'], ['x, y', 'say "hi"', 'two\nlines']]);
@@ -85,4 +86,16 @@ test('batches stay under the size limit and never split sets done at the same mo
   const b = importBatches(sets, 1000);
   assert.strictEqual(b.flat().length, 50);
   b.forEach((x, i) => { if (i) assert.notStrictEqual(x[0].at, b[i - 1].at(-1).at); });
+});
+
+test('many short sets: every batch fits the server (3000 sets, 300 kB of JSON)', () => {
+  const sets = [];
+  for (let i = 0; i < 6000; i++) sets.push({ name: 'Row', reps: 5, kg: 60, at: `2026-01-05T10:${String(Math.floor(i / 60) % 60).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}` });
+  const b = GymCsv.importBatches(sets);
+  assert.strictEqual(b.flat().length, 6000);
+  assert.ok(b.length >= 3);
+  for (const x of b) {
+    assert.ok(x.length <= 3000, `batch of ${x.length} sets`);
+    assert.ok(JSON.stringify({ sets: x }).length <= 300 * 1024, 'batch over 300 kB');
+  }
 });
