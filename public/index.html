@@ -232,6 +232,43 @@
       </form>
       <div id="ad-foods" class="adfoods"></div>
     </section>
+    <section class="panel" aria-labelledby="ad-uh">
+      <h2 id="ad-uh">People</h2>
+      <p>Invite someone by email. They get a link to pick a password (or use Google with that address) and have their own days, history and weight. The link works once and runs out after 7 days. Invited people can sign in even if <code>ALLOWED_EMAILS</code> doesn’t list them.</p>
+      <form id="ad-invite" class="adinvite">
+        <label class="f"><span class="lbl">Email</span><input id="ad-iv-email" type="email" autocomplete="off" spellcheck="false" placeholder="friend@example.com"></label>
+        <label class="f"><span class="lbl">Name (optional)</span><input id="ad-iv-name" autocomplete="off" maxlength="100"></label>
+        <button class="btn" type="submit" id="ad-iv-btn">Send invite</button>
+      </form>
+      <div id="ad-ivmsg" role="status"></div>
+      <div id="ad-users" class="adusers"></div>
+    </section>
+    <section class="panel" aria-labelledby="ad-eh">
+      <h2 id="ad-eh">Email</h2>
+      <p>The email account Logbook Monster sends invites and notifications from. The password is kept on the server and never shown again.</p>
+      <div id="ad-mailstate" class="status"></div>
+      <form id="ad-mailform" class="admail">
+        <label class="f adwide"><span class="lbl">Send from (email address)</span><input id="ad-m-from" type="email" autocomplete="off" spellcheck="false" placeholder="you@gmail.com"></label>
+        <label class="f"><span class="lbl">Sender name</span><input id="ad-m-name" autocomplete="off" maxlength="100" placeholder="Logbook Monster"></label>
+        <label class="f"><span class="lbl">Provider</span><select id="ad-m-prov"><option value="gmail">Gmail</option><option value="outlook">Outlook / Microsoft 365</option><option value="other">Other (SMTP)</option></select></label>
+        <label class="f"><span class="lbl">SMTP server</span><input id="ad-m-host" autocomplete="off" spellcheck="false" placeholder="smtp.gmail.com"></label>
+        <label class="f"><span class="lbl">Port</span><input id="ad-m-port" type="number" inputmode="numeric" min="1" max="65535" placeholder="465"></label>
+        <label class="f"><span class="lbl">Username (blank = send-from address)</span><input id="ad-m-user" autocomplete="off" spellcheck="false"></label>
+        <label class="f"><span class="lbl">Password / app password</span><input id="ad-m-pass" type="password" autocomplete="new-password" spellcheck="false"></label>
+        <div class="admailact"><button class="btn" type="submit">Save email settings</button>
+          <button class="ghost" type="button" id="ad-m-del" hidden>Remove saved settings</button></div>
+      </form>
+      <details class="adhelp" id="ad-m-help"><summary>Using Gmail</summary>
+        <p>Gmail needs an <b>app password</b>, not your normal one: turn on 2-Step Verification for the Google account, then create an app password at
+          <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a> and paste the 16 letters above.
+          Server <code>smtp.gmail.com</code>, port <code>465</code>. Outlook uses <code>smtp.office365.com</code>, port <code>587</code>. Any other provider’s SMTP details work too.</p>
+      </details>
+      <p id="ad-mailmsg" class="sub" role="status"></p>
+      <form id="ad-mailtest" class="adinvite">
+        <label class="f"><span class="lbl">Send a test email to</span><input id="ad-m-to" type="email" autocomplete="off" spellcheck="false"></label>
+        <button class="ghost" type="submit" id="ad-m-testbtn">Send test email</button>
+      </form>
+    </section>
   </section>
 </div>
 <script src="/engine.js"></script>

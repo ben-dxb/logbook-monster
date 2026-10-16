@@ -57,6 +57,7 @@ const page = file => (req, res) => res.set('Cache-Control', 'no-store').sendFile
 const signedIn = req => !!(req.session && req.session.userId);
 
 app.get('/login', (req, res, next) => (signedIn(req) ? res.redirect('/') : page('login.html')(req, res, next)));
+app.get('/invite', page('invite.html'));
 app.get(['/', '/index.html'], (req, res, next) => (signedIn(req) ? page('index.html')(req, res, next) : res.redirect('/login')));
 app.use(express.static(pub, { index: false, maxAge: config.isProd ? '1h' : 0 }));
 

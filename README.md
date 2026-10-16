@@ -61,6 +61,7 @@ All secrets live only in `.env` on the server – nothing secret is ever sent to
 | `ALLOW_REGISTRATION` | `true` lets anyone sign up. Default `false`. |
 | `ADMIN_EMAILS` | Comma-separated. Who can open the Admin page. Empty = the first account created. |
 | `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | Optional. AI import of plan PDFs. A key saved on the Admin page wins over this one. |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` | Optional. The email account invites and notifications are sent from. Easier to fill in on the Admin page (Email); settings saved there win. |
 | `DB_PATH` | SQLite file. Default `./data/logbook-monster.db` (an existing `./data/mealswap.db` from before the rename is used if present). |
 | `TRUST_PROXY` | Set to `1` when running behind nginx/Caddy (default in production). |
 
@@ -77,6 +78,20 @@ All secrets live only in `.env` on the server – nothing secret is ever sent to
 
 A Google account whose email matches an existing account is linked to it. New Google accounts
 are only created for emails allowed by `ALLOWED_EMAILS` / `ALLOW_REGISTRATION`.
+
+## Inviting people and sending email
+
+On the Admin page:
+
+1. **Email** – the account the app sends from. For Gmail: turn on 2-Step Verification on the
+   Google account, create an app password at <https://myaccount.google.com/apppasswords>, then
+   enter the Gmail address under *Send from* and the 16-letter app password. Server
+   `smtp.gmail.com` and port `465` are filled in already. Save, then **Send test email**.
+2. **People** – enter someone's email and **Send invite**. They get a link (valid 7 days, works
+   once) to pick a password or use Google with that address. If email isn't set up, or the send
+   fails, the link is shown so you can pass it on yourself. You're emailed when they join.
+   Invited people can sign in even if `ALLOWED_EMAILS` doesn't list them. **Remove** deletes an
+   account and all its data.
 
 ## Deploying to a server
 
@@ -133,6 +148,8 @@ also download their own data from the account menu.
   are checked.
 - Strict Content-Security-Policy (no inline scripts), plus the usual Helmet headers.
 - All data is scoped to the signed-in user; input is validated on the server.
+- Invite links carry a random token (only its SHA-256 is stored), run out after 7 days and are
+  void once used or replaced. The SMTP password is kept on the server and never sent back.
 
 ## Layout
 

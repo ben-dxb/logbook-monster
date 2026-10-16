@@ -51,6 +51,13 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sessions_expires ON sessions(expires);
+CREATE TABLE IF NOT EXISTS invites (
+  token_hash TEXT PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS exercises (
   id         INTEGER PRIMARY KEY,
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -81,5 +88,10 @@ CREATE TABLE IF NOT EXISTS sets (
 CREATE INDEX IF NOT EXISTS sets_exercise ON sets(user_id, exercise_id, at);
 CREATE INDEX IF NOT EXISTS sets_at ON sets(user_id, at);
 `);
+
+/* Added after the first release: accounts an admin invited may sign in even when ALLOWED_EMAILS doesn't list them. */
+if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'invited_by')) {
+  db.exec('ALTER TABLE users ADD COLUMN invited_by TEXT');
+}
 
 module.exports = db;

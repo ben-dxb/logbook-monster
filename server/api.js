@@ -4,6 +4,9 @@ const db = require('./db');
 const { requireAuth, csrfProtect, csrfToken } = require('./auth');
 const defaults = require('./defaults');
 const ai = require('./ai');
+const config = require('./config');
+const mail = require('./mail');
+const users = require('./users');
 const gym = require('./gym');
 
 const q = {
@@ -71,6 +74,36 @@ router.put('/admin/ai', adminOnly, (req, res) => {
 router.post('/admin/ai-import', adminOnly, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), async (req, res) => {
   try { res.json(await ai.importPlan(Buffer.isBuffer(req.body) ? req.body : null, String(req.get('content-type') || '').split(';')[0].trim())); }
   catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); if (!e.status) console.error(e); }
+});
+
+/* Accounts: the list, inviting someone (emailed if email is set up) and removing an account. */
+const fail = (res, e) => { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); };
+const userId = req => (/^\d{1,12}$/.test(req.params.id) ? +req.params.id : 0);
+router.get('/admin/users', adminOnly, (req, res) => res.json({ users: users.list(req.user, defaults.isAdmin), email: mail.configured() }));
+router.post('/admin/users', adminOnly, async (req, res) => {
+  if (!isObj(req.body)) return bad(res, 'Send an email address');
+  try { res.json(await users.invite(req.body, req.user)); } catch (e) { fail(res, e); }
+});
+router.post('/admin/users/:id/invite', adminOnly, async (req, res) => {
+  try { res.json(await users.resend(userId(req), req.user)); } catch (e) { fail(res, e); }
+});
+router.delete('/admin/users/:id', adminOnly, (req, res) => {
+  try { res.json(users.remove(userId(req), req.user, defaults.isAdmin)); } catch (e) { fail(res, e); }
+});
+
+/* The account the app sends email from (SMTP). */
+router.get('/admin/email', adminOnly, (req, res) => res.json(mail.status()));
+router.put('/admin/email', adminOnly, (req, res) => {
+  if (!isObj(req.body)) return bad(res, 'Settings must be an object');
+  try { res.json(mail.save(req.body, req.user)); } catch (e) { bad(res, e.message); }
+});
+router.post('/admin/email/test', adminOnly, async (req, res) => {
+  const to = String((req.body && req.body.to) || req.user.email).trim();
+  try {
+    await mail.send({ to, subject: 'Logbook Monster test email',
+      text: `This is a test from Logbook Monster at ${config.baseUrl}.\n\nIf you can read this, invites and notifications will reach people.\n` });
+    res.json({ ok: true, to });
+  } catch (e) { fail(res, e); }
 });
 
 router.get('/settings', (req, res) => {
