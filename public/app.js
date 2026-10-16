@@ -458,7 +458,7 @@ function route(){
   else if(view==='gym'){renderGym(arg?[arg,...more]:[]);}
   else if(view==='foods'){renderFoods(arg?[arg]:[]);}
   else if(view==='supps'){renderSupps(arg?[arg,...more]:[]);}
-  else if(view==='photos'){renderPhotos(arg?[arg]:[]);}
+  else if(view==='photos'){renderPhotos(arg?[arg,...more]:[]);}
   else renderWeight();
 }
 function go(hash){if(location.hash==='#'+hash)route();else location.hash=hash;}
