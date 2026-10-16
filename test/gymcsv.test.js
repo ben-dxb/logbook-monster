@@ -99,3 +99,20 @@ test('many short sets: every batch fits the server (3000 sets, 300 kB of JSON)',
     assert.ok(JSON.stringify({ sets: x }).length <= 300 * 1024, 'batch over 300 kB');
   }
 });
+
+test('real Setgraph export layout: both lb and kg columns, decimal reps, durations', () => {
+  const csv = [
+    'Exercise,Date,Repetitions,Weight (lb),Weight (kg),Duration (seconds),Duration (formatted),Note,Label',
+    'Lat Pulldown,2024-07-13 18:19:42,8.0,159.83527046332387,72.5,,,,',
+    'Side Lateral Raises,2024-07-13 18:28:48,9.0,26.45549304220533,12.0,,,+3 half reps,',
+    'Plank,2024-07-13 18:40:00,,,,60,1:00,,',
+  ].join('\n');
+  const r = readHistory(csv);
+  assert.strictEqual(r.columns.weight, 'Weight (kg)');
+  assert.strictEqual(r.unitAsk, false);
+  assert.deepStrictEqual(r.sets, [
+    { name: 'Lat Pulldown', reps: 8, kg: 72.5, note: '', at: '2024-07-13T18:19:42' },
+    { name: 'Side Lateral Raises', reps: 9, kg: 12, note: '+3 half reps', at: '2024-07-13T18:28:48' },
+  ]);
+  assert.deepStrictEqual(r.skipped.map(s => s.line), [4]);   /* a timed set has no reps */
+});
