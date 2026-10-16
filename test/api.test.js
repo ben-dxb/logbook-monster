@@ -18,6 +18,12 @@ const fakeAi = http.createServer((req, res) => {
   req.on('data', c => { body += c; });
   req.on('end', () => {
     aiSeen.push({ url: req.url, auth: req.headers.authorization, body: JSON.parse(body) });
+    if (/workout tracking app/.test(aiSeen.at(-1).body.messages[0].content)) {
+      const program = { workouts: [{ name: 'Monday — Upper', description: '18 working sets.', exercises: [{ name: 'HACK SQUAT', target: '1 × 5–8 heavy' }, { name: 'Panatta high row', target: '2 × 8–15' }, { name: '' }] },
+        { name: 'Nothing here', exercises: [] }], notes: ['Guessed the row machine'] };
+      res.setHeader('content-type', 'application/json');
+      return res.end(JSON.stringify({ model: 'test/model', choices: [{ message: { content: JSON.stringify(program) } }] }));
+    }
     const plan = { plan: { T: [{ id: '1', name: 'Oats & skyr', p: [{ f: 'skyr_0', g: 250 }, { f: 'dragonfruit', g: 10 }], c: [{ f: 'banana', g: '120' }], x: [] }] },
       foods: { skyr_0: { n: 'Skyr 0%', k: 63, p: 11, c: 4, f: 0.2, d: 11, step: 5, unit: 'g', group: 'p' }, chicken: { n: 'hijack', k: 1, p: 1, c: 1, f: 1, step: 1 } },
       targets: { T: { k: 2900, p: 240, c: 350, f: 65 } }, schedule: ['T', 'R'], notes: ['Estimated the banana'] };
@@ -192,6 +198,78 @@ test('AI import: admin-only key that is never shown, and the reply is tidied', a
   assert.strictEqual(aiSeen.length, 1);
 
   assert.strictEqual((await admin.req('PUT', '/api/admin/ai', { key: '' })).body.configured, false);
+});
+
+test('gym: exercises, workouts and sets belong to one account and are checked', async () => {
+  const me = client();
+  await me.req('GET', '/auth/config');
+  await me.req('POST', '/auth/login', { email: 'friend@example.com', password: 'longenough2' });
+  await me.req('GET', '/api/me');
+  const ex = await me.req('POST', '/api/gym/exercises', { name: '  Hack   squat ' });
+  assert.deepStrictEqual([ex.status, ex.body.name], [200, 'Hack squat']);
+  assert.strictEqual((await me.req('POST', '/api/gym/exercises', { name: 'hack squat' })).body.id, ex.body.id);   /* same name, same exercise */
+  assert.strictEqual((await me.req('POST', '/api/gym/exercises', { name: '' })).status, 400);
+  const w = await me.req('POST', '/api/gym/workouts', { name: 'Legs', description: 'Heavy', items: [{ e: ex.body.id, target: '2 × 8–15' }] });
+  assert.strictEqual(w.status, 200);
+  assert.strictEqual((await me.req('POST', '/api/gym/workouts', { name: 'Bad', items: [{ e: 99999 }] })).status, 400);
+
+  const set = { exercise: ex.body.id, reps: 12, kg: 160, note: 'PR', at: '2026-10-15T17:43:38' };
+  const s1 = await me.req('POST', '/api/gym/sets', set);
+  assert.deepStrictEqual([s1.status, s1.body.reps, s1.body.kg, s1.body.at], [200, 12, 160, '2026-10-15T17:43:38']);
+  assert.strictEqual((await me.req('POST', '/api/gym/sets', { ...set, at: '2026-10-15T18:50' })).body.at, '2026-10-15T18:50:00');
+  for (const bad of [{ reps: 1.5 }, { reps: -1 }, { kg: 'heavy' }, { at: '2026-13-01T10:00' }, { at: 'yesterday' }, { exercise: 123456 }])
+    assert.strictEqual((await me.req('POST', '/api/gym/sets', { ...set, ...bad })).status, 400, JSON.stringify(bad));
+  assert.strictEqual((await me.req('PUT', '/api/gym/sets/' + s1.body.id, { ...set, reps: 10 })).body.reps, 10);
+  assert.strictEqual((await me.req('GET', '/api/gym/sets?exercise=' + ex.body.id)).body.length, 2);
+  assert.strictEqual((await me.req('GET', '/api/gym/sets?date=2026-10-15')).body.length, 2);
+  assert.strictEqual((await me.req('GET', '/api/gym/sets?date=2026-10-16')).body.length, 0);
+  const sessions = (await me.req('GET', '/api/gym/sessions')).body;
+  assert.deepStrictEqual([sessions[0].date, sessions[0].sets, sessions[0].volume, sessions[0].ex], ['2026-10-15', 2, 3520, [ex.body.id]]);
+  const all = (await me.req('GET', '/api/gym')).body;
+  assert.deepStrictEqual([all.exercises[0].sets, all.exercises[0].last, all.workouts[0].items], [2, '2026-10-15T18:50:00', [{ e: ex.body.id, target: '2 × 8–15' }]]);
+
+  /* someone else sees none of it and can't touch it */
+  const other = client();
+  await other.req('GET', '/auth/config');
+  await other.req('POST', '/auth/login', { email: 'me@example.com', password: 'longenough1' });
+  await other.req('GET', '/api/me');
+  assert.deepStrictEqual((await other.req('GET', '/api/gym')).body.exercises.length, 0);
+  assert.strictEqual((await other.req('GET', '/api/gym/sets/' + s1.body.id)).status, 404);
+  assert.strictEqual((await other.req('PUT', '/api/gym/sets/' + s1.body.id, set)).status, 404);
+  assert.strictEqual((await other.req('POST', '/api/gym/sets', set)).status, 400);
+  await other.req('DELETE', '/api/gym/sets/' + s1.body.id);
+  await other.req('DELETE', '/api/gym/exercises/' + ex.body.id);
+  assert.strictEqual((await me.req('GET', '/api/gym/sets?exercise=' + ex.body.id)).body.length, 2);
+
+  /* AI: read a plan (uses the admin's key), check the result, then import it */
+  assert.strictEqual((await other.req('PUT', '/api/admin/ai', { key: 'sk-or-v1-secret-1234abcd' })).status, 200);
+  const csrf = (await me.req('GET', '/api/me')).body.csrf;
+  const r = await fetch(BASE + '/api/gym/ai-import', { method: 'POST', body: Buffer.from([0xff, 0xd8, 0xff]),
+    headers: { 'content-type': 'image/jpeg', 'x-csrf-token': csrf, cookie: me.cookie() } });
+  const plan = await r.json();
+  assert.strictEqual(r.status, 200, JSON.stringify(plan));
+  assert.match(aiSeen.at(-1).body.messages[0].content, /Hack squat/);                 /* knows your exercises */
+  assert.match(aiSeen.at(-1).body.messages[1].content[1].image_url.url, /^data:image\/jpeg;base64,/);
+  assert.strictEqual(plan.workouts.length, 1);                                          /* empty workout dropped */
+  assert.deepStrictEqual(plan.workouts[0].exercises, [{ name: 'Hack squat', target: '1 × 5–8 heavy', existing: ex.body.id },
+    { name: 'Panatta high row', target: '2 × 8–15', existing: null }]);
+  assert.deepStrictEqual(plan.notes, ['Guessed the row machine']);
+  const imp = await me.req('POST', '/api/gym/import', { workouts: plan.workouts });
+  assert.strictEqual(imp.status, 200);
+  assert.deepStrictEqual(imp.body.workouts.map(x => x.name), ['Legs', 'Monday — Upper']);
+  assert.deepStrictEqual(imp.body.exercises.map(x => x.name), ['Hack squat', 'Panatta high row']);
+  assert.strictEqual(imp.body.workouts[1].items[0].e, ex.body.id);
+  assert.strictEqual((await me.req('POST', '/api/gym/import', { workouts: [{ name: 'x'.repeat(81), exercises: [] }] })).status, 400);
+  assert.strictEqual((await me.req('GET', '/api/gym')).body.workouts.length, 2);       /* a failed import adds nothing */
+  await other.req('PUT', '/api/admin/ai', { key: '' });
+
+  /* deleting an exercise takes its sets and drops it from workouts */
+  await me.req('PUT', '/api/gym/order', { ids: [imp.body.workouts[1].id, w.body.id] });
+  assert.strictEqual((await me.req('DELETE', '/api/gym/exercises/' + ex.body.id)).status, 200);
+  const after = (await me.req('GET', '/api/gym')).body;
+  assert.deepStrictEqual(after.workouts.map(x => [x.name, x.items.length]), [['Monday — Upper', 1], ['Legs', 0]]);
+  assert.strictEqual((await me.req('GET', '/api/gym/sessions')).body.length, 0);
+  assert.ok(Array.isArray((await me.req('GET', '/api/export')).body.gym.sets));
 });
 
 test('security headers are set', async () => {

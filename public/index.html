@@ -18,6 +18,7 @@
       <a href="#day" data-view="day">Day</a>
       <a href="#history" data-view="history">History</a>
       <a href="#weight" data-view="weight">Weight</a>
+      <a href="#gym" data-view="gym">Gym</a>
     </nav>
     <details class="acct" id="acct">
       <summary><span id="who">Account</span></summary>
@@ -154,6 +155,16 @@
     </section>
   </section>
 
+  <!-- ===================== GYM ===================== -->
+  <section id="v-gym" class="view" hidden>
+    <nav class="seg gtabs" id="g-tabs" aria-label="Gym">
+      <a href="#gym" data-g="">Workouts</a>
+      <a href="#gym/sessions" data-g="sessions">Sessions</a>
+      <a href="#gym/x" data-g="x">Exercises</a>
+    </nav>
+    <div id="g-body" class="gbody"></div>
+  </section>
+
   <!-- ===================== ADMIN ===================== -->
   <section id="v-admin" class="view" hidden>
     <div class="adbar" role="status">
@@ -226,5 +237,6 @@
 <script src="/engine.js"></script>
 <script src="/app.js"></script>
 <script src="/admin.js"></script>
+<script src="/gym.js"></script>
 </body>
 </html>

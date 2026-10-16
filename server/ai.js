@@ -128,15 +128,15 @@ function tidy(raw, foods) {
   return { ...out, notes };
 }
 
-async function importPlan(buf, type) {
+/* One file plus instructions to the model; returns the JSON object in its reply. */
+async function ask(system, buf, type, what) {
   const c = current();
   if (!c.key) throw Object.assign(new Error('Add an OpenRouter API key first'), { status: 400 });
   if (!TYPES_IN.includes(type)) throw Object.assign(new Error('Upload a PDF or a PNG, JPEG or WebP image'), { status: 400 });
   if (!buf || !buf.length) throw Object.assign(new Error('The file is empty'), { status: 400 });
-  const foods = foodList();
   const data = `data:${type};base64,${buf.toString('base64')}`;
   const part = type === 'application/pdf'
-    ? { type: 'file', file: { filename: 'meal-plan.pdf', file_data: data } }
+    ? { type: 'file', file: { filename: `${what.replace(/\W+/g, '-')}.pdf`, file_data: data } }
     : { type: 'image_url', image_url: { url: data } };
   let r, j;
   try {
@@ -146,8 +146,8 @@ async function importPlan(buf, type) {
       headers: { authorization: `Bearer ${c.key}`, 'content-type': 'application/json', 'HTTP-Referer': config.baseUrl, 'X-Title': 'Meal Swap' },
       body: JSON.stringify({
         model: c.model, temperature: 0, max_tokens: 16000,
-        messages: [{ role: 'system', content: prompt(foods) },
-          { role: 'user', content: [{ type: 'text', text: 'Here is the meal plan. Reply with the JSON only.' }, part] }],
+        messages: [{ role: 'system', content: system },
+          { role: 'user', content: [{ type: 'text', text: `Here is the ${what}. Reply with the JSON only.` }, part] }],
       }),
     });
     j = await r.json().catch(() => ({}));
@@ -159,8 +159,13 @@ async function importPlan(buf, type) {
     throw Object.assign(new Error(r.status === 401 ? 'OpenRouter didn’t accept the API key' : `OpenRouter: ${String(msg).slice(0, 200)}`), { status: 502 });
   }
   const text = j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
-  const result = tidy(parseReply(Array.isArray(text) ? text.map(x => x.text || '').join('') : text), foods);
-  return { ...result, model: j.model || c.model };
+  return { reply: parseReply(Array.isArray(text) ? text.map(x => x.text || '').join('') : text), model: j.model || c.model };
 }
 
-module.exports = { status, save, importPlan, TYPES_IN };
+async function importPlan(buf, type) {
+  const foods = foodList();
+  const { reply, model } = await ask(prompt(foods), buf, type, 'meal plan');
+  return { ...tidy(reply, foods), model };
+}
+
+module.exports = { status, save, importPlan, ask, TYPES_IN };

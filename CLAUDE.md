@@ -25,9 +25,10 @@
 ## Layout
 
 - `server/` – Express app: `config.js` (.env), `auth.js` (password + Google OIDC, CSRF),
-  `api.js` (days, weights, settings), `db.js` (SQLite schema).
+  `api.js` (days, weights, settings), `gym.js` (exercises, workouts, sets, AI workout import), `db.js` (SQLite schema).
 - `public/engine.js` – the original calculator data and balancing maths. Change food data and plan
   here; keep the solver behaviour unless asked.
 - `public/app.js` – views (Day, History calendar, Weight), saving, routing.
+- `public/gym.js` – the Gym view (workouts, exercise sets, sessions, AI import preview).
 - Secrets live only in `.env` on the server; never send them to the client or commit them.
 - Strict CSP: no inline scripts or `style=` attributes in HTML.
