@@ -22,7 +22,6 @@
       <a href="#foods" data-view="foods">Food Library</a>
       <a href="#supps" data-view="supps">Supplements</a>
       <a href="#photos" data-view="photos">Photos</a>
-      <a href="#timeline" data-view="timeline">Timeline</a>
     </nav>
     <details class="acct" id="acct">
       <summary><span id="who">Account</span></summary>
@@ -127,6 +126,10 @@
 
   <!-- ===================== HISTORY ===================== -->
   <section id="v-history" class="view" hidden>
+    <nav class="seg gtabs htabs" aria-label="History">
+      <a href="#history" data-h="cal">Calendar</a>
+      <a href="#history/timeline" data-h="timeline">Timeline</a>
+    </nav>
     <div class="datebar">
       <button class="nav" data-act="mprev" aria-label="Previous month">‹</button>
       <div class="dt"><h2 id="mtitle"></h2></div>
@@ -197,8 +200,12 @@
     <div id="p-body" class="gbody"></div>
   </section>
 
-  <!-- ===================== TIMELINE ===================== -->
+  <!-- ===================== TIMELINE (History › Timeline tab) ===================== -->
   <section id="v-timeline" class="view" hidden>
+    <nav class="seg gtabs htabs" aria-label="History">
+      <a href="#history" data-h="cal">Calendar</a>
+      <a href="#history/timeline" data-h="timeline">Timeline</a>
+    </nav>
     <div id="t-body" class="gbody"></div>
   </section>
   <dialog id="t-card" class="tcard" aria-labelledby="t-ctitle"><div id="t-cbody" class="tcbody"></div></dialog>

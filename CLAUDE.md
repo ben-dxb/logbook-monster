@@ -52,7 +52,7 @@
   (`#photos/compare/<id>/<id>`, two photos picked in the catalog; "Find one at N kg" swaps in the closest-weight photo). The browser shrinks each to a JPEG (dropping EXIF) and sends a thumbnail
   after it; `POST /api/photos/:id/ai-pose` asks the AI for the pose (front/side/back/other) from the thumbnail – only when the person asks
   ("Let AI tell" on upload, "Tag poses with AI" over the photos shown, "Ask AI" on one photo); files live on disk in `PHOTO_DIR` (default `photos/` next to the database), only their details in SQLite.
-- `server/timeline.js` / `public/timeline.js` – the Timeline (`#timeline`, `#timeline/<date>` opens a day's card in a `<dialog>`): one day's food,
+- `server/timeline.js` / `public/timeline.js` – the Timeline tab of History (`#history` is the Calendar tab; `#history/timeline`, `#history/timeline/<date>` opens a day's card in a `<dialog>`): one day's food,
   weight, latest photo of each pose, supplements (that day + the 14-day regime) and gym sets; trend series (macros, weight, volume, Epley e1RM per
   exercise and a strength index, plus supplements with "Trend" ticked – `supplement_trends`, by name) toggled on the chart; `POST /api/timeline/summary`
   sends weekly averages and correlations of the shown metrics to the AI.

@@ -3,7 +3,7 @@
    photos at the time, your supplement regime and gym sets – and a trend chart of macros, weight, strength
    (Epley estimated one-rep max), volume and the supplements you follow ("Trend" in the supplements module),
    each metric switched on and off, with an AI read of how they relate.
-   #timeline, #timeline/2026-10-15 (that day's card). The numbers come from /api/timeline (server/timeline.js).
+   The Timeline tab of History: #history/timeline, #history/timeline/2026-10-15 (that day's card). The numbers come from /api/timeline (server/timeline.js).
    Uses helpers from app.js, gym.js (gEmpty) and photos.js (pThumb, pPoseName). */
 
 const T_KEY='logbook-monster-timeline';
@@ -145,7 +145,7 @@ function drawTrends(){
   const leave=()=>{tip.hidden=true;cx.setAttribute('visibility','hidden');};
   const hit=$('#t-hit');
   hit.addEventListener('pointermove',move);hit.addEventListener('pointerleave',leave);
-  hit.addEventListener('click',e=>{move(e);if(cur)go('timeline/'+cur);});
+  hit.addEventListener('click',e=>{move(e);if(cur)go('history/timeline/'+cur);});
 }
 
 /* ---------- AI summary ---------- */
@@ -234,9 +234,9 @@ document.addEventListener('click',e=>{
   if(a==='range'){tRange=+b.dataset.r;tKeep();document.querySelectorAll('[data-ta=range]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));tLoad();}
   else if(a==='metric'){const k=b.dataset.k;if(tOn.has(k))tOn.delete(k);else tOn.add(k);tKeep();b.setAttribute('aria-pressed',String(tOn.has(k)));drawTrends();}
   else if(a==='ai')tSummarise();
-  else if(a==='go')go('timeline/'+b.dataset.d);
+  else if(a==='go')go('history/timeline/'+b.dataset.d);
   else if(a==='close')tCloseCard();
-  else if(a==='cmove'&&tCardDate){const d=addDays(tCardDate,+b.dataset.n);history.replaceState(null,'','#timeline/'+d);tOpen(d);}
+  else if(a==='cmove'&&tCardDate){const d=addDays(tCardDate,+b.dataset.n);history.replaceState(null,'','#history/timeline/'+d);tOpen(d);}
 });
 document.addEventListener('change',e=>{
   if(view!=='timeline')return;
@@ -244,11 +244,11 @@ document.addEventListener('change',e=>{
 });
 document.addEventListener('submit',e=>{
   if(e.target.id!=='t-pick')return;e.preventDefault();
-  const d=$('#t-date').value;if(isDate(d))go('timeline/'+d);
+  const d=$('#t-date').value;if(isDate(d))go('history/timeline/'+d);
 });
-/* closing the card (×, Esc, a tap outside it) goes back to #timeline without a new history entry */
+/* closing the card (×, Esc, a tap outside it) goes back to #history/timeline without a new history entry */
 $('#t-card').addEventListener('close',()=>{const dlg=$('#t-card');const quiet=dlg.dataset.quiet;delete dlg.dataset.quiet;tCardDate=null;
-  if(!quiet&&/^#timeline\//.test(location.hash))history.replaceState(null,'','#timeline');});
+  if(!quiet&&/^#history\/timeline\//.test(location.hash))history.replaceState(null,'','#history/timeline');});
 $('#t-card').addEventListener('click',e=>{if(e.target===e.currentTarget)tCloseCard();});
 window.addEventListener('hashchange',()=>{if(view!=='timeline')tCloseCard(true);});
 let tRz;window.addEventListener('resize',()=>{clearTimeout(tRz);tRz=setTimeout(()=>{if(view==='timeline')drawTrends();},150);});

@@ -447,14 +447,19 @@ async function setWeight(date,kg){
   else{await api('PUT','/api/weights/'+date,{kg});WEIGHTS[date]=Math.round(kg*100)/100;}
 }
 
-/* ---------- routing: #day/2026-10-15, #history/2026-10, #weight, #gym/…, #foods/…, #supps/…, #photos/…, #timeline/…, #account, #admin ----------
+/* ---------- routing: #day/2026-10-15, #history/2026-10, #history/timeline/…, #weight, #gym/…, #foods/…, #supps/…, #photos/…, #account, #admin ----------
+   History has two tabs: Calendar (#history) and Timeline (#history/timeline, the 'timeline' view); old #timeline links still work.
    #account (account admin, anyone) and #admin (super admin) share the #v-admin page. */
 const VIEWS=['day','history','weight','gym','foods','supps','photos','timeline','account','admin'];
 const viewEl=n=>$('#v-'+(n==='account'?'admin':n));
 function route(){
-  const [v,arg,...more]=location.hash.replace(/^#/,'').split('/');
+  if(/^#timeline(\/|$)/.test(location.hash))history.replaceState(null,'','#history/'+location.hash.slice(1));
+  let [v,arg,...more]=location.hash.replace(/^#/,'').split('/');
+  if(v==='history'&&arg==='timeline'){v='timeline';[arg,...more]=more;}
   view=VIEWS.includes(v)&&(v!=='admin'||isAdmin)?v:'day';
-  document.querySelectorAll('.views a').forEach(a=>{if(a.dataset.view===view)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
+  const top=view==='timeline'?'history':view;
+  document.querySelectorAll('.views a').forEach(a=>{if(a.dataset.view===top)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
+  document.querySelectorAll('.htabs a').forEach(a=>{if(a.dataset.h===(view==='timeline'?'timeline':'cal'))a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
   VIEWS.forEach(n=>{viewEl(n).hidden=true;});viewEl(view).hidden=false;
   $('#acct').open=false;
   if(view==='day'){openDay(isDate(arg)?arg:S.cur);}

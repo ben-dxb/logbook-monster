@@ -99,6 +99,7 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         expect(await carb() === c0 && !(await meal.locator('.savebar').count()), 'undo should put the meal back');
       }
       await pg.click('a[data-view=history]'); await pg.waitForSelector('#v-history:not([hidden]) .cell.logged');
+      expect(await pg.getAttribute('#v-history .htabs [data-h=cal]', 'aria-current') === 'page', 'History should open on the Calendar tab');
       await pg.click('a[data-view=weight]'); await pg.waitForSelector('#v-weight:not([hidden]) #chart svg');
       /* gym: make a workout, log two sets, edit one, look at chart, records and sessions */
       await pg.click('a[data-view=gym]'); await pg.waitForSelector('#v-gym:not([hidden]) #g-body .glist');
@@ -304,7 +305,8 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.selectOption('#p-ca', other); await pg.waitForFunction(u => location.href !== u, cmpUrl);
       await pg.waitForFunction(() => document.querySelectorAll('#p-cmp .pside img').length === 2);
       /* timeline: the trend chart, switching metrics on and off, a followed supplement, a day's card from the chart and from a date */
-      await pg.click('a[data-view=timeline]'); await pg.waitForSelector('#v-timeline:not([hidden]) #t-chart svg', { timeout: 5000 });
+      await pg.click('a[data-view=history]'); await pg.click('#v-history .htabs [data-h=timeline]'); await pg.waitForSelector('#v-timeline:not([hidden]) #t-chart svg', { timeout: 5000 });
+      expect(await pg.getAttribute('a[data-view=history]', 'aria-current') === 'page' && await pg.getAttribute('#v-timeline .htabs [data-h=timeline]', 'aria-current') === 'page', 'the Timeline should be a tab of History');
       const marks = () => pg.locator('#t-chart .tl, #t-chart .td').count();
       const sup = '#t-metrics [data-k="sup:smoke creatine"]';
       expect(await pg.locator(sup).count() === 1, 'a supplement with Trend ticked should be a metric');
@@ -317,8 +319,8 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       expect(tscroll <= 1, `horizontal overflow of ${tscroll}px on the timeline at ${w}px wide`);
       await pg.hover('#t-hit'); await pg.waitForSelector('#t-tip:not([hidden])');
       await pg.click('#t-hit'); await pg.waitForSelector('#t-card[open] .tcgrid', { timeout: 5000 });
-      expect(/^#timeline\/\d{4}-\d\d-\d\d$/.test(await pg.evaluate(() => location.hash)), 'a point on the chart should open its day');
-      await pg.click('#t-card [data-ta=close]'); await pg.waitForFunction(() => !document.querySelector('#t-card').open && location.hash === '#timeline');
+      expect(/^#history\/timeline\/\d{4}-\d\d-\d\d$/.test(await pg.evaluate(() => location.hash)), 'a point on the chart should open its day');
+      await pg.click('#t-card [data-ta=close]'); await pg.waitForFunction(() => !document.querySelector('#t-card').open && location.hash === '#history/timeline');
       await pg.click('#t-pick [data-ta=go] >> nth=0'); await pg.waitForSelector('#t-card[open] .tcfood .stat', { timeout: 5000 });
       const card = await pg.textContent('#t-card');
       expect(/Smoke creatine/.test(card) && /Atlantis hack squat/.test(card) && /e1RM/.test(card) && /80\.5/.test(card), 'today’s card should show supplements, gym sets and weight');
@@ -327,7 +329,8 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       expect(dscroll <= 1, `horizontal overflow of ${dscroll}px with the day card open at ${w}px wide`);
       const t0 = await pg.textContent('#t-ctitle');
       await pg.click('#t-card [data-ta=cmove][data-n="-1"]'); await pg.waitForFunction(t => document.querySelector('#t-ctitle').textContent !== t, t0);
-      await pg.keyboard.press('Escape'); await pg.waitForFunction(() => !document.querySelector('#t-card').open && location.hash === '#timeline');
+      await pg.keyboard.press('Escape'); await pg.waitForFunction(() => !document.querySelector('#t-card').open && location.hash === '#history/timeline');
+      await pg.evaluate(() => { location.hash = '#timeline'; }); await pg.waitForFunction(() => location.hash === '#history/timeline' && !document.querySelector('#v-timeline').hidden);
       /* admin (the only account is the first one, so it is the admin) */
       await pg.click('#acct>summary'); await pg.click('#adminlink'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-meals .admeal');
       if (first) {
