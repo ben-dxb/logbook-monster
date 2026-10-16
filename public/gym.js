@@ -315,7 +315,7 @@ async function gCsvImport(){
   let added=0,skipped=0,fresh=0;
   try{
     for(const b of batches){const r=await api('POST','/api/gym/import-sets',{sets:b});added+=r.added;skipped+=r.skipped;fresh+=r.newExercises;C.sent+=b.length;renderGym();}
-    C.done=`Added ${added.toLocaleString()} set${added===1?'':'s'}${skipped?` (${skipped.toLocaleString()} you already had were skipped)`:''}${fresh?` and ${fresh} new exercise${fresh===1?'':'s'}`:''}.`;
+    C.done=`Added ${added.toLocaleString()} set${added===1?'':'s'}${skipped?` (${skipped.toLocaleString()} you already had ${skipped===1?'was':'were'} skipped)`:''}${fresh?` and ${fresh} new exercise${fresh===1?'':'s'}`:''}.`;
   }catch(e){if(e.signedOut)return;C.err=`Stopped after ${C.sent.toLocaleString()} sets: ${e.message}. Import the file again to carry on – sets already added are skipped.`;}
   C.busy=false;Object.keys(GSETS).forEach(k=>delete GSETS[k]);gChanged();
   try{await gLoad();}catch{}
