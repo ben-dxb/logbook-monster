@@ -419,6 +419,18 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
       expect(await pg.isHidden('#ad-tabs') && await pg.isHidden('#ad-aipanel') && await pg.isHidden('#ad-uh'), 'account admin has no super admin parts');
       if (first) {
+        /* the protein driver can be switched here too: saved straight away, survives a reload, then back to total */
+        const pbasis = () => pg.evaluate(() => fetch('/api/settings').then(r => r.json()).then(s => s.pBasis || 'total'));
+        await pg.click('#ad-pbasis [data-v=direct]');
+        const pbWait = async v => { for (let t = Date.now(); Date.now() - t < 5000 && await pbasis() !== v;) await pg.waitForTimeout(200); };
+        await pbWait('direct');
+        expect(await pbasis() === 'direct', 'direct protein picked on account admin should be saved');
+        expect(await pg.getAttribute('#ad-pbasis [data-v=direct]', 'aria-pressed') === 'true', 'account admin shows direct protein picked');
+        await pg.reload(); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
+        expect(await pg.getAttribute('#ad-pbasis [data-v=direct]', 'aria-pressed') === 'true', 'direct protein from account admin should survive reload');
+        await pg.click('#ad-pbasis [data-v=total]');
+        await pbWait('total');
+        expect(await pbasis() === 'total', 'protein basis back to total');
         await pg.setInputFiles('#ad-file', { name: 'plan.csv', mimeType: 'text/csv', buffer: Buffer.from(
           'day_type,meal,meal_name,box,food,grams,locked\nrest,1,Smoke bowl,protein,whey,40,yes\nrest,1,Smoke bowl,carbs,Banana (peeled),150,\n') });
         await pg.waitForFunction(() => /Loaded Rest from plan\.csv/.test(document.querySelector('#ad-upmsg').textContent), null, { timeout: 5000 });

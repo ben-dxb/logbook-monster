@@ -216,6 +216,8 @@ function renderWeightInline(){
   const prev=Object.keys(WEIGHTS).filter(d=>d<S.cur).sort().pop();
   $('#wtdelta').textContent=kg!=null&&prev?`${kg-WEIGHTS[prev]>=0?'+':'−'}${Math.abs(kg-WEIGHTS[prev]).toFixed(1)} kg since ${fmtShort(prev)}`:'';
 }
+/* the protein-basis buttons (Daily Tracker and Account admin) show the account setting */
+function pbSync(){document.querySelectorAll('[data-act="pbasis"]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===(pKey()==='d'?'direct':'total'))));}
 function render(){
   if(view!=='day')return;
   const D=day(), T=dayTotals(D), tg=D.targets, t=D.type||TYPE[wd()], td=todayStr();
@@ -231,7 +233,7 @@ function render(){
   $('#sum').innerHTML=MAC.map(m=>`<div class="stat"><span class="lbl">${names[m]}</span>
       <span class="num">${r0(val(m))}<i>/ ${r0(tg[m])}${m==='k'?'':'g'}</i></span>${chip(m,val(m),+tg[m])}
       ${m==='p'?`<span class="sub">${dir?`total ${r0(T.p)}g`:`direct ${r0(T.d)}g`}</span>`:''}</div>`).join('');
-  document.querySelectorAll('[data-act="pbasis"]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===(dir?'direct':'total'))));
+  pbSync();
   const left={k:tg.k-T.k,p:tg.p-T.p,c:tg.c-T.c,f:tg.f-T.f};
   $('#left').innerHTML=D.auto?'':`<b>Left to spend off plan:</b> ${r0(Math.max(0,left.k))} kcal · P ${r1(Math.max(0,left.p))} · C ${r1(Math.max(0,left.c))} · F ${r1(Math.max(0,left.f))}`;
   $('#left').hidden=D.auto;
@@ -465,7 +467,7 @@ document.addEventListener('click',e=>{
   else if(a==='eat'){eatMeal(+b.dataset.m);}
   else if(a==='uneat'){uneatMeal(+b.dataset.m);}
   else if(a==='odel'){act(D=>{D.off.splice(+b.dataset.i,1);});}
-  else if(a==='pbasis'){if(S.pBasis!==b.dataset.v){S.pBasis=b.dataset.v;act(()=>{});}}
+  else if(a==='pbasis'){if(S.pBasis!==b.dataset.v){S.pBasis=b.dataset.v;act(()=>{});if(view!=='day'){pbSync();persist();}}}
   else if(a==='reset'){if(!resetArmed){resetArmed=true;render();return;}resetArmed=false;
     if(anyEaten(day())&&!confirm('Some meals are marked eaten. Reset the whole day to the plan anyway? That undoes them.')){render();return;}
     S.days[S.cur]=freshOn(S.cur,day().type);render();}

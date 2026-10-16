@@ -105,6 +105,7 @@ function renderAdmin(){
   if(!mine){if(!adSuper){adSuper=true;auLoad();amLoad();}adTabs();return;}
   if(!AD){adPick();adLoad();}
   if(!SH)shLoad();
+  pbSync();
   adVersions();
   const numIn=(id,val,attrs,label)=>`<input id="${id}" type="number" inputmode="decimal" min="0" value="${val==null?'':val}" ${attrs} aria-label="${esc(label)}">`;
   const has=AD.templates.length>0;
