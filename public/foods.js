@@ -213,7 +213,7 @@ function fAddForm(f){
 function fWhereOpts(date,sel){
   let meals=[];
   if(isDate(date)){try{meals=S.days[date]?S.days[date].meals:planFor(wdOf(date),'omelette',false);}catch{meals=[];}}
-  return `<option value="off">Off plan</option>`+meals.map((m,mi)=>`<option value="${mi}"${String(mi)===String(sel)?' selected':''}>Meal ${esc(m.id)} – ${esc(m.name)}</option>`).join('');
+  return `<option value="off">Off plan</option>`+meals.map((m,mi)=>`<option value="${mi}"${String(mi)===String(sel)&&!m.eaten?' selected':''}${m.eaten?' disabled':''}>Meal ${esc(m.id)} – ${esc(m.name)}${m.eaten?' (eaten)':''}</option>`).join('');
 }
 
 /* ---------- add / edit ---------- */

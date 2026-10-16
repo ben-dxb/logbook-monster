@@ -66,6 +66,9 @@ h1{font-size:22px;font-weight:800;font-stretch:80%;margin:0;letter-spacing:.01em
 .ml{font-size:12px;color:var(--muted)} .ml b{color:var(--ink)}
 .mnote{margin:0;font-size:12px;color:var(--muted)}
 .meal.dirty{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.meal.eaten{border-color:var(--good)}
+.meal.eaten .boxes{opacity:.8}
+.meal header .ghost{font-size:12px;padding:2px 10px}
 .savebar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;background:var(--soft);border-radius:8px;padding:8px 10px;font-size:13px}
 .savebar .sb{display:flex;gap:8px}
 .boxes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:10px}

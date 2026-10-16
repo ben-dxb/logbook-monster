@@ -61,6 +61,23 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         expect(await pg.getAttribute('[data-act=pbasis][data-v=direct]', 'aria-pressed') === 'true', 'direct protein setting should survive reload');
         await pg.click('[data-act=pbasis][data-v=total]');
         await pg.waitForFunction(() => /Protein min/.test(document.querySelector('#sum').textContent) && !/Direct protein min/.test(document.querySelector('#sum').textContent), null, { timeout: 5000 });
+        /* eaten: marking a meal eaten locks all of it, survives a reload, and undoing needs a confirmation */
+        const m2 = '#meals .meal >> nth=1';
+        const amts = () => pg.evaluate(() => [...document.querySelectorAll('#meals .meal')[1].querySelectorAll('input[data-act=amt]')].map(x => x.value + (x.disabled ? 'd' : '')).join());
+        await pg.click(`${m2} >> [data-act=eat]`);
+        await pg.waitForFunction(() => /Saved/.test(document.querySelector('#status').textContent) && document.querySelectorAll('#meals .meal.eaten').length === 1, null, { timeout: 5000 });
+        const eatenAmts = await amts();
+        expect(/d$/.test(eatenAmts) && !(await pg.locator(`${m2} >> [data-act=del]`).count()) && !(await pg.locator(`${m2} >> select[data-add]`).count()), 'an eaten meal should be locked');
+        await pg.fill('#t-k', '2500'); await pg.press('#t-k', 'Tab');
+        await pg.waitForFunction(() => /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
+        expect(await amts() === eatenAmts, 'rebalancing the day should not move an eaten meal');
+        await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal.eaten');
+        pg.once('dialog', d => d.dismiss()); await pg.click(`${m2} >> [data-act=uneat]`);
+        expect(await pg.locator('#meals .meal.eaten').count() === 1, 'cancelling the confirmation should keep the meal eaten');
+        pg.once('dialog', d => d.accept()); await pg.click(`${m2} >> [data-act=uneat]`);
+        await pg.waitForFunction(() => !document.querySelector('#meals .meal.eaten') && /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
+        await pg.click('#coach');
+        await pg.waitForFunction(() => /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
       }
       await pg.click('a[data-view=history]'); await pg.waitForSelector('#v-history:not([hidden]) .cell.logged');
       await pg.click('a[data-view=weight]'); await pg.waitForSelector('#v-weight:not([hidden]) #chart svg');
