@@ -354,7 +354,7 @@ function renderWeight(){
     return `<div class="wrow"><a href="#day/${d}">${esc(parse(d).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short',year:'numeric'}))}</a>
       <span class="kg">${kg.toFixed(1)} kg</span><span class="ch">${c==null?'':(c>=0?'+':'−')+Math.abs(c).toFixed(1)}</span>
       <button class="x" data-act="wdel" data-d="${d}" aria-label="Delete weight for ${esc(fmtLong(d))}">×</button></div>`;}).join('')
-    :'<p class="empty">Log your first weigh-in above, or on any day in the Day view.</p>';
+    :'<p class="empty">Log your first weigh-in above, or on any day in the Food view.</p>';
 }
 function drawChart(pts,avg){
   const box=$('#chart');
