@@ -68,7 +68,7 @@ function logIn(req, user) {
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 20,
+  limit: config.authRateLimit,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: 'Too many attempts. Wait a few minutes and try again.' },
@@ -77,7 +77,7 @@ const limiter = rateLimit({
 /* Invite links get their own budget so opening one doesn't use up sign-in attempts (and the reverse). */
 const inviteLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 20,
+  limit: config.authRateLimit,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: 'Too many attempts. Wait a few minutes and try again.' },
