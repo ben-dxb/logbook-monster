@@ -4,9 +4,11 @@
    (Epley estimated one-rep max, plus the exercises you pick), volume and the supplements you follow ("Trend" in the supplements module),
    each metric switched on and off, with an AI read of how they relate.
    The Timeline tab of History: #history/timeline, #history/timeline/2026-10-15 (that day's card). The numbers come from /api/timeline (server/timeline.js).
-   Uses helpers from app.js, gym.js (gEmpty) and photos.js (pThumb, pPoseName). */
+   Uses helpers from app.js, gym.js (gEmpty) and photos.js (pThumb, pPoseName).
+   A coach link (coach.html) runs this too, read only: coach.js stands in for those helpers and sets SHARED. */
 
 const T_KEY='logbook-monster-timeline';
+const tRO=typeof SHARED!=='undefined';   /* a coach link: nothing to change, no links into the app, no AI */
 let TL=null, tTok=0, tAi=null, tAiErr='', tAiBusy=false, tCardDate=null, tCardTok=0;
 let tRange=90, tSmooth=true, tOn=new Set(['k','p','kg','str']);
 try{const st=JSON.parse(localStorage.getItem(T_KEY)||'null');
@@ -42,7 +44,8 @@ async function tLoad(){
 function tPage(){
   const rng=[[30,'30 days'],[90,'90 days'],[365,'1 year'],[0,'All']].map(([r,l])=>`<button type="button" data-ta="range" data-r="${r}" aria-pressed="${r===tRange}">${l}</button>`).join('');
   return `<div class="gbar"><h2>Timeline</h2></div>
-    <p class="fintro">Pick any day to see everything from it – what you ate, your weight, your latest photos at the time, your supplements and your gym sets. Tap a point on the chart to open that day.</p>
+    <p class="fintro">${tRO?'Pick any day to see everything from it – food, weight, the latest photos at the time, supplements and gym sets.'
+      :'Pick any day to see everything from it – what you ate, your weight, your latest photos at the time, your supplements and your gym sets.'} Tap a point on the chart to open that day.</p>
     <form id="t-pick" class="panel tpick">
       <label class="f"><span class="lbl">Go to a day</span><input type="date" id="t-date" value="${todayStr()}" max="${addDays(todayStr(),366)}"></label>
       <button class="btn" type="submit">Show that day</button>
@@ -56,10 +59,10 @@ function tPage(){
       <div class="ttools"><label class="tog"><input type="checkbox" id="t-smooth"${tSmooth?' checked':''}> 7-day average</label><span class="sub" id="t-scale"></span></div>
       <div id="t-chart" class="chart tchart"></div>
     </section>
-    <section class="panel" aria-labelledby="t-aih">
+    ${tRO?'':`<section class="panel" aria-labelledby="t-aih">
       <div class="charthead"><h2 id="t-aih">AI summary</h2><button class="btn" type="button" data-ta="ai" id="t-aibtn">Summarise the metrics shown</button></div>
       <div id="t-ai"></div>
-    </section>`;
+    </section>`}`;
 }
 
 /* ---------- metrics and chart ---------- */
@@ -71,14 +74,14 @@ function renderTrends(){
   $('#t-metrics').innerHTML=groups.map(g=>`<div class="tgroup"><span class="lbl">${esc(g.name)}</span><div class="tchips">${g.list.map(s=>{
       const on=tOn.has(s.key), none=!s.points.length;
       return `<button type="button" class="tm tc${col[s.key]}${none?' none':''}" data-ta="metric" data-k="${esc(s.key)}" aria-pressed="${on}" title="${none?'No data in this range':esc(s.name)}"><i class="tsw tc${col[s.key]}"></i>${esc(s.name)}</button>`;}).join('')
-    ||(g.name==='Supplements'?'<span class="sub">Tick “Trend” on a supplement in the <a href="#supps/lib">supplement library</a> to follow it here.</span>':'')}${g.name==='Gym'?tExPicker():''}</div></div>`).join('');
-  $('#t-aibtn').disabled=!TL.ai||tAiBusy;
+    ||(g.name==='Supplements'?tRO?'<span class="sub">No supplements followed.</span>':'<span class="sub">Tick “Trend” on a supplement in the <a href="#supps/lib">supplement library</a> to follow it here.</span>':'')}${g.name==='Gym'?tExPicker():''}</div></div>`).join('');
+  if($('#t-aibtn'))$('#t-aibtn').disabled=!TL.ai||tAiBusy;
   renderAi();
   drawTrends();
 }
 /* Exercises' e1RM lines are off until picked here (or "Trend" ticked on the exercise in the Gym) */
 function tExPicker(){
-  const xs=TL.exercises||[];if(!xs.length)return '';
+  const xs=TL.exercises||[];if(!xs.length||tRO)return '';
   const n=xs.filter(x=>x.trend).length;
   return `<details class="texpick" id="t-expick"><summary class="tm">＋ Exercises${n?` (${n})`:''}</summary>
     <div class="texbox">${xs.length>8?'<input type="search" id="t-exfind" placeholder="Find an exercise" aria-label="Find an exercise" autocomplete="off">':''}
@@ -212,7 +215,7 @@ function tCardHead(d,r){
 const tFoodName=(D,f)=>(FOODS[f]&&FOODS[f].n)||(D.lib&&D.lib[f]&&D.lib[f].n)||f;
 const tFoodUnit=(D,f)=>(FOODS[f]&&FOODS[f].unit)||(D.lib&&D.lib[f]&&D.lib[f].unit)||'g';
 function tCardBody(r){
-  const d=r.date, sec=(cls,title,body,link)=>`<section class="tcsec ${cls}"><h3 class="lbl">${title}</h3>${body}${link?`<a class="ghost tclink" href="${link[0]}">${link[1]}</a>`:''}</section>`;
+  const d=r.date, sec=(cls,title,body,link)=>`<section class="tcsec ${cls}"><h3 class="lbl">${title}</h3>${body}${link&&!tRO?`<a class="ghost tclink" href="${link[0]}">${link[1]}</a>`:''}</section>`;
   /* food */
   let food;
   if(r.food){
@@ -229,7 +232,7 @@ function tCardBody(r){
   const weight=w?`<p class="tbig">${w.kg.toFixed(1)}<i>kg</i></p><p class="sub">${w.ago?`Last weigh-in, ${esc(fmtShort(w.date))} (${tAgo(w.ago)})`:'Weighed in that day'}${w.avg7!=null&&!w.ago?` · 7-day average ${w.avg7.toFixed(1)} kg`:''}</p>`
     :gEmpty('No weigh-ins up to this day.');
   /* photos: the latest of each pose up to this day */
-  const photos=r.photos.length?`<div class="tcphotos">${r.photos.map(p=>`<a class="ptile" href="#photos/${p.id}"><img src="${pThumb(p)}" alt="${esc(pPoseName(p.pose)+' photo, '+fmtLong(p.date))}" loading="lazy" decoding="async"><span>${esc(pPoseName(p.pose))} · ${esc(p.ago?fmtShort(p.date):'that day')}</span></a>`).join('')}</div>`
+  const photos=r.photos.length?`<div class="tcphotos">${r.photos.map(p=>`<a class="ptile" href="${tRO?pSrc(p):'#photos/'+p.id}"${tRO?' target="_blank" rel="noopener"':''}><img src="${pThumb(p)}" alt="${esc(pPoseName(p.pose)+' photo, '+fmtLong(p.date))}" loading="lazy" decoding="async"><span>${esc(pPoseName(p.pose))} · ${esc(p.ago?fmtShort(p.date):'that day')}</span></a>`).join('')}</div>`
     :gEmpty('No progress photos up to this day.');
   /* supplements */
   const sp=r.supps;

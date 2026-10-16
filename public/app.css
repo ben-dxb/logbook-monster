@@ -232,6 +232,8 @@ footer{font-size:12px;color:var(--muted)}
 .adfact:empty{display:none}
 .adpdel{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:6px;align-items:end;max-width:520px}
 .adinvite{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) auto;gap:6px;align-items:end}
+.adshare{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px;align-items:end;max-width:720px}
+.adshare .btn{justify-self:start}
 #ad-mailtest{grid-template-columns:minmax(0,1fr) auto}
 .admail{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;align-items:end}
 .admail select{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 4px;font-size:13px}
@@ -518,3 +520,16 @@ footer{font-size:12px;color:var(--muted)}
   .tcstats{grid-template-columns:repeat(2,minmax(0,1fr))}
   .tcphotos{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+
+/* coach link page (coach.html): recent days */
+.cbanner h2{font-size:20px}
+.cdays{display:flex;flex-direction:column}
+.cday{display:grid;grid-template-columns:minmax(0,9em) minmax(0,1fr) minmax(0,1.2fr) auto;grid-template-areas:'d k m w';gap:4px 10px;align-items:center;padding:7px 4px;border-top:1px solid var(--line);color:var(--ink);text-decoration:none;font-size:14px}
+.cday:hover{background:var(--soft)}
+.cdd{display:flex;flex-direction:column;min-width:0}
+.cdd small{font-size:11px;color:var(--muted)}
+.cdk{display:flex;gap:6px;align-items:center;min-width:0}
+.cdw{text-align:right;white-space:nowrap}
+.cmore{align-self:flex-start}
+.cdd{grid-area:d}.cdk{grid-area:k}.cdm{grid-area:m}.cdw{grid-area:w}
+@media (max-width:700px){.cday{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:'d w' 'k m'}.cdm{text-align:right}}

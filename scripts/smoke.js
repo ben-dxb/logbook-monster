@@ -1,6 +1,6 @@
 'use strict';
 /* Browser smoke test: starts a throwaway server, signs in, weighs a meal-prep pack, edits and saves a day, logs a weight,
-   opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, uploads a plan, sets up AI models and invites someone on the Super admin tabs, at desktop and phone widths. Fails on any page error.
+   opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, shares a read-only coach link and opens it signed out, uploads a plan, sets up AI models and invites someone on the Super admin tabs, at desktop and phone widths. Fails on any page error.
    Needs Playwright (npm i -g playwright, or available in the environment); skips if missing. */
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -366,6 +366,31 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.click('#t-card [data-ta=cmove][data-n="-1"]'); await pg.waitForFunction(t => document.querySelector('#t-ctitle').textContent !== t, t0);
       await pg.keyboard.press('Escape'); await pg.waitForFunction(() => !document.querySelector('#t-card').open && location.hash === '#history/timeline');
       await pg.evaluate(() => { location.hash = '#timeline'; }); await pg.waitForFunction(() => location.hash === '#history/timeline' && !document.querySelector('#v-timeline').hidden);
+      /* coach link: made on Account admin, opened with no sign-in (read only: no edit controls, no AI), then switched off */
+      await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-share');
+      await pg.fill('#ad-sh-label', 'Smoke coach'); await pg.selectOption('#ad-sh-for', 'date');
+      expect(!(await pg.isHidden('#ad-sh-until')), 'picking "Until a date" should show a date field');
+      await pg.selectOption('#ad-sh-for', 'h24'); await pg.click('#ad-sh-btn');
+      await pg.waitForSelector('#ad-sh-link', { timeout: 5000 });
+      const coachUrl = await pg.inputValue('#ad-sh-link');
+      expect(/\/coach\/[A-Za-z0-9_-]{43}$/.test(coachUrl) && /Smoke coach/.test(await pg.textContent('#ad-shares')), 'a coach link should be made and listed');
+      const cctx = await browser.newContext({ viewport: { width: w, height: h } }), cp = await cctx.newPage();
+      cp.on('pageerror', e => errs.push('coach: ' + e.message));
+      let coachOff = false;   /* once switched off, the link's 404 is expected */
+      cp.on('console', m => { if (m.type() === 'error' && !coachOff) errs.push('coach: ' + m.text() + ' ' + JSON.stringify(m.location())); });
+      await cp.goto(coachUrl); await cp.waitForSelector('#c-main:not([hidden]) #t-chart svg', { timeout: 5000 });
+      expect(/smoke’s logbook/.test(await cp.textContent('#c-who')) && /Smoke coach/.test(await cp.textContent('#c-until')), 'the coach page should say whose logbook it is');
+      expect(await cp.locator('#c-days .cday').count() === 14 && /80\.5 kg/.test(await cp.textContent('#c-days')), 'the coach page should list recent days with weight');
+      expect(!(await cp.locator('#t-aibtn, #t-expick, .tclink, input[type=number]').count()), 'the coach page should have nothing to edit');
+      await cp.click('#c-days .cday >> nth=0'); await cp.waitForFunction(() => document.querySelector('#t-card').open && /Atlantis hack squat/.test(document.querySelector('#t-card').textContent), null, { timeout: 5000 });
+      expect(await cp.locator('#t-card .tcphotos .ptile img').count() >= 1, 'the coach should see the latest photos');
+      const coachScroll = await cp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(coachScroll <= 1, `horizontal overflow of ${coachScroll}px on the coach page at ${w}px wide`);
+      await cp.keyboard.press('Escape');
+      pg.once('dialog', d => d.accept()); await pg.click('#ad-shares [data-sh=off]');
+      await pg.waitForFunction(() => !document.querySelector('#ad-shares [data-sh=off]'), null, { timeout: 5000 });
+      coachOff = true; await cp.reload(); await cp.waitForSelector('#c-gone:not([hidden])', { timeout: 5000 });
+      await cctx.close();
       /* admin (the only account is the first one, so it is the admin) */
       await pg.click('#acct>summary'); await pg.click('#adminlink'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-meals .admeal');
       if (first) {

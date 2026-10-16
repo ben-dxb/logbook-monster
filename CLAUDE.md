@@ -63,6 +63,11 @@
   weight, latest photo of each pose, supplements (that day + the 14-day regime) and gym sets; trend series (macros, weight, volume, a strength index, Epley e1RM of the exercises
   you follow – `exercises.trend`, set by "Trend" on the exercise in the Gym or the Timeline's exercise picker, `PUT /api/gym/trends` –, plus supplements with "Trend" ticked – `supplement_trends`, by name) toggled on the chart; `POST /api/timeline/summary`
   sends weekly averages and correlations of the shown metrics to the AI.
+- `server/shares.js` / `public/coach.html` + `public/coach.js` – coach links: Account admin's "Share with your coach" makes a passwordless,
+  read-only link (`/coach/<secret>`, only the secret's SHA-256 stored, live until a time the person picks – up to a year – or switched off,
+  `/api/shares`). The coach page reads only through GET routes under `/coach/<secret>/api` (info, defaults, days, weights, `timeline`,
+  `photos`) and reuses `timeline.js` with `coach.js` standing in for the app's helpers (`SHARED` set → `tRO`: no edits, app links or AI).
+  Add a route there only if it is a read and the coach should see it.
 - `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by tests.
 - Secrets live only in `.env` on the server; never send them to the client or commit them.
 - Strict CSP: no inline scripts or `style=` attributes in HTML.

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Logbook Monster – coach view</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,400..800&display=swap">
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<!-- A coach link: someone's logbook, read only, no sign-in (coach.js, server/shares.js). -->
+<div class="wrap">
+  <header class="top"><h1>Logbook Monster</h1><span class="chip info">Read only</span></header>
+  <p id="c-loading" class="note">Loading…</p>
+  <section id="c-gone" class="panel" hidden>
+    <h2>This link doesn’t work any more</h2>
+    <p id="c-gonemsg">It has run out or been switched off. Ask for a new one.</p>
+  </section>
+  <div id="c-main" class="view" hidden>
+    <section class="panel cbanner" aria-labelledby="c-who">
+      <h2 id="c-who"></h2>
+      <p id="c-until"></p>
+    </section>
+    <section class="panel" aria-labelledby="c-dh">
+      <div class="charthead"><h2 id="c-dh">Recent days</h2><span class="sub">Tap a day for everything from it</span></div>
+      <div id="c-days" class="cdays"></div>
+      <button class="ghost cmore" type="button" id="c-more">Show 14 more days</button>
+    </section>
+    <section id="v-timeline" class="view">
+      <div id="t-body" class="gbody"></div>
+    </section>
+  </div>
+  <dialog id="t-card" class="tcard" aria-labelledby="t-ctitle"><div id="t-cbody" class="tcbody"></div></dialog>
+</div>
+<script src="/engine.js"></script>
+<script src="/coach.js"></script>
+<script src="/timeline.js"></script>
+</body>
+</html>

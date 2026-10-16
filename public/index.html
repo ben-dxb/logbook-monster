@@ -262,6 +262,22 @@
       </form>
       <div id="ad-foods" class="adfoods"></div>
     </section>
+    <section class="panel admine" aria-labelledby="ad-shh">
+      <h2 id="ad-shh">Share with your coach</h2>
+      <p>Make a link your coach can open without a password or an account to see your days, weight, trends, supplements, gym sets and progress photos – read only, so nothing can be changed. It stops working when it runs out, or as soon as you switch it off here. Anyone holding the link sees the same, so only send it to your coach.</p>
+      <form id="ad-share" class="adshare">
+        <label class="f"><span class="lbl">Who it’s for (optional)</span><input id="ad-sh-label" maxlength="60" autocomplete="off" placeholder="e.g. Coach Sam"></label>
+        <label class="f"><span class="lbl">Stays live for</span><select id="ad-sh-for">
+          <option value="h1">1 hour</option><option value="h24">1 day</option><option value="d3">3 days</option><option value="d7" selected>1 week</option>
+          <option value="d14">2 weeks</option><option value="d30">1 month</option><option value="d90">3 months</option><option value="d180">6 months</option>
+          <option value="d365">1 year</option><option value="date">Until a date…</option></select></label>
+        <label class="f" id="ad-sh-untilf" hidden><span class="lbl">Until the end of</span><input id="ad-sh-until" type="date"></label>
+        <button class="btn" type="submit" id="ad-sh-btn">Make link</button>
+      </form>
+      <div id="ad-shnew"></div>
+      <p id="ad-shmsg" class="sub" role="status"></p>
+      <div id="ad-shares" class="adusers"></div>
+    </section>
     <section class="panel admine" aria-labelledby="ad-pdh">
       <h2 id="ad-pdh">Delete progress photos</h2>
       <p>Delete all your progress photos taken between two dates, both days included. They’re gone for good – download any you want to keep first.</p>
