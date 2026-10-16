@@ -359,10 +359,10 @@ async function setWeight(date,kg){
   else{await api('PUT','/api/weights/'+date,{kg});WEIGHTS[date]=Math.round(kg*100)/100;}
 }
 
-/* ---------- routing: #day/2026-10-15, #history/2026-10, #weight, #admin ---------- */
-const VIEWS=['day','history','weight','admin'];
+/* ---------- routing: #day/2026-10-15, #history/2026-10, #weight, #gym/…, #admin ---------- */
+const VIEWS=['day','history','weight','gym','admin'];
 function route(){
-  const [v,arg]=location.hash.replace(/^#/,'').split('/');
+  const [v,arg,...more]=location.hash.replace(/^#/,'').split('/');
   view=VIEWS.includes(v)&&(v!=='admin'||isAdmin)?v:'day';
   document.querySelectorAll('.views a').forEach(a=>{if(a.dataset.view===view)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
   VIEWS.forEach(n=>{$('#v-'+n).hidden=n!==view;});
@@ -370,6 +370,7 @@ function route(){
   if(view==='day'){openDay(isDate(arg)?arg:S.cur);}
   else if(view==='history'){if(/^\d{4}-\d{2}$/.test(arg||''))month=arg+'-01';renderHistory();}
   else if(view==='admin'){renderAdmin();}
+  else if(view==='gym'){renderGym(arg?[arg,...more]:[]);}
   else renderWeight();
 }
 function go(hash){if(location.hash==='#'+hash)route();else location.hash=hash;}

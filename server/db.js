@@ -51,6 +51,35 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sessions_expires ON sessions(expires);
+CREATE TABLE IF NOT EXISTS exercises (
+  id         INTEGER PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name       TEXT NOT NULL,
+  notes      TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (user_id, name COLLATE NOCASE)
+);
+CREATE TABLE IF NOT EXISTS workouts (
+  id          INTEGER PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  items       TEXT NOT NULL DEFAULT '[]',
+  position    INTEGER NOT NULL DEFAULT 0,
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+/* at is the local date and time the set was done, YYYY-MM-DDTHH:MM:SS, like the dates of days. */
+CREATE TABLE IF NOT EXISTS sets (
+  id          INTEGER PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  exercise_id INTEGER NOT NULL REFERENCES exercises(id) ON DELETE CASCADE,
+  reps        INTEGER NOT NULL,
+  kg          REAL NOT NULL,
+  note        TEXT NOT NULL DEFAULT '',
+  at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sets_exercise ON sets(user_id, exercise_id, at);
+CREATE INDEX IF NOT EXISTS sets_at ON sets(user_id, at);
 `);
 
 module.exports = db;

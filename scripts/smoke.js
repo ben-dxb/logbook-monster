@@ -1,6 +1,6 @@
 'use strict';
 /* Browser smoke test: starts a throwaway server, signs in, edits and saves a day, logs a weight,
-   opens History and Weight, uploads a plan on the Admin page, at desktop and phone widths. Fails on any page error.
+   opens History and Weight, logs gym sets, uploads a plan on the Admin page, at desktop and phone widths. Fails on any page error.
    Needs Playwright (npm i -g playwright, or available in the environment); skips if missing. */
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -49,6 +49,33 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       expect(await pg.inputValue('#wt') === '80.5', 'weight should survive reload');
       await pg.click('a[data-view=history]'); await pg.waitForSelector('#v-history:not([hidden]) .cell.logged');
       await pg.click('a[data-view=weight]'); await pg.waitForSelector('#v-weight:not([hidden]) #chart svg');
+      /* gym: make a workout, log two sets, edit one, look at chart, records and sessions */
+      await pg.click('a[data-view=gym]'); await pg.waitForSelector('#v-gym:not([hidden]) #g-body .glist');
+      await pg.click('a[href="#gym/new"]'); await pg.fill('#g-wname', 'Saturday — Lower');
+      await pg.fill('#g-exname', 'Atlantis hack squat'); await pg.press('#g-exname', 'Enter');
+      await pg.waitForSelector('#g-wt-0'); await pg.fill('#g-wt-0', '1 × 5–8 heavy');
+      await pg.click('[data-g=wsave]');
+      await pg.waitForFunction(() => /Saturday — Lower/.test(document.querySelector('#g-body .gbar h2').textContent), null, { timeout: 5000 });
+      await pg.click('#g-body a.grow[href^="#gym/e/"]'); await pg.waitForSelector('#g-quick');
+      const before = await pg.locator('.gset').count();
+      await pg.fill('#g-reps', '12'); await pg.fill('#g-kg', '160'); await pg.click('#g-quick .gok');
+      await pg.waitForFunction(n => document.querySelectorAll('.gset').length === n + 1, before, { timeout: 5000 });
+      await pg.click('[data-g=adj][data-f=reps][data-d="-1"]'); await pg.click('[data-g=adj][data-f=kg][data-d="5"]');
+      expect(await pg.inputValue('#g-reps') === '11' && await pg.inputValue('#g-kg') === '165', 'steppers should change reps and weight');
+      await pg.click('#g-quick .gok');
+      await pg.waitForFunction(n => document.querySelectorAll('.gset').length === n + 2, before, { timeout: 5000 });
+      expect(/\+0:0/.test(await pg.textContent('.gday')), 'second set should show the rest time');
+      await pg.click('.gday .gset >> nth=0'); await pg.waitForSelector('#g-setform');
+      await pg.fill('#g-sr', '10'); await pg.click('#g-setform button[type=submit]');
+      await pg.waitForFunction(() => /10rep/.test(document.querySelector('.gday') && document.querySelector('.gday').textContent), null, { timeout: 5000 });
+      await pg.click('[data-g=tab][data-t=records]'); await pg.waitForSelector('.greps');
+      await pg.click('[data-g=tab][data-t=chart]'); await pg.waitForSelector('#g-chart');
+      await pg.click('[data-g=tab][data-t=sets]'); await pg.waitForSelector('#g-quick');
+      const gscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(gscroll <= 1, `horizontal overflow of ${gscroll}px on the gym exercise page at ${w}px wide`);
+      await pg.click('#g-tabs a[data-g=sessions]'); await pg.waitForSelector('#g-body a.grow[href^="#gym/d/"]');
+      await pg.click('#g-body a.grow[href^="#gym/d/"]'); await pg.waitForSelector('#g-body .gday');
+      await pg.click('#g-tabs a[data-g=x]'); await pg.waitForSelector('#g-exlist a.grow');
       /* admin (the only account is the first one, so it is the admin) */
       await pg.click('#acct>summary'); await pg.click('#adminlink'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-meals .admeal');
       if (first) {

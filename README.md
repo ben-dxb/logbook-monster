@@ -1,7 +1,7 @@
 # Logbook Monster
 
 Logbook Monster (formerly Meal Swap) is a meal-swap calculator as a self-hosted web app. Each date is its own saved day, there's a
-calendar of past days, weight tracking with a trend chart, and sign-in with email + password
+calendar of past days, weight tracking with a trend chart, a gym log for workouts and sets, and sign-in with email + password
 or Google.
 
 - **Day** – the calculator, for any date. Training/rest plan follows the weekday. Every change
@@ -10,6 +10,17 @@ or Google.
 - **History** – a month calendar of logged days (calories vs target, protein, weight) with a
   month summary. Tap a day to open it.
 - **Weight** – log weigh-ins, see a chart with a 7-day average, and the full list.
+- **Gym** – workout tracking in the style of Setgraph. **Workouts** are your training days, each
+  a list of exercises with a target ("1 × 5–8 heavy, then 1 × 10–15 lighter"). Tap an exercise to
+  see every set by day and log new ones from the bar at the bottom (reps and weight start from your
+  last set, with −/+ steppers and a rest timer). 🏆 marks a set that beat your best estimated 1RM
+  and a day that beat your best volume; green/red shows more or less than the same set last time.
+  Tap a set to change its reps, weight, note, date or time, or delete it. **Chart** shows your
+  estimated 1RM over time, **Records** your bests and rep maxes. **Sessions** lists every day you
+  trained, **Exercises** is your library. **Read a workout plan with AI** sends your coach's PDF
+  or a photo/screenshot to OpenRouter (the admin's key) and shows the workouts it found to check
+  before adding them; exercises with the same name as yours keep their history. Each account can
+  run 12 AI reads an hour.
 - **Admin** (admins only) – the baseline every new day starts from: upload a meal plan (CSV or
   JSON) or edit it in place, download it, choose which weekdays are training or rest, set day
   targets, and edit or add foods. Days already saved keep their own amounts. Admins are the
