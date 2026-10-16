@@ -1,4 +1,4 @@
-# Meal Swap – notes for Claude sessions
+# Logbook Monster – notes for Claude sessions
 
 ## Branches and merging
 

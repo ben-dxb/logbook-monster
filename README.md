@@ -1,6 +1,6 @@
-# Meal Swap
+# Logbook Monster
 
-The Meal Swap Calculator as a self-hosted web app. Each date is its own saved day, there's a
+Logbook Monster (formerly Meal Swap) is a meal-swap calculator as a self-hosted web app. Each date is its own saved day, there's a
 calendar of past days, weight tracking with a trend chart, and sign-in with email + password
 or Google.
 
@@ -50,7 +50,7 @@ All secrets live only in `.env` on the server – nothing secret is ever sent to
 | `ALLOW_REGISTRATION` | `true` lets anyone sign up. Default `false`. |
 | `ADMIN_EMAILS` | Comma-separated. Who can open the Admin page. Empty = the first account created. |
 | `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | Optional. AI import of plan PDFs. A key saved on the Admin page wins over this one. |
-| `DB_PATH` | SQLite file. Default `./data/mealswap.db`. |
+| `DB_PATH` | SQLite file. Default `./data/logbook-monster.db` (an existing `./data/mealswap.db` from before the rename is used if present). |
 | `TRUST_PROXY` | Set to `1` when running behind nginx/Caddy (default in production). |
 
 ## Google sign-in
@@ -74,10 +74,10 @@ are only created for emails allowed by `ALLOWED_EMAILS` / `ALLOW_REGISTRATION`.
 ```bash
 cp .env.example .env    # set SESSION_SECRET, BASE_URL=https://…, ALLOWED_EMAILS, Google keys
 docker compose up -d --build
-docker compose exec mealswap node --disable-warning=ExperimentalWarning scripts/create-user.js you@example.com   # optional
+docker compose exec logbook-monster node --disable-warning=ExperimentalWarning scripts/create-user.js you@example.com   # optional
 ```
 
-The app listens on `127.0.0.1:3000`; data is kept in the `mealswap-data` volume. Put a
+The app listens on `127.0.0.1:3000`; data is kept in the `mealswap_mealswap-data` volume (its pre-rename name, so existing data carries over). Put a
 reverse proxy with HTTPS in front – for example Caddy:
 
 ```
@@ -106,8 +106,8 @@ NODE_ENV=production npm start    # keep it running with systemd or pm2
 
 ### Backups
 
-Everything is in one SQLite file (`data/mealswap.db`, or the Docker volume). Copy it while the
-app is stopped, or use `sqlite3 mealswap.db ".backup backup.db"` while it runs. Each user can
+Everything is in one SQLite file (`data/logbook-monster.db`, or the Docker volume). Copy it while the
+app is stopped, or use `sqlite3 logbook-monster.db ".backup backup.db"` while it runs. Each user can
 also download their own data from the account menu.
 
 ## Security notes

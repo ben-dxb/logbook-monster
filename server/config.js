@@ -8,12 +8,20 @@ const isProd = process.env.NODE_ENV === 'production';
 const port = +process.env.PORT || 3000;
 const baseUrl = (process.env.BASE_URL || `http://localhost:${port}`).replace(/\/+$/, '');
 
+// Keep using the database from before the rename (data/mealswap.db) if that's the one that exists.
+function defaultDbPath() {
+  const path = require('path'), fs = require('fs');
+  const dir = path.join(__dirname, '..', 'data');
+  const current = path.join(dir, 'logbook-monster.db'), legacy = path.join(dir, 'mealswap.db');
+  return !fs.existsSync(current) && fs.existsSync(legacy) ? legacy : current;
+}
+
 const config = {
   isProd,
   port,
   host: process.env.HOST || (isProd ? '0.0.0.0' : '127.0.0.1'),
   baseUrl,
-  dbPath: process.env.DB_PATH || require('path').join(__dirname, '..', 'data', 'mealswap.db'),
+  dbPath: process.env.DB_PATH || defaultDbPath(),
   sessionSecret: process.env.SESSION_SECRET || '',
   sessionDays: +process.env.SESSION_DAYS || 30,
   cookieSecure: bool(process.env.COOKIE_SECURE, baseUrl.startsWith('https://')),

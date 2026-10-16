@@ -33,7 +33,7 @@ app.use(helmet({
 }));
 
 app.use(session({
-  name: 'mealswap.sid',
+  name: 'logbookmonster.sid',
   secret: config.sessionSecret,
   store: new SqliteStore(db),
   resave: false,
@@ -68,6 +68,6 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(config.port, config.host, () => {
-  console.log(`Meal Swap listening on ${config.baseUrl} (bound to ${config.host}:${config.port})`);
+  console.log(`Logbook Monster listening on ${config.baseUrl} (bound to ${config.host}:${config.port})`);
   if (!config.google.enabled) console.log('Google sign-in is off - set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to turn it on.');
 });
