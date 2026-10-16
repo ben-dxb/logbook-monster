@@ -230,6 +230,7 @@ footer{font-size:12px;color:var(--muted)}
 .adwide{grid-column:span 2}
 .adfact{display:flex;gap:8px;margin-top:6px}
 .adfact:empty{display:none}
+.adpdel{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:6px;align-items:end;max-width:520px}
 .adinvite{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) auto;gap:6px;align-items:end}
 #ad-mailtest{grid-template-columns:minmax(0,1fr) auto}
 .admail{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;align-items:end}
@@ -249,6 +250,8 @@ footer{font-size:12px;color:var(--muted)}
   .admrow{grid-template-columns:minmax(0,1fr)}
   .admrow .sub{grid-column:1}
   .adinvite,#ad-mailtest{grid-template-columns:minmax(0,1fr)}
+  .adpdel{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .adpdel .btn{grid-column:1/-1}
   .admail{grid-template-columns:repeat(2,minmax(0,1fr))}
   .admail .adwide{grid-column:1/-1}
   .adtargets{grid-template-columns:repeat(4,minmax(0,1fr))}

@@ -412,6 +412,16 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         /* a change that takes effect later: Mondays are rest days again from 2031, days before keep training */
         await gp.selectOption('#ad-wd-0', 'R'); await gp.fill('#ad-from', '2031-01-01'); await gp.click('#ad-save');
         await gp.waitForFunction(() => /Scheduled/.test(document.querySelector('#ad-versions').textContent) && /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
+        /* delete progress photos between two dates: only those in the range go */
+        await gp.evaluate(async () => {
+          const jpg = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, ...new Array(40).fill(32), 0xff, 0xd9])], { type: 'image/jpeg' });
+          for (const d of ['2026-03-01', '2026-03-20', '2026-05-01']) await pSend('POST', `/api/photos?date=${d}&pose=front`, jpg);
+        });
+        await gp.fill('#ad-pd-from', '2026-03-01'); await gp.fill('#ad-pd-to', '2026-03-31');
+        await gp.waitForFunction(() => /^2 photos/.test(document.querySelector('#ad-pdmsg').textContent) && !document.querySelector('#ad-pd-btn').disabled, null, { timeout: 5000 });
+        gp.once('dialog', d => d.accept()); await gp.click('#ad-pd-btn');
+        await gp.waitForFunction(() => /Deleted 2 photos/.test(document.querySelector('#ad-pdmsg').textContent), null, { timeout: 5000 });
+        expect((await gp.evaluate(async () => (await api('GET', '/api/photos')).photos.map(p => p.date))).join() === '2026-05-01', 'only the photos in the range should be deleted');
         const gscroll = await gp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         expect(gscroll <= 1, `horizontal overflow of ${gscroll}px on the account admin page`);
         await gp.evaluate(() => { location.hash = '#day/2030-01-07'; });

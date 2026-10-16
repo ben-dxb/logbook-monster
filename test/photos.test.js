@@ -191,3 +191,31 @@ test('progress photos: the AI tags the pose, from the thumbnail, only when asked
   assert.strictEqual((await ann('POST', '/api/photos/999999/ai-pose', {})).status, 404);
   assert.strictEqual(aiSeen.length, n, 'nothing was sent to the AI');
 });
+
+test('progress photos: delete every photo between two dates, only your own, files and all', async () => {
+  const me = await signIn('admin@example.com'), ann = await signIn('ann@example.com');
+  const ids = {};
+  for (const d of ['2025-12-31', '2026-01-01', '2026-01-15', '2026-01-31', '2026-02-01']) {
+    const r = await me('POST', `/api/photos?date=${d}&pose=front`, jpeg('range-' + d));
+    assert.strictEqual(r.status, 200);
+    ids[d] = r.body.id;
+    await me('PUT', `/api/photos/${r.body.id}/thumb`, jpeg('range-thumb-' + d));
+  }
+  const annPhoto = (await ann('POST', '/api/photos?date=2026-01-10', jpeg('ann-range'))).body;
+  const before = files().length;
+
+  /* both dates are needed and must make sense */
+  for (const qs of ['', '?from=2026-01-01', '?to=2026-01-31', '?from=2026-01-01&to=soon', '?from=2026-02-01&to=2026-01-01']) {
+    assert.strictEqual((await me('DELETE', '/api/photos' + qs)).status, 400, qs);
+  }
+  assert.strictEqual(files().length, before, 'a refused delete leaves everything');
+
+  const r = await me('DELETE', '/api/photos?from=2026-01-01&to=2026-01-31');
+  assert.deepStrictEqual(r.body, { deleted: 3 }, 'both ends are included');
+  await new Promise(res => setTimeout(res, 100));
+  assert.strictEqual(files().length, before - 6, 'pictures and thumbnails both go');
+  const left = (await me('GET', '/api/photos?from=2025-12-01&to=2026-02-28')).body.photos.map(p => p.id);
+  assert.deepStrictEqual(left.sort(), [ids['2025-12-31'], ids['2026-02-01']].sort());
+  assert.strictEqual((await ann('GET', `/api/photos/${annPhoto.id}/file`)).status, 200, 'someone else’s photos in the range stay');
+  assert.deepStrictEqual((await me('DELETE', '/api/photos?from=2026-01-01&to=2026-01-31')).body, { deleted: 0 });
+});

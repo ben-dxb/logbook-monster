@@ -463,6 +463,31 @@ $('#ad-aifile').addEventListener('change',async e=>{
 });
 
 
+/* ---------- Delete progress photos between two dates (account admin, your own photos) ---------- */
+let pdTok=0, pdN=0;
+async function pdCount(){
+  const from=$('#ad-pd-from').value, to=$('#ad-pd-to').value, msg=$('#ad-pdmsg'), btn=$('#ad-pd-btn'), tok=++pdTok;
+  pdN=0;btn.disabled=true;
+  if(!isDate(from)||!isDate(to)){msg.textContent='';return;}
+  if(from>to){msg.textContent='The From date is after the To date.';return;}
+  msg.textContent='Counting…';
+  try{const r=await api('GET',`/api/photos?from=${from}&to=${to}`);if(tok!==pdTok)return;
+    pdN=r.photos.length;btn.disabled=!pdN;
+    msg.textContent=pdN?`${pdN} photo${pdN>1?'s':''} from ${pYmd(from)} to ${pYmd(to)}.`:'No photos in that range.';}
+  catch(err){if(tok===pdTok&&!err.signedOut)msg.textContent=err.message;}
+}
+['#ad-pd-from','#ad-pd-to'].forEach(s=>$(s).addEventListener('change',pdCount));
+$('#ad-pdel').addEventListener('submit',async e=>{
+  e.preventDefault();const from=$('#ad-pd-from').value, to=$('#ad-pd-to').value, btn=$('#ad-pd-btn');
+  if(!pdN||!confirm(`Delete ${pdN} progress photo${pdN>1?'s':''} taken from ${fmtLong(from)} to ${fmtLong(to)}? This can’t be undone.`))return;
+  btn.disabled=true;$('#ad-pdmsg').textContent='Deleting…';
+  try{const r=await api('DELETE',`/api/photos?from=${from}&to=${to}`);
+    PHOTOS=null;pPick=[];                      /* the Photos page loads again next time */
+    $('#ad-pd-from').value=$('#ad-pd-to').value='';pdN=0;++pdTok;
+    $('#ad-pdmsg').textContent=`Deleted ${r.deleted} photo${r.deleted===1?'':'s'}.`;}
+  catch(err){if(!err.signedOut)$('#ad-pdmsg').textContent=err.message;btn.disabled=!pdN;}
+});
+
 /* ---------- People: invites and accounts ---------- */
 let AU=null, auLink=null;
 const AU_STATUS={active:['ok','Active'],invited:['info','Invite sent'],expired:['bad','Invite expired']};
