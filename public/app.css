@@ -177,19 +177,13 @@ footer{font-size:12px;color:var(--muted)}
   .wform{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
   .wform .btn{grid-column:1/-1}
 }
-/* ---------- admin ---------- */
+/* ---------- admin: account admin (.mine) and super admin share one page ---------- */
+#v-admin.mine .adapp,#v-admin.mine .adsuper,#v-admin:not(.mine) .admine{display:none}
+.adintro h2{margin-bottom:4px}
 .adbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;
   background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 12px}
 .adbar .sb{display:flex;gap:8px;margin-left:auto}
 .adtools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.adfrom{min-width:0}
-.adfromhint{flex-basis:100%;margin:0}
-.adversions h3{margin:0 0 4px}
-.advers{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
-.adver{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:6px 10px}
-.adver.on{border-color:var(--info)}
-.adver .advw{min-width:0;overflow-wrap:anywhere}
-.adver .sb{display:flex;gap:8px;margin-left:auto}
 .adfile{position:relative;overflow:hidden;display:inline-flex;cursor:pointer}
 .adfile input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}
 .adfile:focus-within{outline:2px solid var(--info);outline-offset:2px}
@@ -364,12 +358,20 @@ footer{font-size:12px;color:var(--muted)}
 .factions a.ghost{text-decoration:none}
 .fadd{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px 8px;align-items:end;border-top:1px solid var(--line);padding-top:8px;max-width:440px}
 .gbar a.btn{text-decoration:none}
-.fadd .fprev,.fadd .factions{grid-column:1/-1}
+.fadd .fprev,.fadd .factions,.fadd .fwhere{grid-column:1/-1}
+.fwhere select{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px}
 .fform{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;align-items:end}
 .fform .fwide{grid-column:1/-1}
 .fform select{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px}
 .fform .tog{align-items:flex-start}
 .fform .tog input{margin-top:3px}
 .fdel{margin-left:auto}
+/* ---------- supplements ---------- */
+.sform{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-items:end;max-width:560px}
+.sform .swide{grid-column:1/-1}
+.sform select{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px}
+.squick{display:flex;flex-direction:column;gap:6px}
+.sdose{font-size:13px;white-space:nowrap}
+#s-log .orow span:first-child{overflow-wrap:anywhere;min-width:0}
 @media (max-width:700px){.fform{grid-template-columns:repeat(2,minmax(0,1fr))}.grid5 .btn{order:1}}
 @media (max-width:560px){.views{flex-wrap:wrap;justify-content:center;border-radius:14px;width:100%;margin-right:0}.views a{padding:4px 10px;font-size:13px}}

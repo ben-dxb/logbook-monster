@@ -1,17 +1,20 @@
 'use strict';
-/* App-wide defaults the admin sets: food values, which weekdays are training/rest, day targets
-   and an uploaded meal plan. Layered over engine.js in the browser.
-   Each save is a version that takes effect from a date (from: 'YYYY-MM-DD'; null = from the start),
-   so days before a change keep the plan they had. Stored as one JSON document: {versions:[…]}. */
+/* App-wide defaults the super admin sets: food values, which weekdays are training/rest, day targets
+   and an uploaded meal plan. Stored as one JSON document and layered over engine.js in the browser.
+   Each account can keep its own version of any of these (user_defaults), layered over the app's. */
 const config = require('./config');
 const db = require('./db');
-const { FOODS } = require('../public/engine.js');
+const { FOODS, layerDefaults } = require('../public/engine.js');
 
 const q = {
   get: db.prepare("SELECT data, updated_by, updated_at FROM app_config WHERE key = 'defaults'"),
   put: db.prepare(`INSERT INTO app_config (key, data, updated_by) VALUES ('defaults', ?, ?)
     ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_by = excluded.updated_by, updated_at = datetime('now')`),
   firstUser: db.prepare('SELECT MIN(id) AS id FROM users'),
+  mine: db.prepare('SELECT data, updated_at FROM user_defaults WHERE user_id = ?'),
+  putMine: db.prepare(`INSERT INTO user_defaults (user_id, data) VALUES (?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = datetime('now')`),
+  delMine: db.prepare('DELETE FROM user_defaults WHERE user_id = ?'),
 };
 
 /* ADMIN_EMAILS decides; without it the first account created is the admin. */
@@ -25,8 +28,9 @@ const TYPES = ['T', 'R', 'S'];
 const FOOD_ID = /^[a-z][a-z0-9_]{0,31}$/;
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 
-/* Throws a readable message on anything that would break the calculator. */
-function clean(input) {
+/* Throws a readable message on anything that would break the calculator.
+   baseFoods: foods from a lower layer (the app's) that a plan may also use. */
+function clean(input, baseFoods = {}) {
   if (!isObj(input)) throw new Error('Defaults must be an object');
   const num = (v, lo, hi, what) => {
     const n = +v;
@@ -58,7 +62,8 @@ function clean(input) {
       group: ['p', 'c', 'x'].includes(r.group) ? r.group : '',
     };
   }
-  const known = id => Object.prototype.hasOwnProperty.call(FOODS, id) || Object.prototype.hasOwnProperty.call(out.foods, id);
+  const has = (o, id) => Object.prototype.hasOwnProperty.call(o, id);
+  const known = id => has(FOODS, id) || has(baseFoods, id) || has(out.foods, id);
 
   if (input.schedule != null) {
     if (!Array.isArray(input.schedule) || input.schedule.length !== 7 || !input.schedule.every(t => TYPES.includes(t))) {
@@ -105,64 +110,32 @@ function clean(input) {
   return out;
 }
 
-const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
-const isDate = v => typeof v === 'string' && DATE_RE.test(v) && !isNaN(Date.parse(v + 'T00:00:00Z'));
-const MAX_VERSIONS = 100;
-const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
-
-/* every version, oldest first; a document from before versions is one version from the start */
-function versions() {
-  const row = q.get.get();
-  if (!row) return [];
-  const doc = JSON.parse(row.data);
-  if (!Array.isArray(doc.versions)) return [{ from: null, ...doc, updatedBy: row.updated_by, updatedAt: row.updated_at }];
-  return doc.versions;
-}
-function store(list, user) {
-  list.sort((a, b) => (a.from || '').localeCompare(b.from || ''));
-  q.put.run(JSON.stringify({ versions: list }), user.email);
-}
-/* the version in effect on a date (today by default), or the built-in values */
-function on(list, date) {
-  let v = null;
-  for (const x of list) if (!x.from || x.from <= date) v = x;
-  return v;
-}
-const EMPTY = { from: null, foods: {}, schedule: null, targets: {}, plan: null };
-/* The defaults in effect today, plus every version for the browser to pick per day. */
 function get() {
-  const list = versions();
-  return { ...(on(list, today()) || EMPTY), versions: list };
+  const row = q.get.get();
+  if (!row) return { foods: {}, schedule: null, targets: {}, plan: null };
+  return { ...JSON.parse(row.data), updatedBy: row.updated_by, updatedAt: row.updated_at };
 }
-/* The newest defaults, whatever their date (food ids the AI may use). */
-function latest() {
-  const list = versions();
-  return list.length ? list[list.length - 1] : EMPTY;
-}
-/* With a from date (or null for "from the start") this saves the version taking effect then,
-   replacing one with the same date; versions dated later still apply from their dates.
-   Without one it replaces everything, as before versions existed. */
 function put(input, user) {
   const data = clean(input);
-  const has = isObj(input) && Object.prototype.hasOwnProperty.call(input, 'from');
-  const from = has && input.from != null && input.from !== '' ? input.from : null;
-  if (from !== null && !isDate(from)) throw new Error('The date it takes effect from must be a date');
-  const v = { from, ...data, updatedBy: user.email, updatedAt: new Date().toISOString().replace('T', ' ').slice(0, 19) };
-  const list = has ? versions().filter(x => x.from !== from) : [];
-  if (list.length >= MAX_VERSIONS) throw new Error('Too many plan changes – delete some old ones first');
-  list.push(v);
-  store(list, user);
-  return get();
-}
-/* Delete the version taking effect on a date ('start' for the first one): the one before it applies again. */
-function remove(from, user) {
-  const key = from === 'start' ? null : from;
-  if (key !== null && !isDate(key)) throw new Error('Bad date');
-  const list = versions();
-  const rest = list.filter(x => x.from !== key);
-  if (rest.length === list.length) throw Object.assign(new Error('There is no change from that date'), { status: 404 });
-  store(rest, user);
-  return get();
+  q.put.run(JSON.stringify(data), user.email);
+  return forUser(user);
 }
 
-module.exports = { isAdmin, clean, get, latest, put, remove };
+/* The account's own layer, or null when it uses the app defaults as they are. */
+function mine(user) {
+  const row = q.mine.get(user.id);
+  return row ? { ...JSON.parse(row.data), updatedAt: row.updated_at } : null;
+}
+function putMine(input, user) {
+  const data = clean(input, get().foods || {});
+  const empty = !Object.keys(data.foods).length && !data.schedule && !Object.keys(data.targets).length && !data.plan;
+  if (empty) q.delMine.run(user.id); else q.putMine.run(user.id, JSON.stringify(data));
+  return forUser(user);
+}
+function delMine(user) { q.delMine.run(user.id); return forUser(user); }
+/* What the browser gets: the app defaults plus the account's own layer. */
+function forUser(user) { return { ...get(), mine: mine(user) }; }
+/* What the account's days actually start from. */
+function effective(user) { return layerDefaults(get(), mine(user)); }
+
+module.exports = { isAdmin, clean, get, put, mine, putMine, delMine, forUser, effective };

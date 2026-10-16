@@ -1,38 +1,52 @@
 'use strict';
-/* Admin view: the baseline every new day starts from – meal plan (upload, edit, download),
-   which weekdays are training or rest, day targets and food values. Uses helpers from app.js. */
+/* Admin view, in two scopes on one page:
+   - account admin (#account, anyone): your own meal plan, week, targets and food values, stored as
+     what differs from the app defaults;
+   - super admin (#admin, ADMIN_EMAILS): the app defaults every account starts from, stored as what
+     differs from the built-in values, plus the AI key, people and email.
+   The editor (meal plan upload/edit/download, week, targets, foods) is the same for both. Uses helpers from app.js. */
 
 const AD_TYPES=[['T','Training'],['R','Rest'],['S','Saturday training']];
 const AD_BOXES=[['p','Protein'],['c','Carbs'],['x','Additional fats']];
-let AD=null, adSaved='', adType='T', adMsg='', adErrs=[], adBusy=false;
-let adVer=null, adFrom='';                   /* the version being edited (null = none saved yet), and the date the save takes effect from ('' = from the start) */
+let AD=null, AD_BASE=null, adSaved='', adType='T', adMsg='', adErrs=[], adBusy=false;
+let DEFS={mine:null}, adScope='mine';         /* the server's defaults (app + mine); which layer the page edits */
 let adAi=null, adAiBusy=false, adNotes=[];
 const adOpen=new Set();                      /* food editors left open */
 
+/* ---------- defaults from the server: the app's, with this account's own layer on top ---------- */
+/* applyDefaults resets FOODS, so the food library goes back in after it */
+function adApplyInUse(){applyDefaults(layerDefaults(DEFS,DEFS.mine));libRegister();}
+function setDefaults(d){DEFS=d||{mine:null};adApplyInUse();}
+
 /* ---------- draft ---------- */
-function builtinRecord(id){const F=BUILTIN.foods[id];const r={group:builtinGroup(id)};
-  FOOD_FIELDS.forEach(k=>{if(k!=='group')r[k]=F[k]!=null?F[k]:(k==='unit'?'g':null);});return r;}
-function builtinPlanData(){const keep=CUSTOM_PLAN;CUSTOM_PLAN=null;try{return planData();}finally{CUSTOM_PLAN=keep;}}
-function adEditable(id){return id!=='pudding';}       /* pudding values come from the batch on the Day page */
-/* load a version into the draft: the one in effect today unless one is named */
-function adLoad(v){
-  if(v===undefined)v=defsOn(todayStr());
-  applyVersion(v);adVer=v;
-  const td=todayStr();adFrom=v&&v!==defsOn(td)?v.from||'':td;   /* a change to today's plan starts today; another version keeps its own date */
+function adEditable(id){return id!=='pudding'&&!isLib(id);}   /* pudding values come from the batch on the Day page; library foods belong to people */
+/* the editable values a defaults layer gives (applies it for a moment, then puts what's in use back) */
+function adSnap(cfg){
+  applyDefaults(cfg);
   const foods={};Object.keys(FOODS).filter(adEditable).forEach(id=>{foods[id]=foodRecord(id);});
-  AD={foods,schedule:[...TYPE],targets:clone(COACH),plan:planData(),custom:!!CUSTOM_PLAN};
-  adSaved=adState();
+  return {foods,schedule:[...TYPE],targets:clone(COACH),plan:planData()};
 }
-function adState(){return JSON.stringify({...adPayload(),from:adFrom});}
-/* only what differs from the built-in values is stored */
+/* AD_BASE is the layer below the one being edited: built-in values for the app, the app defaults for an account */
+function adLoad(){
+  const app=layerDefaults(DEFS,null);
+  AD_BASE=adSnap(adScope==='app'?{}:app);
+  AD={...adSnap(adScope==='app'?app:layerDefaults(DEFS,DEFS.mine)),
+    custom:!!(adScope==='app'?DEFS.plan:DEFS.mine&&DEFS.mine.plan)};
+  adApplyInUse();
+  adSaved=JSON.stringify(adPayload());
+}
+const adBaseRecord=id=>clone(AD_BASE.foods[id]);
+const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+/* only what differs from the layer below is stored */
 function adPayload(){
   const foods={};
-  for(const [id,r] of Object.entries(AD.foods)){
-    if(!BUILTIN.foods[id]||JSON.stringify(r)!==JSON.stringify(builtinRecord(id))) foods[id]=r;
-  }
-  return {foods,schedule:AD.schedule,targets:AD.targets,plan:AD.custom?AD.plan:null};
+  for(const [id,r] of Object.entries(AD.foods)) if(!AD_BASE.foods[id]||!same(r,AD_BASE.foods[id])) foods[id]=r;
+  const plan=AD.custom?AD.plan:null;
+  if(adScope==='app')return {foods,schedule:AD.schedule,targets:AD.targets,plan};
+  const targets={};for(const t in AD.targets) if(!same(AD.targets[t],AD_BASE.targets[t])) targets[t]=AD.targets[t];
+  return {foods,schedule:same(AD.schedule,AD_BASE.schedule)?null:AD.schedule,targets,plan};
 }
-function adDirty(){return !!AD&&adState()!==adSaved;}
+function adDirty(){return !!AD&&JSON.stringify(adPayload())!==adSaved;}
 const adFoodName=id=>(AD.foods[id]||FOODS[id]||{n:id}).n;
 function adMac(f,g){const F=f==='pudding'?FOODS.pudding:AD.foods[f];if(!F)return {k:0,p:0,c:0,f:0};
   return {k:F.k*g/100,p:F.p*g/100,c:F.c*g/100,f:F.f*g/100};}
@@ -40,15 +54,24 @@ function adPlanUses(id){return Object.values(AD.plan).some(ms=>ms.some(m=>['p','
 
 /* ---------- rendering ---------- */
 function renderAdmin(){
-  if(view!=='admin')return;
-  if(!AD){adLoad();adAiLoad();auLoad();amLoad();}
+  if(view!=='admin'&&view!=='account')return;
+  const want=view==='admin'?'app':'mine';
+  if(AD&&adScope!==want){
+    if(adDirty()&&!confirm('Leave without saving? Your unsaved changes are dropped.')){location.hash=adScope==='app'?'admin':'account';return;}
+    AD=null;adMsg='';adErrs=[];adNotes=[];
+  }
+  adScope=want;$('#v-admin').classList.toggle('mine',want==='mine');
+  if(!AD){adLoad();adAiLoad();if(want==='app'){auLoad();amLoad();}}
+  $('#ad-reset').hidden=!(want==='mine'&&DEFS.mine);
   const numIn=(id,val,attrs,label)=>`<input id="${id}" type="number" inputmode="decimal" min="0" value="${val==null?'':val}" ${attrs} aria-label="${esc(label)}">`;
   /* plan */
-  $('#ad-planstate').innerHTML=AD.custom
-    ?'<span class="chip info">Your plan</span> New days start from the plan below.'
-    :'<span class="chip">Built-in plan</span> Edit an amount or upload a file to make your own.';
+  $('#ad-planstate').innerHTML=adScope==='app'
+    ?(AD.custom?'<span class="chip info">App plan</span> Accounts without their own plan start new days from the plan below.'
+      :'<span class="chip">Built-in plan</span> Edit an amount or upload a file to make the app’s own.')
+    :(AD.custom?'<span class="chip info">Your own plan</span> Your new days start from the plan below.'
+      :'<span class="chip">App plan</span> You’re using the app’s plan. Edit an amount or upload a file to make your own.');
   $('#ad-restore').hidden=!AD.custom;
-  adVersions();
+  $('#ad-restore').textContent=adScope==='app'?'Use the built-in plan':'Use the app plan';
   $('#ad-upmsg').innerHTML=(adMsg?`<p class="admsg">${esc(adMsg)}</p>`:'')+(adErrs.length?`<ul class="aderr">${adErrs.slice(0,12).map(e=>`<li>${esc(e)}</li>`).join('')}${adErrs.length>12?`<li>…and ${adErrs.length-12} more</li>`:''}</ul>`:'')
     +(adNotes.length?`<details class="adnotes" open><summary>What the AI estimated or left out (${adNotes.length})</summary><ul>${adNotes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></details>`:'');
   $('#ad-types').innerHTML=AD_TYPES.map(([t,n])=>`<button type="button" data-ad="type" data-t="${t}" aria-pressed="${t===adType}">${n}</button>`).join('');
@@ -79,7 +102,7 @@ function renderAdmin(){
   /* foods */
   const groups={p:'Protein swaps',c:'Carb swaps',x:'Fat swaps','':'Not in a swap list'};
   $('#ad-foods').innerHTML=Object.entries(AD.foods).map(([id,r])=>{
-    const edited=BUILTIN.foods[id]&&JSON.stringify(r)!==JSON.stringify(builtinRecord(id)), custom=!BUILTIN.foods[id];
+    const edited=AD_BASE.foods[id]&&!same(r,AD_BASE.foods[id]), custom=!AD_BASE.foods[id];
     const fld=(k,label,attrs='')=>`<label class="f"><span class="lbl">${label}</span>${numIn(`ad-fd-${id}-${k}`,r[k],`step="any" data-ad="food" data-id="${id}" data-k="${k}" ${attrs}`,`${r.n} ${label}`)}</label>`;
     return `<details class="adfood" data-id="${id}"${adOpen.has(id)?' open':''}><summary><span class="adfn">${esc(r.n)}</span>
         ${custom?'<span class="chip info">Added</span>':edited?'<span class="chip info">Edited</span>':''}
@@ -91,22 +114,10 @@ function renderAdmin(){
         <label class="f"><span class="lbl">Unit</span><select id="ad-fd-${id}-unit" data-ad="food" data-id="${id}" data-k="unit">${['g','ml'].map(u=>`<option${r.unit===u?' selected':''}>${u}</option>`).join('')}</select></label>
         <label class="f"><span class="lbl">Swap list</span><select id="ad-fd-${id}-group" data-ad="food" data-id="${id}" data-k="group">${Object.entries(groups).map(([g,n])=>`<option value="${g}"${r.group===g?' selected':''}>${n}</option>`).join('')}</select></label>
       </div>
-      <div class="adfact">${edited?`<button type="button" class="ghost" data-ad="freset" data-id="${id}">Back to built-in values</button>`:''}
+      <div class="adfact">${edited?`<button type="button" class="ghost" data-ad="freset" data-id="${id}">Back to ${adScope==='app'?'built-in':'app'} values</button>`:''}
         ${custom?`<button type="button" class="ghost" data-ad="fdel" data-id="${id}">Delete food</button>`:''}</div>
     </details>`;}).join('');
   adStatus();adTotals();
-}
-/* the saved plan changes, each with the date it takes effect from */
-const adWhen=f=>f?fmtLong(f):'the start';
-function adVersions(){
-  const el=$('#ad-versions');el.hidden=!DEFS.length;
-  const now=defsOn(todayStr());
-  el.innerHTML=DEFS.length?`<h3 class="lbl">Plan changes</h3><ul class="advers">${DEFS.slice().reverse().map(v=>{
-    const k=v.from||'',state=v===now?'<span class="chip ok">In use today</span>':v.from&&v.from>todayStr()?'<span class="chip info">Scheduled</span>':'<span class="chip">Earlier</span>';
-    return `<li class="adver${v===adVer?' on':''}"><span class="advw"><b>From ${esc(adWhen(v.from))}</b> ${state}${v===adVer?' <span class="chip info">Editing</span>':''}</span>
-      <span class="sub">${v.updatedBy?`by ${esc(v.updatedBy)}`:''}</span>
-      <span class="sb">${v===adVer?'':`<button type="button" class="ghost" data-ad="vedit" data-from="${esc(k)}">Edit</button>`}
-        <button type="button" class="ghost" data-ad="vdel" data-from="${esc(k)}">Delete</button></span></li>`;}).join('')}</ul>`:'';
 }
 function adFoodLine(r){return `${r0(+r.k||0)} kcal · P ${r1(+r.p||0)} · C ${r1(+r.c||0)} · F ${r1(+r.f||0)} per 100${r.unit}`;}
 function adTotals(){
@@ -117,14 +128,11 @@ function adTotals(){
   if(el)el.innerHTML=`<b>Plan as written:</b> ${r0(t.k)} kcal · P ${r1(t.p)} · C ${r1(t.c)} · F ${r1(t.f)} – target ${r0(+tg.k)} kcal · P ${r0(+tg.p)} · C ${r0(+tg.c)} · F ${r0(+tg.f)}. Each new day balances these amounts to its targets.`;
 }
 function adStatus(){
-  const d=adDirty(), fe=$('#ad-from');
-  if(document.activeElement!==fe)fe.value=adFrom;
-  const later=DEFS.filter(v=>v.from&&v.from>(adFrom||'')&&v!==adVer).map(v=>fmtShort(v.from));
-  $('#ad-fromhint').textContent=(adFrom?`Days from ${fmtShort(adFrom)} start from this plan; earlier days keep the plan they had.`:'Every day starts from this plan, back to the start.')
-    +(later.length?` Later changes still apply from ${later.join(', ')}.`:'');
+  const d=adDirty();
   $('#ad-status').innerHTML=adBusy?'<span class="chip info">Saving…</span>'
-    :d?'<span class="chip bad">Unsaved changes</span> Nothing changes for your days until you save.'
-    :`<span class="chip ok">✓ Saved</span> ${adVer&&adVer.from?`Days from ${esc(fmtShort(adVer.from))} start from these defaults.`:'New days start from these defaults.'} Days already in your history keep their own amounts.`;
+    :d?`<span class="chip bad">Unsaved changes</span> Nothing changes ${adScope==='app'?'for anyone':'for your days'} until you save.`
+    :adScope==='app'?'<span class="chip ok">✓ Saved</span> New days start from these defaults, except where an account has set its own. Days already in a history keep their own amounts.'
+    :'<span class="chip ok">✓ Saved</span> Your new days start from these. Days already in your history keep their own amounts.';
   $('#ad-save').disabled=!d||adBusy;$('#ad-discard').hidden=!d;
 }
 
@@ -156,7 +164,6 @@ document.addEventListener('change',e=>{
   else if(a==='iadd'){if(!el.value)return;const f=el.value,F=AD.foods[f]||FOODS[f];
     adPlanEdit(()=>{const m=adMeal(el);(m[el.dataset.b]=m[el.dataset.b]||[]).push({f,g:F.min||(F.step>=5?50:10),lock:false});});renderAdmin();}
   else if(a==='wday'){AD.schedule[+el.dataset.i]=el.value;}
-  else if(a==='from'){adFrom=isDate(el.value)?el.value:'';}
   else if(a==='food'&&el.tagName==='SELECT'){AD.foods[el.dataset.id][el.dataset.k]=el.value;const s=$('#ad-fs-'+el.dataset.id);if(s)s.innerHTML=adFoodLine(AD.foods[el.dataset.id]);}
   else return;
   adStatus();
@@ -171,19 +178,17 @@ document.addEventListener('click',e=>{
     adPlanEdit(()=>{AD.plan[adType].splice(+b.dataset.m,1);});}
   else if(a==='madd'){adPlanEdit(()=>{const ms=AD.plan[adType];const n=ms.reduce((x,m)=>Math.max(x,parseInt(m.id,10)||0),0)+1;
     ms.push({id:String(n),name:'New meal',p:[],c:[],x:[]});});}
-  else if(a==='freset'){AD.foods[b.dataset.id]=builtinRecord(b.dataset.id);}
+  else if(a==='freset'){AD.foods[b.dataset.id]=adBaseRecord(b.dataset.id);}
   else if(a==='fdel'){const id=b.dataset.id;
     if(adPlanUses(id)){alert(`${adFoodName(id)} is in the meal plan. Take it out of the plan first.`);return;}
     delete AD.foods[id];adOpen.delete(id);}
-  else if(a==='restore'){if(!confirm('Go back to the built-in meal plan? Your plan edits are dropped when you save.'))return;
-    AD.plan=builtinPlanData();AD.custom=false;adMsg='Built-in plan restored – save to use it.';adErrs=[];}
+  else if(a==='restore'){const which=adScope==='app'?'built-in':'app';
+    if(!confirm(`Go back to the ${which} meal plan? Your plan edits are dropped when you save.`))return;
+    AD.plan=clone(AD_BASE.plan);AD.custom=false;adMsg=`${which==='app'?'App':'Built-in'} plan restored – save to use it.`;adErrs=[];}
+  else if(a==='reset'){adReset();return;}
   else if(a==='csv'){adDownload(`logbook-monster-plan-${todayStr()}.csv`,planCsv(AD.plan),'text/csv');return;}
   else if(a==='json'){adDownload(`logbook-monster-defaults-${todayStr()}.json`,JSON.stringify({...adPayload(),plan:AD.plan},null,2),'application/json');return;}
-  else if(a==='discard'){adLoad(adVer);adMsg='';adErrs=[];adNotes=[];}
-  else if(a==='vedit'){const v=DEFS.find(x=>(x.from||'')===b.dataset.from);if(!v)return;
-    if(adDirty()&&!confirm('Drop your unsaved changes and edit this plan instead?'))return;
-    adLoad(v);adMsg='';adErrs=[];adNotes=[];}
-  else if(a==='vdel'){adDelete(b.dataset.from||null);return;}
+  else if(a==='discard'){adLoad();adMsg='';adErrs=[];adNotes=[];}
   else if(a==='save'){adSave();return;}
   else return;
   renderAdmin();
@@ -204,29 +209,23 @@ window.addEventListener('beforeunload',e=>{if(adDirty()){e.preventDefault();e.re
 async function adSave(){
   adBusy=true;adStatus();
   try{
-    const from=adFrom||null;
-    const r=await api('PUT','/api/admin/defaults',{...adPayload(),from});
-    adNewDefs(r,from);
-    adLoad(DEFS.find(v=>v.from===from)||undefined);adMsg='';adErrs=[];
+    adSaved_(await api('PUT',adScope==='app'?'/api/admin/defaults':'/api/my/defaults',adPayload()));
   }catch(err){if(!err.signedOut){adErrs=[err.message];adMsg='Couldn’t save:';}}
   adBusy=false;renderAdmin();
 }
-/* new versions from the server: days from that date you haven't saved yet start again from the plan */
-function adNewDefs(r,from){
-  DEFS=r.versions||[];DEFS_ON=undefined;
-  for(const d of Object.keys(S.days)) if((!from||d>=from)&&!LOGGED.has(d)&&!pending.has(d)){delete S.days[d];delete SAVED.days[d];}
+/* account admin: drop your own layer and follow the app defaults again */
+async function adReset(){
+  if(!confirm('Go back to the app defaults? Your own plan, week, targets and food values are removed. Days already in your history keep their own amounts.'))return;
+  adBusy=true;adStatus();
+  try{adSaved_(await api('DELETE','/api/my/defaults'));adMsg='You’re back on the app defaults.';}
+  catch(err){if(!err.signedOut){adErrs=[err.message];adMsg='Couldn’t reset:';}}
+  adBusy=false;renderAdmin();
 }
-async function adDelete(from){
-  const v=DEFS.find(x=>x.from===from);if(!v)return;
-  const prev=DEFS[DEFS.indexOf(v)-1];
-  if(!confirm(`Delete the plan change from ${adWhen(from)}? ${prev?`Those days go back to the plan from ${adWhen(prev.from)}.`:'Those days go back to the built-in plan.'}`))return;
-  if(v===adVer&&adDirty()&&!confirm('You have unsaved changes to this plan. Drop them?'))return;
-  try{const r=await api('DELETE','/api/admin/defaults/'+(from||'start'));
-    const was=v===adVer, keep=adVer&&adVer.from;
-    adNewDefs(r,from);
-    if(was)adLoad();else adVer=DEFS.find(x=>x.from===keep)||null;   /* the draft you're editing stays as it is */
-  }catch(err){if(!err.signedOut)alert(err.message);return;}
-  renderAdmin();
+function adSaved_(r){
+  setDefaults(r);
+  /* days you haven't saved yet start again from the new plan */
+  for(const d of Object.keys(S.days)) if(!LOGGED.has(d)&&!pending.has(d)){delete S.days[d];delete SAVED.days[d];}
+  adLoad();adMsg='';adErrs=[];
 }
 function adDownload(name,text,type){
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;
@@ -322,27 +321,32 @@ async function adUpload(file){
 }
 
 /* ---------- AI import (OpenRouter) ---------- */
-async function adAiLoad(){try{adAi=await api('GET','/api/admin/ai');}catch(e){adAi=null;}adAiRender();}
+/* only the super admin sees the key; an account just needs to know whether reading is on */
+async function adAiLoad(){
+  if(adScope!=='app'){adAi={configured:aiOn,model:''};adAiRender();return;}
+  try{adAi=await api('GET','/api/admin/ai');aiOn=adAi.configured;}catch(e){adAi=null;}adAiRender();
+}
 function adAiRender(){
   if(!adAi)return;
   $('#ad-aistate').textContent=adAiBusy?'Reading the plan – this can take a minute or two…'
-    :adAi.configured?`Using ${adAi.model}`:'Add an OpenRouter API key below to turn this on.';
+    :adAi.configured?(adAi.model?`Using ${adAi.model}`:'')
+    :adScope==='app'?'Add an OpenRouter API key below to turn this on.':isAdmin?'Add an OpenRouter API key on the Super admin page to turn this on.':'The super admin needs to add an OpenRouter key first.';
   $('#ad-aibtn').classList.toggle('off',!adAi.configured||adAiBusy);
   $('#ad-aifile').disabled=!adAi.configured||adAiBusy;
   $('#ad-key').placeholder=adAi.configured?`Saved (${adAi.hint})${adAi.source==='env'?' – from .env':''}. Paste a new one to replace it`:'sk-or-…';
   if(document.activeElement!==$('#ad-model'))$('#ad-model').value=adAi.model;
   $('#ad-keydel').hidden=adAi.source!=='admin';
-  if(!adAi.configured&&!$('#ad-keybox').open)$('#ad-keybox').open=true;
+  if(adScope==='app'&&!adAi.configured&&!$('#ad-keybox').open)$('#ad-keybox').open=true;
 }
 $('#ad-keyform').addEventListener('submit',async e=>{
   e.preventDefault();const body={model:$('#ad-model').value.trim()};const k=$('#ad-key').value.trim();if(k)body.key=k;
-  try{adAi=await api('PUT','/api/admin/ai',body);$('#ad-key').value='';$('#ad-keymsg').textContent=k?'Key saved.':'Saved.';}
+  try{adAi=await api('PUT','/api/admin/ai',body);aiOn=adAi.configured;$('#ad-key').value='';$('#ad-keymsg').textContent=k?'Key saved.':'Saved.';}
   catch(err){if(!err.signedOut)$('#ad-keymsg').textContent=err.message;}
   adAiRender();
 });
 $('#ad-keydel').addEventListener('click',async()=>{
   if(!confirm('Remove the saved OpenRouter key?'))return;
-  try{adAi=await api('PUT','/api/admin/ai',{key:''});$('#ad-keymsg').textContent='Key removed.';}catch(err){if(!err.signedOut)$('#ad-keymsg').textContent=err.message;}
+  try{adAi=await api('PUT','/api/admin/ai',{key:''});aiOn=adAi.configured;$('#ad-keymsg').textContent='Key removed.';}catch(err){if(!err.signedOut)$('#ad-keymsg').textContent=err.message;}
   adAiRender();
 });
 $('#ad-aifile').addEventListener('change',async e=>{
@@ -351,7 +355,7 @@ $('#ad-aifile').addEventListener('change',async e=>{
   adAiBusy=true;adMsg='';adErrs=[];adNotes=[];adAiRender();renderAdmin();
   try{
     let r;
-    try{r=await fetch('/api/admin/ai-import',{method:'POST',credentials:'same-origin',
+    try{r=await fetch(adScope==='app'?'/api/admin/ai-import':'/api/my/ai-import',{method:'POST',credentials:'same-origin',
       headers:{'content-type':file.type||'application/pdf','x-csrf-token':csrf},body:file});}
     catch{throw new Error('Can’t reach the server – is it still running?');}
     const j=await r.json().catch(()=>({}));

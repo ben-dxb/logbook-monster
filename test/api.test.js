@@ -9,8 +9,7 @@ const path = require('node:path');
 
 const http = require('node:http');
 
-const PORT = 3900 + Math.floor(Math.random() * 90);
-const AI_PORT = PORT + 100;
+const [PORT, AI_PORT, SMTP_PORT] = require('./_ports').freePorts(3);
 /* Stands in for OpenRouter: records the request and replies with a canned plan. */
 const aiSeen = [];
 const fakeAi = http.createServer((req, res) => {
@@ -33,7 +32,6 @@ const fakeAi = http.createServer((req, res) => {
 });
 /* Stands in for the SMTP server (e.g. Gmail): accepts AUTH PLAIN and keeps each message. */
 const net = require('node:net');
-const SMTP_PORT = PORT + 200;
 const mails = [];
 const fakeSmtp = net.createServer(sock => {
   let data = null, msg = {};
@@ -188,47 +186,38 @@ test('only the admin can change the defaults, everyone reads them', async () => 
   assert.strictEqual(seen.body.plan.R[0].name, 'Skyr bowl');
 });
 
-test('defaults changes take effect from a date; earlier days keep the plan they had', async () => {
+test('account admin: anyone keeps their own plan over the app defaults, only for themselves', async () => {
+  const friend = client();
+  await friend.req('GET', '/auth/config');
+  assert.strictEqual((await friend.req('POST', '/auth/login', { email: 'friend@example.com', password: 'longenough2' })).status, 200);
+  assert.strictEqual((await friend.req('GET', '/api/me')).body.ai, false);
+  assert.strictEqual((await friend.req('GET', '/api/defaults')).body.mine, null);
+  const mine = {
+    schedule: ['R', 'R', 'R', 'R', 'R', 'R', 'T'],
+    targets: { R: { k: 2000, p: 180, c: 200, f: 55 } },
+    foods: { oats: { n: 'Oats', k: 380, p: 13, c: 60, f: 7, d: 0, step: 5, group: 'c' } },
+    /* skyr is one of the app's foods, oats the account's own */
+    plan: { R: [{ id: '1', name: 'Oat bowl', p: [{ f: 'skyr', g: 200 }], c: [{ f: 'oats', g: 60 }], x: [] }] },
+  };
+  const saved = await friend.req('PUT', '/api/my/defaults', mine);
+  assert.strictEqual(saved.status, 200);
+  assert.deepStrictEqual(saved.body.mine.schedule, mine.schedule);
+  assert.strictEqual(saved.body.mine.plan.R[0].name, 'Oat bowl');
+  assert.strictEqual(saved.body.plan.R[0].name, 'Skyr bowl');       /* the app's own is unchanged */
+  assert.strictEqual((await friend.req('PUT', '/api/my/defaults', { plan: { R: [{ id: '1', name: 'x', p: [{ f: 'unicorn', g: 1 }] }] } })).status, 400);
+  assert.strictEqual((await friend.req('PUT', '/api/admin/defaults', mine)).status, 403);
+  assert.strictEqual((await friend.req('POST', '/api/my/ai-import', {})).status, 400);   /* no key yet: open to accounts, but nothing to read with */
+  assert.deepStrictEqual((await friend.req('GET', '/api/export')).body.defaults.foods.oats.n, 'Oats');
+
   const admin = client();
   await admin.req('GET', '/auth/config');
   await admin.req('POST', '/auth/login', { email: 'me@example.com', password: 'longenough1' });
   await admin.req('GET', '/api/me');
-  const { foods, schedule, targets, plan: kept } = (await admin.req('GET', '/api/defaults')).body;
-  const plan = name => ({ R: [{ id: '1', name, p: [{ f: 'whey', g: 40 }], c: [{ f: 'banana', g: 100 }], x: [] }] });
-  /* without a date it replaces everything: one version from the start */
-  let r = await admin.req('PUT', '/api/admin/defaults', { plan: plan('Base bowl') });
-  assert.deepStrictEqual(r.body.versions.map(v => v.from), [null]);
-  r = await admin.req('PUT', '/api/admin/defaults', { plan: plan('Future bowl'), targets: { R: { k: 2500, p: 240, c: 250, f: 55 } }, from: '2999-01-04' });
-  assert.strictEqual(r.status, 200);
-  assert.deepStrictEqual(r.body.versions.map(v => v.from), [null, '2999-01-04']);
-  assert.strictEqual(r.body.plan.R[0].name, 'Base bowl', 'today still uses the plan in effect now');
-  r = await admin.req('PUT', '/api/admin/defaults', { plan: plan('Past bowl'), from: '2020-03-02' });
-  assert.deepStrictEqual(r.body.versions.map(v => v.from), [null, '2020-03-02', '2999-01-04']);
-  assert.strictEqual(r.body.plan.R[0].name, 'Past bowl');
-  assert.strictEqual(r.body.versions[2].targets.R.k, 2500);
-  assert.strictEqual(r.body.versions[1].updatedBy, 'me@example.com');
-  /* same date again replaces that version */
-  r = await admin.req('PUT', '/api/admin/defaults', { plan: plan('Past bowl 2'), from: '2020-03-02' });
-  assert.deepStrictEqual(r.body.versions.map(v => v.plan.R[0].name), ['Base bowl', 'Past bowl 2', 'Future bowl']);
-  assert.strictEqual((await admin.req('PUT', '/api/admin/defaults', { from: '2020-13-01' })).status, 400);
-  assert.strictEqual((await admin.req('PUT', '/api/admin/defaults', { from: 'soon' })).status, 400);
-  /* everyone reads the versions; only the admin deletes them */
-  const friend = client();
-  await friend.req('GET', '/auth/config');
-  await friend.req('POST', '/auth/login', { email: 'friend@example.com', password: 'longenough2' });
-  await friend.req('GET', '/api/me');
-  assert.strictEqual((await friend.req('GET', '/api/defaults')).body.versions.length, 3);
-  assert.strictEqual((await friend.req('DELETE', '/api/admin/defaults/2999-01-04')).status, 403);
-  assert.strictEqual((await admin.req('DELETE', '/api/admin/defaults/2998-01-01')).status, 404);
-  r = await admin.req('DELETE', '/api/admin/defaults/2020-03-02');
-  assert.deepStrictEqual(r.body.versions.map(v => v.from), [null, '2999-01-04']);
-  assert.strictEqual(r.body.plan.R[0].name, 'Base bowl');
-  r = await admin.req('DELETE', '/api/admin/defaults/start');
-  assert.deepStrictEqual(r.body.versions.map(v => v.from), ['2999-01-04']);
-  assert.strictEqual(r.body.plan, null, 'before the first change the built-in plan applies');
-  /* back to the defaults the earlier test saved, as one version, for the tests after this one */
-  r = await admin.req('PUT', '/api/admin/defaults', { foods, schedule, targets, plan: kept });
-  assert.deepStrictEqual(r.body.versions.map(v => v.from), [null]);
+  assert.strictEqual((await admin.req('GET', '/api/defaults')).body.mine, null);   /* someone else's layer stays theirs */
+
+  assert.strictEqual((await friend.req('DELETE', '/api/my/defaults')).body.mine, null);
+  await friend.req('PUT', '/api/my/defaults', mine);
+  assert.strictEqual((await friend.req('PUT', '/api/my/defaults', {})).body.mine, null);   /* nothing different = no layer */
 });
 
 test('AI import: admin-only key that is never shown, and the reply is tidied', async () => {

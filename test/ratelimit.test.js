@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const PORT = 3700 + Math.floor(Math.random() * 90);
+const [PORT] = require('./_ports').freePorts(1);
 const BASE = `http://127.0.0.1:${PORT}`;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'logbook-monster-rl-'));
 let srv;
