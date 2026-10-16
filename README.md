@@ -26,6 +26,14 @@ or Google.
   browser, shows what it found (sets, exercises, date range, rows it couldn't read, and asks
   day/month order or kg/lb when the file doesn't say), then imports it. Exercises are matched to
   yours by name; sets you already have are skipped, so importing a newer export later is safe.
+- **Food Library** – the food library: whole meals and single ingredients you enter (per 100 g,
+  per 100 ml or per item), with a recipe or notes, private or shared with everyone. Tabs split
+  meals from ingredients; search, Show (mine / shared), Sort (A–Z, calories, protein, protein per
+  calorie) and quick filters (high protein, low calorie, has recipe, AI estimates) find one, and
+  your filters are remembered. **Fill blanks with AI** estimates the values you left empty from
+  the name, type and recipe (OpenRouter, the super admin's key, 40 an hour per account); those values
+  are flagged ⚑ and tapping a flag shows the source, workings, confidence and model. Typing your
+  own number removes its flag.
 - **Account admin** (everyone) – your own baseline: upload a meal plan (CSV or JSON) or edit it
   in place, download it, choose which weekdays are training or rest, set day targets, and edit or
   add foods. Only what you change is stored; everything else follows the app defaults, and
