@@ -8,7 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 
-const PORT = 4000 + Math.floor(Math.random() * 90);
+const [PORT] = require('./_ports').freePorts(1);
 const BASE = `http://127.0.0.1:${PORT}`;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'logbook-monster-foods-'));
 const root = path.join(__dirname, '..');
