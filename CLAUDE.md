@@ -12,6 +12,8 @@
   any page error or horizontal overflow). Run it before sending your PR and say it passed; the
   merge master runs it again on the merged result before merging.
 - New features should come with a test in `test/` or a step in `scripts/smoke.js`.
+  Test servers set `AUTH_RATE_LIMIT=1000` so the many sign-ins in the suite don't hit the
+  20-per-15-minutes sign-in limit; `test/ratelimit.test.js` checks the real default still applies.
 - Keep PRs focused on one change so they merge cleanly. If the merge master reports a conflict,
   merge `main` into your branch (no rebase/force-push), resolve, re-run tests, push, and tell it again.
 
