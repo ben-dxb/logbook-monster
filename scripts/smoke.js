@@ -156,6 +156,24 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       const cscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(cscroll <= 1, `horizontal overflow of ${cscroll}px on the exercises page at ${w}px wide`);
       await pg.click('[data-g=csvdrop]');
+      /* body parts: tick them in the exercise's settings, filter My exercises by one, then use the workout builder's picker */
+      await pg.click('#g-exlist a.grow:has-text("Atlantis hack squat")'); await pg.waitForSelector('#g-quick');
+      await pg.click('.gexset > summary'); await pg.setChecked('input[name=g-part][value=quads]', true); await pg.setChecked('input[name=g-part][value=glutes]', true);
+      await pg.click('#g-exform button[type=submit]'); await pg.waitForFunction(() => /Quads/.test((document.querySelector('#g-body .gpts') || {}).textContent || ''), null, { timeout: 5000 });
+      await pg.click('#g-tabs a[data-g=x]'); await pg.waitForSelector('#g-exlist a.grow');
+      await pg.click('[data-g=part][data-p=quads]'); await pg.waitForSelector('[data-g=part][data-p=quads][aria-pressed=true]');
+      let exl = await pg.textContent('#g-exlist');
+      expect(/Atlantis hack squat/.test(exl) && !/Cable row/.test(exl), 'the Quads filter should list only quad exercises');
+      await pg.evaluate(() => { location.hash = '#gym/new'; }); await pg.waitForSelector('#g-picklist');
+      exl = await pg.textContent('#g-picklist');
+      expect(/Atlantis hack squat/.test(exl) && !/Cable row/.test(exl), 'the picker should keep the body-part filter');
+      await pg.click('[data-g=part][data-p=""]'); await pg.fill('#g-exname', 'cable');
+      await pg.waitForFunction(() => document.querySelectorAll('#g-picklist [data-g=pick]').length === 1);
+      await pg.click('#g-picklist [data-g=pick]'); await pg.waitForFunction(() => /Cable row/.test(document.querySelector('#g-body .gedit').textContent));
+      expect(/✓/.test(await pg.textContent('#g-picklist')), 'a picked exercise should be marked in the picker');
+      const bscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(bscroll <= 1, `horizontal overflow of ${bscroll}px in the workout builder at ${w}px wide`);
+      await pg.click('#g-tabs a[data-g=""]'); await pg.waitForSelector('#g-body a[href="#gym/new"]');
       /* food library: add a shared meal with a recipe, filter meals and ingredients, open an AI flag's source,
          find the meal, add it to today's plan, then add it again from the Day page */
       if (first) await pg.evaluate(() => api('POST', '/api/foods', { name: 'Smoke chicken', unit: 'g', kind: 'ingredient', k: 165, p: 31, c: 0, f: 3.6,

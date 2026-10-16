@@ -17,8 +17,15 @@ const fakeAi = http.createServer((req, res) => {
   req.on('data', c => { body += c; });
   req.on('end', () => {
     aiSeen.push({ url: req.url, auth: req.headers.authorization, body: JSON.parse(body) });
+    if (/tag gym exercises with the body parts/.test(aiSeen.at(-1).body.messages[0].content)) {
+      /* "<id>: <name>" lines; names with "row" train back + biceps, "mystery" gets nothing, plus an id that wasn't asked about */
+      const lines = aiSeen.at(-1).body.messages[1].content.split('\n').map(l => l.split(': '));
+      const exercises = lines.map(([id, n]) => ({ id: +id, parts: /row/i.test(n) ? ['back', 'BICEPS', 'nope', 'back'] : /mystery/i.test(n) ? [] : ['quads', 'glutes'] }));
+      res.setHeader('content-type', 'application/json');
+      return res.end(JSON.stringify({ model: 'test/model', choices: [{ message: { content: JSON.stringify({ exercises: [...exercises, { id: 999999, parts: ['chest'] }] }) } }] }));
+    }
     if (/workout tracking app/.test(aiSeen.at(-1).body.messages[0].content)) {
-      const program = { workouts: [{ name: 'Monday — Upper', description: '18 working sets.', exercises: [{ name: 'HACK SQUAT', target: '1 × 5–8 heavy' }, { name: 'Panatta high row', target: '2 × 8–15' }, { name: '' }] },
+      const program = { workouts: [{ name: 'Monday — Upper', description: '18 working sets.', exercises: [{ name: 'HACK SQUAT', target: '1 × 5–8 heavy', parts: ['chest'] }, { name: 'Panatta high row', target: '2 × 8–15', parts: ['back', 'biceps'] }, { name: '' }] },
         { name: 'Nothing here', exercises: [] }], notes: ['Guessed the row machine'] };
       res.setHeader('content-type', 'application/json');
       return res.end(JSON.stringify({ model: 'test/model', choices: [{ message: { content: JSON.stringify(program) } }] }));
@@ -350,7 +357,7 @@ test('AI: the key and models are the super admin’s, a plan is read against you
   assert.strictEqual((await admin.req('PUT', '/api/admin/ai', { models: { plan: 'bad model!' } })).status, 400);
   let ms = await admin.req('PUT', '/api/admin/ai', { models: { plan: 'plan/model', food: 'food/model' } });
   assert.deepStrictEqual(ms.body.tasks.map(t => [t.id, t.model, t.uses]), [['plan', 'plan/model', 'plan/model'], ['workout', '', 'test/model'],
-    ['food', 'food/model', 'food/model'], ['pose', '', 'test/model'], ['summary', '', 'test/model']]);
+    ['food', 'food/model', 'food/model'], ['pose', '', 'test/model'], ['exercise', '', 'test/model'], ['summary', '', 'test/model']]);
   await pdf(admin);
   assert.strictEqual(aiSeen.at(-1).body.model, 'plan/model');
   ms = await admin.req('PUT', '/api/admin/ai', { models: { plan: '' } });
@@ -501,6 +508,17 @@ test('gym: exercises, workouts and sets belong to one account and are checked', 
   await other.req('DELETE', '/api/gym/exercises/' + ex.body.id);
   assert.strictEqual((await me.req('GET', '/api/gym/sets?exercise=' + ex.body.id)).body.length, 2);
 
+  /* body parts: set by hand, unknown ids dropped, other accounts can't */
+  let px = await me.req('PUT', '/api/gym/exercises/' + ex.body.id, { name: 'Hack squat', notes: '', parts: ['quads', 'Glutes', 'wings', 'quads'] });
+  assert.deepStrictEqual(px.body.parts, ['quads', 'glutes']);
+  assert.deepStrictEqual((await me.req('PUT', '/api/gym/exercises/' + ex.body.id, { name: 'Hack squat', notes: 'x' })).body.parts, ['quads', 'glutes']);   /* kept when not sent */
+  assert.strictEqual((await me.req('PUT', '/api/gym/exercises/' + ex.body.id, { name: 'Hack squat', parts: 'quads' })).status, 400);
+  assert.strictEqual((await other.req('PUT', '/api/gym/exercises/' + ex.body.id, { name: 'Hack squat', parts: [] })).status, 404);
+  const gy = (await me.req('GET', '/api/gym')).body;
+  assert.ok(gy.parts.some(p => p.id === 'quads' && p.name === 'Quads'));
+  assert.deepStrictEqual(gy.exercises.find(x => x.id === ex.body.id).parts, ['quads', 'glutes']);
+  assert.strictEqual((await me.req('POST', '/api/gym/exercises/ai-parts', { ids: [ex.body.id] })).status, 400);   /* no AI key yet */
+
   /* AI: read a plan (uses the admin's key), check the result, then import it */
   assert.strictEqual((await other.req('PUT', '/api/admin/ai', { key: 'sk-or-v1-secret-1234abcd' })).status, 200);
   const csrf = (await me.req('GET', '/api/me')).body.csrf;
@@ -511,16 +529,31 @@ test('gym: exercises, workouts and sets belong to one account and are checked', 
   assert.match(aiSeen.at(-1).body.messages[0].content, /Hack squat/);                 /* knows your exercises */
   assert.match(aiSeen.at(-1).body.messages[1].content[1].image_url.url, /^data:image\/jpeg;base64,/);
   assert.strictEqual(plan.workouts.length, 1);                                          /* empty workout dropped */
-  assert.deepStrictEqual(plan.workouts[0].exercises, [{ name: 'Hack squat', target: '1 × 5–8 heavy', existing: ex.body.id },
-    { name: 'Panatta high row', target: '2 × 8–15', existing: null }]);
+  assert.deepStrictEqual(plan.workouts[0].exercises, [{ name: 'Hack squat', target: '1 × 5–8 heavy', existing: ex.body.id, parts: ['chest'] },
+    { name: 'Panatta high row', target: '2 × 8–15', existing: null, parts: ['back', 'biceps'] }]);
   assert.deepStrictEqual(plan.notes, ['Guessed the row machine']);
   const imp = await me.req('POST', '/api/gym/import', { workouts: plan.workouts });
   assert.strictEqual(imp.status, 200);
   assert.deepStrictEqual(imp.body.workouts.map(x => x.name), ['Legs', 'Monday — Upper']);
   assert.deepStrictEqual(imp.body.exercises.map(x => x.name), ['Hack squat', 'Panatta high row']);
+  assert.deepStrictEqual(imp.body.exercises.map(x => x.parts), [['quads', 'glutes'], ['back', 'biceps']]);   /* the import tags only untagged exercises */
   assert.strictEqual(imp.body.workouts[1].items[0].e, ex.body.id);
   assert.strictEqual((await me.req('POST', '/api/gym/import', { workouts: [{ name: 'x'.repeat(81), exercises: [] }] })).status, 400);
   assert.strictEqual((await me.req('GET', '/api/gym')).body.workouts.length, 2);       /* a failed import adds nothing */
+
+  /* AI: tag exercises with body parts – only yours, only known parts, nothing for an unclear name */
+  const myst = (await me.req('POST', '/api/gym/exercises', { name: 'Mystery machine' })).body;
+  const row = imp.body.exercises.find(x => x.name === 'Panatta high row');
+  await me.req('PUT', '/api/gym/exercises/' + row.id, { name: row.name, parts: [] });
+  let tg = await me.req('POST', '/api/gym/exercises/ai-parts', { ids: [row.id, myst.id] });
+  assert.strictEqual(tg.status, 200, JSON.stringify(tg.body));
+  assert.strictEqual(tg.body.tagged, 1);
+  assert.match(aiSeen.at(-1).body.messages[1].content, /Panatta high row/);
+  assert.deepStrictEqual(tg.body.exercises.map(x => [x.name, x.parts]), [['Hack squat', ['quads', 'glutes']], ['Mystery machine', []], ['Panatta high row', ['back', 'biceps']]]);
+  assert.strictEqual((await other.req('POST', '/api/gym/exercises/ai-parts', { ids: [row.id] })).status, 400);   /* not theirs */
+  assert.strictEqual((await me.req('POST', '/api/gym/exercises/ai-parts', { ids: [] })).status, 400);
+  assert.strictEqual((await me.req('POST', '/api/gym/exercises/ai-parts', { ids: Array.from({ length: 41 }, (_, i) => i + 1) })).status, 400);
+  await me.req('DELETE', '/api/gym/exercises/' + myst.id);
   await other.req('PUT', '/api/admin/ai', { key: '' });
 
   /* deleting an exercise takes its sets and drops it from workouts */
