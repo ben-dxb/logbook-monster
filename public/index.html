@@ -183,75 +183,75 @@
 
   <!-- ===================== ADMIN =====================
        One page, two scopes: #account (account admin – anyone, their own plan, week, targets and foods)
-       and #admin (super admin – app-wide settings, in tabs: #admin app defaults, #admin/ai, #admin/people, #admin/email).
+       and #admin (super admin – app-wide settings, in tabs: #admin/ai, #admin/people, #admin/email, #admin/options).
        .admine / .adapp / .adsuper parts show for one scope only; data-adtab says which super admin tab a panel is on. -->
   <section id="v-admin" class="view" hidden>
     <section class="panel adintro">
       <h2 class="admine">Account admin</h2><h2 class="adapp">Super admin</h2>
-      <p class="admine">Changes here are yours alone: your meal plan, which days you train, your day targets and food values. Anything you don’t change follows the app defaults.</p>
-      <p class="adapp">Settings for the whole app, for everyone: the defaults new accounts start from, the AI set-up, who can sign in and the email account the app sends from. Your own plan, week and targets are on the Account admin page.</p>
-      <p class="admine"><button class="ghost" type="button" data-ad="reset" id="ad-reset" hidden>Go back to the app defaults</button></p>
+      <p class="admine">Your meal plan is yours alone: your foods, your day templates (training day, rest day, or any others you need – each with its meals and targets) and which template each weekday uses. Nothing here comes from anyone else’s plan.</p>
+      <p class="adapp">Settings for the whole app: the AI set-up, who can sign in and the email account the app sends from. Meal plans aren’t set here – each account keeps its own on its Account admin page.</p>
       <nav class="seg gtabs adtabs adapp" id="ad-tabs" aria-label="Super admin">
-        <a href="#admin" data-adt="defaults">App defaults</a>
         <a href="#admin/ai" data-adt="ai">AI</a>
         <a href="#admin/people" data-adt="people">People</a>
         <a href="#admin/email" data-adt="email">Email</a>
+        <a href="#admin/options" data-adt="options">Options</a>
       </nav>
     </section>
-    <div class="adbar" role="status" data-adtab="defaults">
+    <div class="adbar admine" role="status">
       <div id="ad-status" class="status"></div>
-      <label class="f adfrom admine"><span class="lbl">Takes effect from</span><input id="ad-from" type="date" data-ad="from" aria-describedby="ad-fromhint"></label>
+      <label class="f adfrom"><span class="lbl">Takes effect from</span><input id="ad-from" type="date" data-ad="from" aria-describedby="ad-fromhint"></label>
       <span class="sb"><button class="ghost" type="button" data-ad="discard" id="ad-discard" hidden>Discard changes</button>
-        <button class="btn" type="button" data-ad="save" id="ad-save" disabled><span class="admine">Save my plan</span><span class="adapp">Save app defaults</span></button></span>
-      <p id="ad-fromhint" class="sub adfromhint admine"></p>
+        <button class="btn" type="button" data-ad="save" id="ad-save" disabled>Save my plan</button></span>
+      <p id="ad-fromhint" class="sub adfromhint"></p>
     </div>
-    <section class="panel" data-adtab="defaults" aria-labelledby="ad-ph">
-      <h2 id="ad-ph"><span class="admine">My meal plan</span><span class="adapp">Default meal plan</span></h2>
-      <p><span class="admine">The plan your new days start from, one per day type.</span><span class="adapp">The plan every account’s new days start from, unless they’ve made their own.</span>
-        Edit it here<span class="adfiles">, or download it, change it in a spreadsheet and upload it again</span>. Amounts are the starting point – each day still balances them to its targets. Days already in the history keep their own amounts.</p>
+    <section class="panel admine" aria-labelledby="ad-ph">
+      <h2 id="ad-ph">My meal plan</h2>
+      <p>Your plan is a set of day templates – one for each kind of day you eat differently on. Each has its own meals and targets.
+        Add, rename, duplicate or delete templates below<span class="adfiles">, or upload a plan (download it, change it in a spreadsheet and upload it again)</span>.
+        Amounts are the starting point – each day still balances them to its targets. Days already in your history keep their own amounts.</p>
       <div id="ad-planstate" class="status"></div>
       <div id="ad-versions" class="adversions" hidden></div>
       <div class="adtools">
         <label class="btn adfile adfiles">Upload plan (CSV or JSON)<input id="ad-file" type="file" accept=".csv,.json,.txt,text/csv,application/json"></label>
         <button class="ghost adfiles" type="button" data-ad="csv">Download plan (CSV)</button>
-        <button class="ghost adfiles" type="button" data-ad="json">Download all defaults (JSON)</button>
-        <button class="ghost" type="button" data-ad="restore" id="ad-restore" hidden>Use the built-in plan</button>
+        <button class="ghost adfiles" type="button" data-ad="json">Download whole plan (JSON)</button>
       </div>
       <section class="adai" id="ad-ai" aria-labelledby="ad-aih">
         <h3 class="lbl" id="ad-aih">Read a PDF with AI</h3>
-        <p>Upload your coach's meal plan as a PDF (or a photo) and AI breaks it down into meals, foods, amounts and targets. New foods are added to the Foods list. Check everything before you save – nothing changes until you do.</p>
+        <p>Upload your coach's meal plan as a PDF (or a photo) and AI breaks it down into day templates, meals, foods, amounts and targets. New foods are added to My foods. Check everything before you save – nothing changes until you do.</p>
         <div class="adtools">
           <label class="btn adfile" id="ad-aibtn">Choose PDF…<input id="ad-aifile" type="file" accept=".pdf,application/pdf,image/png,image/jpeg,image/webp"></label>
           <span id="ad-aistate" class="sub" role="status"></span>
         </div>
       </section>
-      <label class="tog adapp adoptfiles"><input type="checkbox" id="ad-planfiles"> Offer CSV / JSON plan files <span class="muted">– the upload and download buttons, for everyone</span></label>
       <details class="adhelp adfiles"><summary>CSV format</summary>
         <p>One row per food, with these headings in the first row: <code>day_type, meal, meal_name, box, food, grams, locked, note</code>.
-          <b>day_type</b> is training, rest or saturday; <b>meal</b> is the meal number; <b>box</b> is protein, carbs or fats (left blank, it follows the food's swap list);
-          <b>food</b> is a food id or its name from the Foods list below; <b>locked</b> is yes to keep that amount fixed. Day types missing from the file keep their current plan.
+          <b>day_type</b> is the name of a day template (a name you don’t have yet adds a new template); <b>meal</b> is the meal number; <b>box</b> is protein, carbs or fats (left blank, it follows the food's swap list);
+          <b>food</b> is a food id or its name from My foods below; <b>locked</b> is yes to keep that amount fixed. Templates missing from the file keep their current meals.
           The easiest start is to download the current plan and edit it.</p>
       </details>
       <div id="ad-upmsg" role="alert"></div>
-      <div class="seg" role="group" aria-label="Day type" id="ad-types"></div>
+      <h3 class="lbl">Day templates</h3>
+      <div class="seg adtypes" role="group" aria-label="Day templates" id="ad-types"></div>
+      <div id="ad-tpl" class="adtpl"></div>
       <div id="ad-meals" class="admeals"></div>
     </section>
-    <section class="panel" data-adtab="defaults" aria-labelledby="ad-wh">
-      <h2 id="ad-wh"><span class="admine">My training and rest days</span><span class="adapp">Default training and rest days</span></h2>
-      <p>Which plan each weekday uses. Saturday training is the training plan with the lemon pie option.</p>
+    <section class="panel admine" aria-labelledby="ad-wh">
+      <h2 id="ad-wh">My week and targets</h2>
+      <p>Which day template each weekday starts from. On the Daily Tracker you can switch any one day to another template.</p>
       <div id="ad-week" class="adweek"></div>
       <h3 class="lbl">Day targets</h3>
-      <p>Protein is a minimum and fat a maximum; calories and carbs are matched.</p>
+      <p>One row per day template. Protein is a minimum and fat a maximum; calories and carbs are matched.</p>
       <div id="ad-targets" class="adtargets"></div>
     </section>
-    <section class="panel" data-adtab="defaults" aria-labelledby="ad-frh">
-      <h2 id="ad-frh"><span class="admine">My free foods</span><span class="adapp">Default free foods</span></h2>
-      <p>Whether sauces and green veg count towards the day’s macros. Ticked, foods marked Sauce or Green veg (in the foods below, in the food library and in the starter foods) add nothing to the totals and the balancing leaves them alone.<span class="admine"> Like the rest of your plan, it applies from the “Takes effect from” date, so earlier days keep the totals they had.</span></p>
+    <section class="panel admine" aria-labelledby="ad-frh">
+      <h2 id="ad-frh">My free foods</h2>
+      <p>Whether sauces and green veg count towards the day’s macros. Ticked, foods marked Sauce or Green veg (in the foods below, in the food library and in the starter foods) add nothing to the totals and the balancing leaves them alone. Like the rest of your plan, it applies from the “Takes effect from” date, so earlier days keep the totals they had.</p>
       <div id="ad-free" class="adfree"></div>
     </section>
-    <section class="panel" data-adtab="defaults" aria-labelledby="ad-fh">
-      <h2 id="ad-fh"><span class="admine">My foods</span><span class="adapp">Default foods</span></h2>
-      <p>Values per 100g (or 100ml). Direct protein is the protein counted from meat, eggs, dairy and whey. Step is how amounts are rounded; min/max are per serving; daily order caps the day's total (Health Road deliveries). Rice pudding values come from the batch on the Day page.</p>
+    <section class="panel admine" aria-labelledby="ad-fh">
+      <h2 id="ad-fh">My foods</h2>
+      <p>The foods your plan uses and lets you swap between. Values per 100g (or 100ml). Direct protein is the protein counted from meat, eggs, dairy and whey. Step is how amounts are rounded; min/max are per serving; daily order caps the day's total (for delivered meals). The swap list decides which box a food can be swapped in.</p>
       <form id="ad-addfood" class="adnewfood">
         <label class="f adwide"><span class="lbl">New food</span><input id="ad-nf-n" placeholder="e.g. Greek yoghurt 0%"></label>
         <label class="f"><span class="lbl">Swap list</span><select id="ad-nf-g"><option value="p">Protein</option><option value="c" selected>Carbs</option><option value="x">Fats</option><option value="">None</option></select></label>
@@ -262,6 +262,22 @@
         <button class="btn" type="submit">Add food</button>
       </form>
       <div id="ad-foods" class="adfoods"></div>
+    </section>
+    <section class="panel admine" aria-labelledby="ad-shh">
+      <h2 id="ad-shh">Share with your coach</h2>
+      <p>Make a link your coach can open without a password or an account to see your days, weight, trends, supplements, gym sets and progress photos – read only, so nothing can be changed. It stops working when it runs out, or as soon as you switch it off here. Anyone holding the link sees the same, so only send it to your coach.</p>
+      <form id="ad-share" class="adshare">
+        <label class="f"><span class="lbl">Who it’s for (optional)</span><input id="ad-sh-label" maxlength="60" autocomplete="off" placeholder="e.g. Coach Sam"></label>
+        <label class="f"><span class="lbl">Stays live for</span><select id="ad-sh-for">
+          <option value="h1">1 hour</option><option value="h24">1 day</option><option value="d3">3 days</option><option value="d7" selected>1 week</option>
+          <option value="d14">2 weeks</option><option value="d30">1 month</option><option value="d90">3 months</option><option value="d180">6 months</option>
+          <option value="d365">1 year</option><option value="date">Until a date…</option></select></label>
+        <label class="f" id="ad-sh-untilf" hidden><span class="lbl">Until the end of</span><input id="ad-sh-until" type="date"></label>
+        <button class="btn" type="submit" id="ad-sh-btn">Make link</button>
+      </form>
+      <div id="ad-shnew"></div>
+      <p id="ad-shmsg" class="sub" role="status"></p>
+      <div id="ad-shares" class="adusers"></div>
     </section>
     <section class="panel admine" aria-labelledby="ad-pdh">
       <h2 id="ad-pdh">Delete progress photos</h2>
@@ -302,6 +318,11 @@
       </form>
       <div id="ad-ivmsg" role="status"></div>
       <div id="ad-users" class="adusers"></div>
+    </section>
+    <section class="panel adsuper" aria-labelledby="ad-oh" data-adtab="options">
+      <h2 id="ad-oh">Options</h2>
+      <p>Switch parts of the app on or off for everyone.</p>
+      <label class="tog adoptfiles"><input type="checkbox" id="ad-planfiles"> Plan files <span class="muted">– the CSV / JSON plan upload and download buttons on Account admin</span></label>
     </section>
     <section class="panel adsuper" aria-labelledby="ad-eh" data-adtab="email">
       <h2 id="ad-eh">Email</h2>

@@ -1,6 +1,6 @@
 'use strict';
 /* Browser smoke test: starts a throwaway server, signs in, weighs a meal-prep pack, edits and saves a day, logs a weight,
-   opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, uploads a plan, sets up AI models and invites someone on the Super admin tabs, at desktop and phone widths. Fails on any page error.
+   opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, shares a read-only coach link and opens it signed out, uploads a plan and adds a day template on Account admin, sets up AI models and invites someone on the Super admin tabs, builds a plan from nothing as the new account, switches a day to another template, at desktop and phone widths. Fails on any page error.
    Needs Playwright (npm i -g playwright, or available in the environment); skips if missing. */
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -39,6 +39,11 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.goto(BASE + '/');
       expect(pg.url().endsWith('/login'), 'signed-out visit should land on /login');
       await pg.fill('#email', 'smoke@example.com'); await pg.fill('#password', 'smoke-password-1'); await pg.click('#submit');
+      if (first) {   /* no app defaults: a new account has no plan until it makes one; this one takes the old built-in plan */
+        await pg.waitForSelector('#v-day:not([hidden]) #meals .noplan', { timeout: 5000 });
+        await pg.evaluate(plan => api('PUT', '/api/my/defaults', plan), require('../server/legacy').effective({}, {}));
+        await pg.reload();
+      }
       await pg.waitForSelector('#v-day:not([hidden]) #meals .meal', { timeout: 5000 });
       if (first) expect(/Plan only/.test(await pg.textContent('#status')), 'fresh day should be "Plan only"');
       if (first) { /* weigh a Health Road pack: the portion follows the plan's share of the meat */
@@ -288,6 +293,7 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await pg.waitForFunction(() => /Added 1 photo /.test(document.querySelector('#p-list').textContent), null, { timeout: 10000 });
         const big = await pg.evaluate(async () => (await api('GET', '/api/photos')).photos.find(p => p.note === 'smoke start'));
         expect(big && big.tv && big.size < 1500000, 'uploaded photo should be shrunk and have a thumbnail');
+        expect(big.pose === 'other' && !(await pg.locator('#p-pose').count()), 'without AI there is no pose to pick on upload and photos go in as Other');
       }
       expect(await pg.locator('#p-list .pday').count() === 2 && await pg.locator('#p-list .ptile').count() === 3, 'catalog should show 3 photos over 2 days');
       await pg.waitForFunction(() => [...document.querySelectorAll('#p-list .ptile img')].every(i => i.complete && i.naturalWidth > 0), null, { timeout: 5000 });
@@ -314,6 +320,22 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.fill('#p-nearkg', ''); await pg.uncheck('#p-near');
       await pg.waitForFunction(() => document.querySelectorAll('#p-list .pday').length === 2);
       expect(first === !(await pg.locator('#p-aibtn').count()), '"Tag poses with AI" only once AI is set up');
+      if (!first) expect(await pg.locator('#p-pose').inputValue() === 'ai', 'with AI set up, uploads default to "Let AI tell"');
+      if (!first) {
+        /* the photos went in with AI off (no pose picked), so they're left for the AI; only the one whose pose was set by
+           hand above is asked about – "leave it" tags the rest. The faked AI keeps each pose, so later steps see the same photos. */
+        await pg.unroute('**/api/photos/*/ai-pose');
+        await pg.route('**/api/photos/*/ai-pose', async r => {
+          const id = +r.request().url().match(/photos\/(\d+)\/ai-pose/)[1];
+          const ph = await pg.evaluate(id => PHOTOS.find(x => x.id === id), id);
+          await r.fulfill({ json: { pose: ph.pose, model: 'test/vision', photo: { ...ph, poseAi: true } } });
+        });
+        const asked = [], answer = d => { asked.push(d.message()); return asked.length === 1 ? d.dismiss() : d.accept(); };
+        pg.on('dialog', answer); await pg.click('#p-aibtn');
+        await pg.waitForFunction(() => /The AI looked at \d+ photo/.test(document.querySelector('#p-list').textContent), null, { timeout: 5000 });
+        pg.off('dialog', answer);
+        expect(/1 of the \d+ photos shown has a pose you set yourself/.test(asked[0]), `"Tag poses with AI" should ask about the one pose set by hand, asked: ${asked[0]}`);
+      }
       await pg.fill('#p-jump', '2026-09-04'); await pg.waitForSelector('#p-d-2026-09-01.hit');
       /* pick two photos in the catalog and compare them, older on the left */
       await pg.click('#p-selbtn'); await pg.waitForSelector('#p-selbar:not([hidden])');
@@ -366,42 +388,67 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.click('#t-card [data-ta=cmove][data-n="-1"]'); await pg.waitForFunction(t => document.querySelector('#t-ctitle').textContent !== t, t0);
       await pg.keyboard.press('Escape'); await pg.waitForFunction(() => !document.querySelector('#t-card').open && location.hash === '#history/timeline');
       await pg.evaluate(() => { location.hash = '#timeline'; }); await pg.waitForFunction(() => location.hash === '#history/timeline' && !document.querySelector('#v-timeline').hidden);
-      /* admin (the only account is the first one, so it is the admin) */
-      await pg.click('#acct>summary'); await pg.click('#adminlink'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-meals .admeal');
+      /* coach link: made on Account admin, opened with no sign-in (read only: no edit controls, no AI), then switched off */
+      await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-share');
+      await pg.fill('#ad-sh-label', 'Smoke coach'); await pg.selectOption('#ad-sh-for', 'date');
+      expect(!(await pg.isHidden('#ad-sh-until')), 'picking "Until a date" should show a date field');
+      await pg.selectOption('#ad-sh-for', 'h24'); await pg.click('#ad-sh-btn');
+      await pg.waitForSelector('#ad-sh-link', { timeout: 5000 });
+      const coachUrl = await pg.inputValue('#ad-sh-link');
+      expect(/\/coach\/[A-Za-z0-9_-]{43}$/.test(coachUrl) && /Smoke coach/.test(await pg.textContent('#ad-shares')), 'a coach link should be made and listed');
+      const cctx = await browser.newContext({ viewport: { width: w, height: h } }), cp = await cctx.newPage();
+      cp.on('pageerror', e => errs.push('coach: ' + e.message));
+      let coachOff = false;   /* once switched off, the link's 404 is expected */
+      cp.on('console', m => { if (m.type() === 'error' && !coachOff) errs.push('coach: ' + m.text() + ' ' + JSON.stringify(m.location())); });
+      await cp.goto(coachUrl); await cp.waitForSelector('#c-main:not([hidden]) #t-chart svg', { timeout: 5000 });
+      expect(/smoke’s logbook/.test(await cp.textContent('#c-who')) && /Smoke coach/.test(await cp.textContent('#c-until')), 'the coach page should say whose logbook it is');
+      expect(await cp.locator('#c-days .cday').count() === 14 && /80\.5 kg/.test(await cp.textContent('#c-days')), 'the coach page should list recent days with weight');
+      expect(!(await cp.locator('#t-aibtn, #t-expick, .tclink, input[type=number]').count()), 'the coach page should have nothing to edit');
+      await cp.click('#c-days .cday >> nth=0'); await cp.waitForFunction(() => document.querySelector('#t-card').open && /Atlantis hack squat/.test(document.querySelector('#t-card').textContent), null, { timeout: 5000 });
+      expect(await cp.locator('#t-card .tcphotos .ptile img').count() >= 1, 'the coach should see the latest photos');
+      const coachScroll = await cp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(coachScroll <= 1, `horizontal overflow of ${coachScroll}px on the coach page at ${w}px wide`);
+      await cp.keyboard.press('Escape');
+      pg.once('dialog', d => d.accept()); await pg.click('#ad-shares [data-sh=off]');
+      await pg.waitForFunction(() => !document.querySelector('#ad-shares [data-sh=off]'), null, { timeout: 5000 });
+      coachOff = true; await cp.reload(); await cp.waitForSelector('#c-gone:not([hidden])', { timeout: 5000 });
+      await cctx.close();
+      /* account admin: your own plan, changed here */
+      await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
+      expect(await pg.isHidden('#ad-tabs') && await pg.isHidden('#ad-aipanel') && await pg.isHidden('#ad-uh'), 'account admin has no super admin parts');
       if (first) {
         await pg.setInputFiles('#ad-file', { name: 'plan.csv', mimeType: 'text/csv', buffer: Buffer.from(
           'day_type,meal,meal_name,box,food,grams,locked\nrest,1,Smoke bowl,protein,whey,40,yes\nrest,1,Smoke bowl,carbs,Banana (peeled),150,\n') });
-        await pg.waitForFunction(() => /Loaded rest plan/.test(document.querySelector('#ad-upmsg').textContent), null, { timeout: 5000 });
+        await pg.waitForFunction(() => /Loaded Rest from plan\.csv/.test(document.querySelector('#ad-upmsg').textContent), null, { timeout: 5000 });
         await pg.selectOption('#ad-wd-0', 'R');
         await pg.click('.adfood[data-id=banana] summary'); await pg.fill('#ad-fd-banana-k', '90');
+        /* a new day template without uploading anything: Rest copied as a refeed day, renamed, more carbs, on Sundays */
+        await pg.click('#ad-types [data-t=R]'); await pg.click('[data-ad=tdup]');
+        await pg.fill('#ad-tn', 'Refeed day'); await pg.press('#ad-tn', 'Tab');
+        const rf = await pg.evaluate(() => adType);
+        expect(/Refeed day/.test(await pg.textContent('#ad-types')) && await pg.inputValue('#ad-mn-0') === 'Smoke bowl', 'the copy should have the rest day meals');
+        await pg.fill(`#ad-tg-${rf}-c`, '420');
+        await pg.selectOption('#ad-wd-6', rf);
         await pg.click('#ad-save');
         await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
-        /* plan files off: the CSV / JSON buttons go, on again: they're back */
-        await pg.uncheck('#ad-planfiles'); await pg.waitForFunction(() => document.querySelector('#v-admin').classList.contains('nofiles') && !document.querySelector('#ad-planfiles').disabled, null, { timeout: 5000 });
-        expect(await pg.isHidden('[data-ad=csv]') && await pg.isHidden('.adfile.adfiles'), 'plan file buttons should hide when switched off');
-        await pg.check('#ad-planfiles'); await pg.waitForFunction(() => !document.querySelector('#v-admin').classList.contains('nofiles') && !document.querySelector('#ad-planfiles').disabled, null, { timeout: 5000 });
-        expect(!(await pg.isHidden('[data-ad=csv]')), 'plan file buttons should be back when switched on');
-        /* super admin tabs: the App defaults tab holds only the editor; AI, people and email are tabs of their own */
-        expect(await pg.isHidden('#ad-aipanel') && await pg.isHidden('#ad-uh') && await pg.isHidden('#ad-eh') && !(await pg.isHidden('#ad-ph')), 'App defaults tab should show only the editor');
+        expect(/5 day templates/.test(await pg.textContent('#ad-planstate')), 'the new template should be saved with the plan');
         expect(/OpenRouter API key/.test(await pg.textContent('#ad-aistate')) && await pg.isDisabled('#ad-aifile'), 'PDF reading should be off without a key');
-        /* AI tab: save a key, then give food values its own model */
-        await pg.click('#ad-tabs [data-adt=ai]'); await pg.waitForSelector('#ad-aipanel:not([hidden])');
-        expect(await pg.isHidden('#ad-ph') && await pg.isHidden('.adbar'), 'AI tab should not show the plan editor');
+        /* super admin: no plan editor at all – AI, people and email in tabs */
+        await pg.click('#acct>summary'); await pg.click('#adminlink');
+        await pg.waitForSelector('#v-admin:not(.mine):not([hidden]) #ad-aipanel:not([hidden])');
+        expect(await pg.isHidden('#ad-ph') && await pg.isHidden('.adbar') && await pg.isHidden('#ad-wh') && await pg.isHidden('#ad-fh'), 'super admin should have no plan editor');
         expect(/Not set up/.test(await pg.textContent('#ad-aikeystate')), 'AI should start not set up');
         await pg.fill('#ad-key', 'sk-or-v1-smoke-test-key'); await pg.click('#ad-keyform button[type=submit]');
         await pg.waitForFunction(() => /Set up/.test(document.querySelector('#ad-aikeystate').textContent), null, { timeout: 5000 });
         await pg.fill('#ad-tm-food', 'openai/gpt-4o-mini'); await pg.click('#ad-modelform button[type=submit]');
         await pg.waitForFunction(() => /Models saved/.test(document.querySelector('#ad-keymsg').textContent), null, { timeout: 5000 });
         expect(await pg.inputValue('#ad-tm-food') === 'openai/gpt-4o-mini' && await pg.inputValue('#ad-tm-plan') === '', 'each task keeps its own model');
-        await pg.click('#ad-tabs [data-adt=defaults]'); await pg.waitForSelector('#ad-ph:not([hidden])');
-        expect(/^Using /.test(await pg.textContent('#ad-aistate')) && !(await pg.isDisabled('#ad-aifile')), 'PDF upload should be on once a key is saved');
         /* invite someone: email isn't set up, so the link is shown to pass on; accept it in a fresh phone-sized browser */
-        await pg.click('#ad-tabs [data-adt=people]'); await pg.waitForSelector('#ad-uh:not([hidden])');
-        await pg.waitForSelector('#ad-users .aduser');
-        await pg.click('#ad-tabs [data-adt=email]'); await pg.waitForSelector('#ad-eh:not([hidden])');
+        await pg.click('#ad-tabs [data-adt=people]'); await pg.waitForSelector('[data-adtab=people]:not([hidden]) #ad-users .aduser');
+        await pg.click('#ad-tabs [data-adt=email]'); await pg.waitForSelector('[data-adtab=email]:not([hidden])');
         expect(/Not set up/.test(await pg.textContent('#ad-mailstate')), 'email should start not set up');
         expect(await pg.inputValue('#ad-m-host') === 'smtp.gmail.com', 'Gmail should be the default email server');
-        await pg.click('#ad-tabs [data-adt=people]'); await pg.waitForSelector('#ad-uh:not([hidden])');
+        await pg.click('#ad-tabs [data-adt=people]'); await pg.waitForSelector('[data-adtab=people]:not([hidden])');
         await pg.fill('#ad-iv-email', 'guest@example.com'); await pg.click('#ad-iv-btn');
         await pg.waitForSelector('#ad-iv-link', { timeout: 5000 });
         const link = await pg.inputValue('#ad-iv-link');
@@ -412,26 +459,42 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await gp.goto(link); await gp.waitForSelector('#form:not([hidden])', { timeout: 5000 });
         expect(/guest@example\.com/.test(await gp.textContent('#intro')), 'invite page should name the invited email');
         await gp.fill('#password', 'guest-password-1'); await gp.click('#submit');
-        await gp.waitForSelector('#v-day:not([hidden]) #meals .meal', { timeout: 5000 });
-        /* account admin: the guest has their own plan page but no super admin page */
+        /* the guest starts with no plan – nothing of the super admin's */
+        await gp.waitForSelector('#v-day:not([hidden]) #meals .noplan', { timeout: 5000 });
+        expect(await gp.locator('#meals .meal').count() === 0, 'a new account should have no meals');
         expect(await gp.isHidden('#adminlink'), 'super admin link should be hidden for other accounts');
         await gp.evaluate(() => { location.hash = '#admin'; });
         await gp.waitForSelector('#v-day:not([hidden])', { timeout: 5000 });
-        await gp.click('#acct>summary'); await gp.click('#accountlink');
-        await gp.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal', { timeout: 5000 });
+        await gp.click('#meals .noplan a.btn');
+        await gp.waitForSelector('#v-admin.mine:not([hidden]) #ad-planstate', { timeout: 5000 });
+        expect(/No plan yet/.test(await gp.textContent('#ad-planstate')) && await gp.locator('#ad-foods .adfood').count() === 0, 'the guest should have no plan and no foods');
         expect(await gp.isHidden('#ad-uh') && await gp.isHidden('#ad-eh') && await gp.isHidden('#ad-aipanel') && await gp.isHidden('#ad-tabs'), 'people, email and the AI settings are super admin only');
-        expect(await gp.inputValue('#ad-wd-0') === 'R', 'the guest should start from the app defaults');
-        await gp.selectOption('#ad-wd-0', 'T'); await gp.click('#ad-save');
-        await gp.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent) && !document.querySelector('#ad-reset').hidden, null, { timeout: 5000 });
-        /* free foods: tick sauces free, save, and passata stops counting */
-        expect(!(await gp.isChecked('#ad-free-sauce')) && !(await gp.isChecked('#ad-free-veg')), 'sauces and green veg should count by default');
+        /* build a plan by hand: two foods, a training template with a meal, then a rest template */
+        for (const [n, g, k, p, c, f] of [['Chicken thigh', 'p', '180', '25', '0', '9'], ['Rice', 'c', '130', '2.7', '28', '0.3'], ['Salsa', 'c', '36', '1.5', '7', '0.2']]) {
+          await gp.fill('#ad-nf-n', n); await gp.selectOption('#ad-nf-g', g);
+          await gp.fill('#ad-nf-k', k); await gp.fill('#ad-nf-p', p); await gp.fill('#ad-nf-c', c); await gp.fill('#ad-nf-f', f);
+          await gp.click('#ad-addfood button[type=submit]');
+        }
+        await gp.selectOption('#ad-fd-salsa-free', 'sauce');
+        await gp.click('[data-ad=tadd]'); await gp.fill('#ad-tn', 'Training'); await gp.press('#ad-tn', 'Tab');
+        const tr = await gp.evaluate(() => adType);
+        await gp.selectOption('#ad-a-0-p', 'chicken_thigh'); await gp.fill('#ad-g-0-p-0', '200');
+        await gp.selectOption('#ad-a-0-c', 'rice'); await gp.selectOption('#ad-a-0-c', 'salsa');
+        for (const [m, v] of [['k', '2400'], ['p', '180'], ['c', '250'], ['f', '70']]) await gp.fill(`#ad-tg-${tr}-${m}`, v);
+        await gp.click('[data-ad=tadd]'); await gp.fill('#ad-tn', 'Rest'); await gp.press('#ad-tn', 'Tab');
+        const rs = await gp.evaluate(() => adType);
+        expect(await gp.inputValue('#ad-wd-0') === tr && await gp.inputValue(`#ad-tg-${rs}-k`) === '2400', 'the first template is every day’s, a new one takes its targets');
+        await gp.click('#ad-save');
+        await gp.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
+        /* free foods: tick sauces free, save, and the salsa stops counting */
+        expect(!(await gp.isChecked('#ad-free-sauce')) && !(await gp.isChecked('#ad-free-veg')), 'sauces and green veg should count to start with');
         await gp.check('#ad-free-sauce');
         expect(/Unsaved/.test(await gp.textContent('#ad-status')), 'ticking free sauces should be an unsaved change');
         await gp.click('#ad-save');
         await gp.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
-        expect(await gp.isChecked('#ad-free-sauce') && await gp.evaluate(() => FREE.sauce && macOf('passata', 200).k === 0), 'free sauces should be saved and applied');
-        /* a change that takes effect later: Mondays are rest days again from 2031, days before keep training */
-        await gp.selectOption('#ad-wd-0', 'R'); await gp.fill('#ad-from', '2031-01-01'); await gp.click('#ad-save');
+        expect(await gp.isChecked('#ad-free-sauce') && await gp.evaluate(() => FREE.sauce && macOf('salsa', 200).k === 0), 'free sauces should be saved and applied');
+        /* a change that takes effect later: Mondays are rest days from 2031, days before keep training */
+        await gp.selectOption('#ad-wd-0', rs); await gp.fill('#ad-from', '2031-01-01'); await gp.click('#ad-save');
         await gp.waitForFunction(() => /Scheduled/.test(document.querySelector('#ad-versions').textContent) && /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
         /* delete progress photos between two dates: only those in the range go */
         await gp.evaluate(async () => {
@@ -446,29 +509,49 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         const gscroll = await gp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         expect(gscroll <= 1, `horizontal overflow of ${gscroll}px on the account admin page`);
         await gp.evaluate(() => { location.hash = '#day/2030-01-07'; });
-        await gp.waitForFunction(() => /Training day/.test(document.querySelector('#dsub').textContent), null, { timeout: 5000 });
+        await gp.waitForFunction(() => /· Training$/.test(document.querySelector('#dsub').textContent) && /Chicken thigh/.test(document.querySelector('#meals').innerHTML), null, { timeout: 5000 });
         await gp.evaluate(() => { location.hash = '#day/2031-01-06'; });
-        await gp.waitForFunction(() => document.querySelector('#datepick').value === '2031-01-06' && /Rest day/.test(document.querySelector('#dsub').textContent), null, { timeout: 5000 });
+        await gp.waitForFunction(() => document.querySelector('#datepick').value === '2031-01-06' && /· Rest$/.test(document.querySelector('#dsub').textContent), null, { timeout: 5000 });
         await gctx.close();
-        await pg.click('#ad-tabs [data-adt=defaults]'); await pg.waitForSelector('#ad-ph:not([hidden])');
+        await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
+        expect(/^Using /.test(await pg.textContent('#ad-aistate')) && !(await pg.isDisabled('#ad-aifile')), 'PDF upload should be on once a key is saved');
+        /* Options tab: plan files off hides the CSV / JSON buttons on Account admin, on again brings them back */
+        expect(!(await pg.isHidden('[data-ad=csv]')), 'plan file buttons should show by default');
+        await pg.click('#acct>summary'); await pg.click('#adminlink');
+        await pg.click('#ad-tabs [data-adt=options]'); await pg.waitForSelector('[data-adtab=options]:not([hidden]) #ad-planfiles');
+        await pg.uncheck('#ad-planfiles'); await pg.waitForFunction(() => document.querySelector('#v-admin').classList.contains('nofiles') && !document.querySelector('#ad-planfiles').disabled, null, { timeout: 5000 });
+        await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
+        expect(await pg.isHidden('[data-ad=csv]') && await pg.isHidden('[data-ad=json]') && await pg.isHidden('.adfile.adfiles') && !(await pg.isHidden('#ad-aibtn')), 'plan file buttons should hide when switched off, PDF stays');
+        await pg.click('#acct>summary'); await pg.click('#adminlink');
+        await pg.click('#ad-tabs [data-adt=options]'); await pg.waitForSelector('[data-adtab=options]:not([hidden]) #ad-planfiles');
+        await pg.check('#ad-planfiles'); await pg.waitForFunction(() => !document.querySelector('#v-admin').classList.contains('nofiles') && !document.querySelector('#ad-planfiles').disabled, null, { timeout: 5000 });
+        await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
+        expect(!(await pg.isHidden('[data-ad=csv]')), 'plan file buttons should be back when switched on');
       }
       await pg.click('#ad-types [data-t=R]');
       expect(await pg.inputValue('#ad-mn-0') === 'Smoke bowl', 'uploaded plan should be shown');
       expect(await pg.inputValue('#ad-wd-0') === 'R', 'Monday should now be a rest day');
-      /* the super admin's own account admin page follows the app defaults until they change something */
-      await pg.click('#acct>summary'); await pg.click('#accountlink');
-      await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
-      expect(await pg.isHidden('#ad-uh') && /App plan/.test(await pg.textContent('#ad-planstate')), 'account admin should show the app plan and no people');
+      /* the super admin page: tabs only */
       await pg.click('#acct>summary'); await pg.click('#adminlink');
-      await pg.waitForSelector('#v-admin:not(.mine):not([hidden]) #ad-ph:not([hidden])');
-      await pg.click('#ad-tabs [data-adt=people]'); await pg.waitForSelector('[data-adtab=people]:not([hidden]) #ad-users .aduser');
-      await pg.click('#ad-tabs [data-adt=ai]'); await pg.waitForSelector('#ad-aipanel:not([hidden]) #ad-tm-food');
+      await pg.waitForSelector('#v-admin:not(.mine):not([hidden]) #ad-aipanel:not([hidden]) #ad-tm-food');
       const aiscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(aiscroll <= 1, `horizontal overflow of ${aiscroll}px on the AI tab at ${w}px wide`);
+      await pg.click('#ad-tabs [data-adt=people]'); await pg.waitForSelector('[data-adtab=people]:not([hidden]) #ad-users .aduser');
       await pg.click('a[data-view=day]'); await pg.click('[data-act=next]'); await pg.waitForTimeout(200);
       await pg.evaluate(() => { location.hash = '#day/2030-01-07'; }); /* a Monday nobody has saved */
-      await pg.waitForFunction(() => /Rest day/.test(document.querySelector('#dsub').textContent), null, { timeout: 5000 });
+      await pg.waitForFunction(() => /· Rest$/.test(document.querySelector('#dsub').textContent), null, { timeout: 5000 });
       expect(/Smoke bowl/.test(await pg.textContent('#meals')), 'new rest days should start from the uploaded plan');
+      expect(/Refeed day/.test(await pg.textContent('#tabs')), 'Sunday should show the refeed template in the week strip');
+      if (first) {   /* one day follows another template: it starts again from that one (and stays so when saved) */
+        await pg.evaluate(() => { location.hash = '#day/2030-01-14'; });
+        await pg.waitForFunction(() => document.querySelector('#datepick').value === '2030-01-14' && /· Rest$/.test(document.querySelector('#dsub').textContent), null, { timeout: 5000 });
+        await pg.selectOption('#dtpl', { label: 'Training' });
+        await pg.waitForFunction(() => /· Training$/.test(document.querySelector('#dsub').textContent) && /Health Road chicken/.test(document.querySelector('#meals').textContent)
+          && /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
+        expect(+(await pg.inputValue('#t-c')) === 360, 'the day should take the training targets');
+        await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
+        expect(/· Training$/.test(await pg.textContent('#dsub')) && /Training/.test(await pg.textContent('#tabs .tab.on')), 'the day should keep its template after a reload');
+      }
       expect(errs.length === 0, `page errors at ${w}px: ${errs.join(' | ')}`);
       const scroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(scroll <= 1, `horizontal overflow of ${scroll}px at ${w}px wide`);
@@ -488,6 +571,6 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await ctx.close();
     }
     console.log('smoke: ok (desktop + phone)');
-  } catch (e) { await browser.close(); return fail(e.message); }
+  } catch (e) { await browser.close(); return fail(e.stack); }
   await browser.close(); cleanup();
 })();

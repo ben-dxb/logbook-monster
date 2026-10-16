@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS foods (
 );
 CREATE INDEX IF NOT EXISTS foods_user ON foods(user_id);
 CREATE INDEX IF NOT EXISTS foods_public ON foods(public);
-/* An account's own plan, week, targets and food values, layered over the app defaults (app_config 'defaults'). */
+/* An account's own meal plan – foods, day templates, week, targets – as dated changes ({versions:[…]}, see defaults.js). */
 CREATE TABLE IF NOT EXISTS user_defaults (
   user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   data       TEXT NOT NULL,
@@ -164,6 +164,18 @@ CREATE TABLE IF NOT EXISTS photos (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS photos_day ON photos(user_id, date);
+/* Coach links: someone's data, read only, for anyone holding the link until it runs out. Only a hash of
+   the link's secret is kept, so the database alone can't open one. */
+CREATE TABLE IF NOT EXISTS shares (
+  id         INTEGER PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  label      TEXT NOT NULL DEFAULT '',
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  used_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS shares_user ON shares(user_id);
 `);
 
 /* Added after the first release: accounts an admin invited may sign in even when ALLOWED_EMAILS doesn't list them. */
@@ -191,6 +203,12 @@ if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'invited_
    ("Trend" on the exercise in the Gym, or the exercise picker on the Timeline). Off until the person picks it. */
 if (!db.prepare('PRAGMA table_info(exercises)').all().some(c => c.name === 'trend')) {
   db.exec('ALTER TABLE exercises ADD COLUMN trend INTEGER NOT NULL DEFAULT 0');
+}
+
+/* Added later: pose_ai = 1 when a photo's pose came from the AI (or was left for it: "Let AI tell" on upload, the
+   AI not answering), so "Tag poses with AI" can leave the poses people set themselves alone. Older photos count as set by hand. */
+if (!db.prepare('PRAGMA table_info(photos)').all().some(c => c.name === 'pose_ai')) {
+  db.exec('ALTER TABLE photos ADD COLUMN pose_ai INTEGER NOT NULL DEFAULT 0');
 }
 
 module.exports = db;

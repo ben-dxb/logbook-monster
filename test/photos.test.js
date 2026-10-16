@@ -149,7 +149,9 @@ test('progress photos: upload, catalog by date, edit, private to their owner, fi
 test('progress photos: removing an account removes its pictures', async () => {
   const admin = await signIn('admin@example.com'), bob = await signIn('bob@example.com');
   const before = files().length;
-  assert.strictEqual((await bob('POST', '/api/photos?date=2026-10-10', jpeg('bob'))).status, 200);
+  const up = await bob('POST', '/api/photos?date=2026-10-10', jpeg('bob'));
+  assert.strictEqual(up.status, 200);
+  assert.strictEqual(up.body.pose, 'other', 'no pose given goes in as other, not front');
   assert.strictEqual(files().length, before + 1);
   const db = new DatabaseSync(env.DB_PATH);
   const { id } = db.prepare("SELECT id FROM users WHERE email = 'bob@example.com'").get();
@@ -184,6 +186,16 @@ test('progress photos: the AI tags the pose, from the thumbnail, only when asked
   await ann('PUT', `/api/photos/${p.id}/thumb`, jpeg('no-hint'));
   r = await ann('POST', `/api/photos/${p.id}/ai-pose`, { save: true });
   assert.strictEqual(r.body.pose, 'other');
+
+  /* whose pose it is: the AI's once it tags it (keeping it on an edit), the person's once they change it, and
+     a photo uploaded for the AI to tag counts as the AI's even before it answers */
+  assert.strictEqual(r.body.photo.poseAi, true);
+  assert.strictEqual(p.poseAi, false);
+  r = await ann('PUT', `/api/photos/${p.id}`, { date: '2026-10-05', pose: 'other', note: 'gym 2' });
+  assert.strictEqual(r.body.poseAi, true);
+  r = await ann('PUT', `/api/photos/${p.id}`, { date: '2026-10-05', pose: 'side', note: 'gym 2' });
+  assert.strictEqual(r.body.poseAi, false);
+  assert.strictEqual((await ann('POST', '/api/photos?date=2026-10-06&pose=other&ai=1', jpeg('x'))).body.poseAi, true);
 
   /* nobody else can have someone's photo read */
   const n = aiSeen.length;

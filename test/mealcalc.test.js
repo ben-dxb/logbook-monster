@@ -2,7 +2,8 @@
 /* 'Balance inside a meal while editing': the meal's other foods move to keep its calories (public/engine.js). */
 const test = require('node:test');
 const assert = require('node:assert');
-const { balanceMeal, macOf, sum, it } = require('../public/engine.js');
+const { balanceMeal, macOf, sum, it, applyDefaults } = require('../public/engine.js');
+applyDefaults(require('./_plan')());
 
 const kcal = m => sum(['p', 'c', 'x'].flatMap(b => m[b]).map(i => macOf(i.f, i.g))).k;
 function meal() {
