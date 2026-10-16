@@ -26,7 +26,9 @@ or Google.
   browser, shows what it found (sets, exercises, date range, rows it couldn't read, and asks
   day/month order or kg/lb when the file doesn't say), then imports it. Exercises are matched to
   yours by name; sets you already have are skipped, so importing a newer export later is safe.
-- **Food Library** – the food library: whole meals and single ingredients you enter (per 100 g,
+- **Food Library** – your meal plan is always in it, with nothing to enter: every meal of the plan in
+  use as a whole meal (amounts as in the plan; listed per day type when they differ) and every food it
+  uses or lets you swap in as an ingredient, kept in step with plan changes. Plus whole meals and single ingredients you enter (per 100 g,
   per 100 ml or per item), with a recipe or notes, private or shared with everyone. Tabs split
   meals from ingredients; search, Show (mine / shared), Sort (A–Z, calories, protein, protein per
   calorie) and quick filters (high protein, low calorie, has recipe, AI estimates) find one, and

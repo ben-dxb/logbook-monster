@@ -119,6 +119,7 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await pg.click('#f-form button[type=submit]');
         await pg.waitForFunction(() => /Added “Smoke pancakes”/.test((document.querySelector('#f-list') || {}).textContent), null, { timeout: 5000 });
       }
+      await pg.selectOption('#f-who', 'mine');
       await pg.click('[data-fa=kind][data-v=meal]'); await pg.waitForFunction(() => document.querySelectorAll('#f-list .fcard').length === 1);
       expect(/Smoke pancakes/.test(await pg.textContent('#f-list')) && /Meals 1/.test(await pg.textContent('#f-kinds')), 'Meals should show only the meal');
       await pg.click('[data-fa=kind][data-v=ingredient]'); await pg.waitForFunction(() => /Smoke chicken/.test(document.querySelector('#f-list').textContent));
@@ -129,7 +130,14 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       expect(/Smoke source/.test(await pg.textContent('#f-list .aisrc')) && /calories and fat/.test(await pg.textContent('#f-list .aisrc')), 'flag should show the AI source');
       const ascroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(ascroll <= 1, `horizontal overflow of ${ascroll}px on the food filters at ${w}px wide`);
-      await pg.click('#f-clear'); await pg.waitForFunction(() => document.querySelectorAll('#f-list .fcard').length === 2);
+      /* the meal plan is in the library without entering anything: its meals and the foods they use */
+      await pg.click('#f-clear'); await pg.waitForFunction(() => document.querySelectorAll('#f-list .fcard').length > 10);
+      await pg.selectOption('#f-who', 'plan');
+      await pg.waitForFunction(() => /Cream of rice bowl/.test(document.querySelector('#f-list').textContent) && !/Smoke pancakes/.test(document.querySelector('#f-list').textContent));
+      expect(/Cream of rice \(dry\)/.test(await pg.textContent('#f-list')), 'plan ingredients should be in the library');
+      await pg.click('#f-list .fcard:has-text("Cream of rice bowl") [data-fa=add]'); await pg.waitForSelector('#f-addform');
+      expect(/kcal/.test(await pg.textContent('#f-aprev')) && !/^0 kcal/.test(await pg.textContent('#f-aprev')), 'a plan meal should add with its values');
+      await pg.click('#f-addform [data-fa=cancel]'); await pg.selectOption('#f-who', 'all');
       await pg.fill('#f-q', 'oats'); await pg.waitForFunction(() => document.querySelectorAll('#f-list .fcard').length === 1);
       expect(/Shared/.test(await pg.textContent('#f-list .fcard')), 'shared food should be marked Shared');
       await pg.click('#f-list .fcard details summary'); expect(/30g whey/.test(await pg.textContent('#f-list .frecipe')), 'recipe should show');

@@ -381,6 +381,7 @@ footer{font-size:12px;color:var(--muted)}
 .ftags button{font-size:12px;padding:3px 10px}
 .fcount{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted);min-height:28px}
 .fletter{margin:6px 0 -4px;font-size:13px;font-weight:800;color:var(--muted);letter-spacing:.08em;border-bottom:1px solid var(--line);padding-bottom:2px}
+.chip.plan{color:var(--good);border:1px solid currentColor;background:transparent}
 .chip.kind{background:transparent;border:1px solid var(--line);color:var(--muted)}
 .muted{color:var(--muted)}
 .aiv{border:0;background:var(--warnbg);color:var(--warnink);border-radius:6px;padding:0 5px;font:inherit;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
