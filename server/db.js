@@ -187,4 +187,10 @@ if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'invited_
   if (!cols.includes('free')) db.exec("ALTER TABLE foods ADD COLUMN free TEXT NOT NULL DEFAULT ''");
 }
 
+/* Added later: trend = 1 follows the exercise's estimated one-rep max on the Timeline's trend chart
+   ("Trend" on the exercise in the Gym, or the exercise picker on the Timeline). Off until the person picks it. */
+if (!db.prepare('PRAGMA table_info(exercises)').all().some(c => c.name === 'trend')) {
+  db.exec('ALTER TABLE exercises ADD COLUMN trend INTEGER NOT NULL DEFAULT 0');
+}
+
 module.exports = db;

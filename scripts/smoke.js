@@ -112,6 +112,12 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.click('[data-g=wsave]');
       await pg.waitForFunction(() => /Saturday — Lower/.test(document.querySelector('#g-body .gbar h2').textContent), null, { timeout: 5000 });
       await pg.click('#g-body a.grow[href^="#gym/e/"]'); await pg.waitForSelector('#g-quick');
+      /* Trend: off until picked (the first run picks it on the Timeline); the second run switches it off and on again here */
+      expect(await pg.isChecked('[data-g=trend]') === !first, 'an exercise should only be on the Timeline once picked');
+      if (!first) for (const on of [false, true]) {
+        await pg.setChecked('[data-g=trend]', on); await pg.waitForFunction(() => !document.querySelector('[data-g=trend]').disabled);
+        expect(await pg.isChecked('[data-g=trend]') === on, 'the Trend box should stay as set');
+      }
       const before = await pg.locator('.gset').count();
       await pg.fill('#g-reps', '12'); await pg.fill('#g-kg', '160'); await pg.click('#g-quick .gok');
       await pg.waitForFunction(n => document.querySelectorAll('.gset').length === n + 1, before, { timeout: 5000 });
@@ -332,6 +338,16 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       const m0 = await marks();
       await pg.click(sup); await pg.waitForFunction(n => document.querySelectorAll('#t-chart .tl, #t-chart .td').length > n, m0);
       expect(await pg.getAttribute(sup, 'aria-pressed') === 'true', 'the metric should show as on');
+      /* exercise e1RM lines only when picked: the first run picks one in the exercise picker, the second clears it */
+      const exChip = '#t-metrics [data-k^="ex:"]';
+      expect(await pg.locator(exChip).count() === (first ? 0 : 1), 'only picked exercises should be metrics');
+      await pg.click('#t-expick > summary'); await pg.waitForSelector('#t-exlist label');
+      const exScroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(exScroll <= 1, `horizontal overflow of ${exScroll}px with the exercise picker open at ${w}px wide`);
+      if (first) await pg.check('#t-exlist label:has-text("Atlantis hack squat") input'); else await pg.click('[data-ta=exnone]');
+      await pg.click('[data-ta=exsave]');
+      await pg.waitForFunction(n => document.querySelectorAll('#t-metrics [data-k^="ex:"]').length === n, first ? 1 : 0, { timeout: 5000 });
+      if (first) expect(await pg.getAttribute(exChip, 'aria-pressed') === 'true', 'a newly picked exercise should be switched on');
       await pg.click('#t-metrics [data-k=vol]'); await pg.uncheck('#t-smooth'); await pg.waitForSelector('#t-chart svg');
       expect(await pg.isDisabled('#t-aibtn') === first, 'AI summary needs an API key (saved on the Admin page in the first run)');
       const tscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);

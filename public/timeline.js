@@ -1,7 +1,7 @@
 'use strict';
 /* Timeline view: pick any day and a card pops up with everything from it – what you ate, your weight, the latest
    photos at the time, your supplement regime and gym sets – and a trend chart of macros, weight, strength
-   (Epley estimated one-rep max), volume and the supplements you follow ("Trend" in the supplements module),
+   (Epley estimated one-rep max, plus the exercises you pick), volume and the supplements you follow ("Trend" in the supplements module),
    each metric switched on and off, with an AI read of how they relate.
    The Timeline tab of History: #history/timeline, #history/timeline/2026-10-15 (that day's card). The numbers come from /api/timeline (server/timeline.js).
    Uses helpers from app.js, gym.js (gEmpty) and photos.js (pThumb, pPoseName). */
@@ -71,10 +71,29 @@ function renderTrends(){
   $('#t-metrics').innerHTML=groups.map(g=>`<div class="tgroup"><span class="lbl">${esc(g.name)}</span><div class="tchips">${g.list.map(s=>{
       const on=tOn.has(s.key), none=!s.points.length;
       return `<button type="button" class="tm tc${col[s.key]}${none?' none':''}" data-ta="metric" data-k="${esc(s.key)}" aria-pressed="${on}" title="${none?'No data in this range':esc(s.name)}"><i class="tsw tc${col[s.key]}"></i>${esc(s.name)}</button>`;}).join('')
-    ||(g.name==='Supplements'?'<span class="sub">Tick “Trend” on a supplement in the <a href="#supps/lib">supplement library</a> to follow it here.</span>':'')}</div></div>`).join('');
+    ||(g.name==='Supplements'?'<span class="sub">Tick “Trend” on a supplement in the <a href="#supps/lib">supplement library</a> to follow it here.</span>':'')}${g.name==='Gym'?tExPicker():''}</div></div>`).join('');
   $('#t-aibtn').disabled=!TL.ai||tAiBusy;
   renderAi();
   drawTrends();
+}
+/* Exercises' e1RM lines are off until picked here (or "Trend" ticked on the exercise in the Gym) */
+function tExPicker(){
+  const xs=TL.exercises||[];if(!xs.length)return '';
+  const n=xs.filter(x=>x.trend).length;
+  return `<details class="texpick" id="t-expick"><summary class="tm">＋ Exercises${n?` (${n})`:''}</summary>
+    <div class="texbox">${xs.length>8?'<input type="search" id="t-exfind" placeholder="Find an exercise" aria-label="Find an exercise" autocomplete="off">':''}
+      <div class="texlist" id="t-exlist">${xs.map(x=>`<label class="tog" data-n="${esc(x.name.toLowerCase())}"><input type="checkbox" value="${x.id}"${x.trend?' checked':''}> ${esc(x.name)} <span class="sub">${x.days?`${x.days} day${x.days===1?'':'s'}`:'none in range'}</span></label>`).join('')}</div>
+      <div class="gactions"><button class="btn" type="button" data-ta="exsave">Show e1RM</button><button class="ghost" type="button" data-ta="exnone">Clear</button></div>
+      <p class="sub" id="t-exmsg" role="status"></p></div></details>`;
+}
+async function tExSave(){
+  const ids=[...document.querySelectorAll('#t-exlist input:checked')].map(i=>+i.value), msg=$('#t-exmsg');
+  try{
+    const r=await api('PUT','/api/gym/trends',{ids});const on=new Set(r.ids);
+    (TL.exercises||[]).forEach(x=>{const k='ex:'+x.id;if(on.has(x.id)&&!x.trend)tOn.add(k);else if(!on.has(x.id))tOn.delete(k);});
+    if(typeof GY!=='undefined'&&GY)GY.exercises.forEach(x=>{x.trend=on.has(x.id)?1:0;});
+    tKeep();tLoad();
+  }catch(e){if(!e.signedOut&&msg)msg.textContent=e.message;}
 }
 /* 7-day trailing average; for supplements a missing day counts as none */
 function tSmoothed(s,from,to){
@@ -234,6 +253,8 @@ document.addEventListener('click',e=>{
   if(a==='range'){tRange=+b.dataset.r;tKeep();document.querySelectorAll('[data-ta=range]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));tLoad();}
   else if(a==='metric'){const k=b.dataset.k;if(tOn.has(k))tOn.delete(k);else tOn.add(k);tKeep();b.setAttribute('aria-pressed',String(tOn.has(k)));drawTrends();}
   else if(a==='ai')tSummarise();
+  else if(a==='exsave')tExSave();
+  else if(a==='exnone')document.querySelectorAll('#t-exlist input').forEach(i=>{i.checked=false;});
   else if(a==='go')go('history/timeline/'+b.dataset.d);
   else if(a==='close')tCloseCard();
   else if(a==='cmove'&&tCardDate){const d=addDays(tCardDate,+b.dataset.n);history.replaceState(null,'','#history/timeline/'+d);tOpen(d);}
@@ -241,6 +262,10 @@ document.addEventListener('click',e=>{
 document.addEventListener('change',e=>{
   if(view!=='timeline')return;
   if(e.target.id==='t-smooth'){tSmooth=e.target.checked;tKeep();drawTrends();}
+});
+document.addEventListener('input',e=>{
+  if(e.target.id!=='t-exfind')return;const t=e.target.value.trim().toLowerCase();
+  document.querySelectorAll('#t-exlist label').forEach(l=>{l.hidden=!!t&&!l.dataset.n.includes(t);});
 });
 document.addEventListener('submit',e=>{
   if(e.target.id!=='t-pick')return;e.preventDefault();
