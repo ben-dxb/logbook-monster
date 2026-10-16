@@ -357,10 +357,11 @@ test('AI: the key and models are the super admin’s, a plan is read against you
   assert.deepStrictEqual(ms.body.tasks.filter(t => t.model).map(t => t.id), ['food']);   /* only the one changed */
   await pdf(admin);
   assert.strictEqual(aiSeen.at(-1).body.model, 'test/model');
+  assert.ok(!('max_tokens' in aiSeen.at(-1).body), 'imports send no output cap');
   await admin.req('PUT', '/api/admin/ai', { models: { food: '' } });
 
   /* a reply the app can't use says why, instead of "Something went wrong" */
-  for (const [kind, msg] of [['cut', /too long and got cut off/], ['empty', /empty reply/], ['noplan', /couldn’t find a meal plan/]]) {
+  for (const [kind, msg] of [['cut', /got cut off/], ['empty', /empty reply/], ['noplan', /couldn’t find a meal plan/]]) {
     const b = await pdf(admin, `%PDF-1.4 BAD:${kind}`);
     const e = await b.json();
     assert.ok(b.status >= 400 && b.status < 600, kind);

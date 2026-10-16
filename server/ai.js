@@ -167,8 +167,9 @@ function tidy(raw, foods) {
   return { ...out, notes };
 }
 
-/* One file plus instructions to the model; returns the JSON object in its reply. A quick question about a
-   picture can ask for a shorter reply and wait less (opts.maxTokens, opts.timeout). opts.task picks the task's model. */
+/* One file plus instructions to the model; returns the JSON object in its reply. No output cap by default – a long
+   plan can take the model's whole output limit (and up to 10 minutes). A quick question about a picture can ask for a
+   shorter reply and wait less (opts.maxTokens, opts.timeout). opts.task picks the task's model. */
 async function ask(system, buf, type, what, opts = {}) {
   if (!current().key) throw Object.assign(new Error('Add an OpenRouter API key first'), { status: 400 });
   if (!TYPES_IN.includes(type)) throw Object.assign(new Error('Upload a PDF or a PNG, JPEG or WebP image'), { status: 400 });
@@ -177,7 +178,7 @@ async function ask(system, buf, type, what, opts = {}) {
   const part = type === 'application/pdf'
     ? { type: 'file', file: { filename: `${what.replace(/\W+/g, '-')}.pdf`, file_data: data } }
     : { type: 'image_url', image_url: { url: data } };
-  return call(system, [{ type: 'text', text: `Here is the ${what}. Reply with the JSON only.` }, part], opts.maxTokens || 16000, opts.timeout || 240000, opts.task);
+  return call(system, [{ type: 'text', text: `Here is the ${what}. Reply with the JSON only.` }, part], opts.maxTokens || null, opts.timeout || 600000, opts.task);
 }
 
 /* Instructions plus text only (no file). */
@@ -195,7 +196,7 @@ async function call(system, content, maxTokens, timeout, task) {
       signal: AbortSignal.timeout(timeout),
       headers: { authorization: `Bearer ${c.key}`, 'content-type': 'application/json', 'HTTP-Referer': config.baseUrl, 'X-Title': 'Logbook Monster' },
       body: JSON.stringify({
-        model: c.model, temperature: 0, max_tokens: maxTokens,
+        model: c.model, temperature: 0, ...(maxTokens ? { max_tokens: maxTokens } : {}),
         messages: [{ role: 'system', content: system }, { role: 'user', content }],
       }),
     });
@@ -214,7 +215,7 @@ async function call(system, content, maxTokens, timeout, task) {
   try { return { reply: parseReply(parts), model }; }
   catch (e) {
     console.error(`AI reply unusable (${model}, finish_reason ${choice.finish_reason}, ${String(parts || '').length} chars): ${e.message}`);
-    if (choice.finish_reason === 'length') throw unusable('The AI reply was too long and got cut off – try a shorter file, or another model for this task on the Super admin page');
+    if (choice.finish_reason === 'length') throw unusable('The AI reply was longer than this model can write and got cut off – try a shorter file, or a model with a bigger output limit for this task on the Super admin page');
     if (!String(parts || '').trim()) throw unusable(`The AI (${String(model).slice(0, 100)}) sent back an empty reply – try again, or pick another model for this task on the Super admin page`);
     throw e;
   }
