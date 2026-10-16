@@ -100,7 +100,10 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       }
       await pg.click('a[data-view=history]'); await pg.waitForSelector('#v-history:not([hidden]) .cell.logged');
       expect(await pg.getAttribute('#v-history .htabs [data-h=cal]', 'aria-current') === 'page', 'History should open on the Calendar tab');
-      await pg.click('a[data-view=weight]'); await pg.waitForSelector('#v-weight:not([hidden]) #chart svg');
+      expect(!(await pg.locator('a[data-view=weight]').count()), 'the Weight view should be gone');
+      await pg.evaluate(() => { location.hash = '#weight'; }); await pg.waitForSelector('#v-timeline:not([hidden])');
+      expect(await pg.evaluate(() => location.hash) === '#history/timeline', 'old #weight links should open the Timeline');
+      await pg.click('a[data-view=history]'); await pg.waitForSelector('#v-history:not([hidden])');
       /* gym: make a workout, log two sets, edit one, look at chart, records and sessions */
       await pg.click('a[data-view=gym]'); await pg.waitForSelector('#v-gym:not([hidden]) #g-body .glist');
       await pg.click('a[href="#gym/new"]'); await pg.fill('#g-wname', 'Saturday — Lower');
