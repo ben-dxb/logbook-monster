@@ -29,7 +29,20 @@ const q = {
     ON CONFLICT(user_id, date) DO UPDATE SET kg = excluded.kg, updated_at = datetime('now')`),
   delWeight: db.prepare('DELETE FROM weights WHERE user_id = ? AND date = ?'),
   allDays: db.prepare('SELECT date, data FROM days WHERE user_id = ? ORDER BY date'),
+  getOptions: db.prepare("SELECT data FROM app_config WHERE key = 'options'"),
+  putOptions: db.prepare(`INSERT INTO app_config (key, data, updated_by) VALUES ('options', ?, ?)
+    ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_by = excluded.updated_by, updated_at = datetime('now')`),
 };
+/* App-wide switches the super admin sets. planFiles: the CSV / JSON plan upload and download buttons. */
+const OPTIONS = { planFiles: true };
+function options() {
+  const r = q.getOptions.get();
+  let o = {};
+  try { o = r ? JSON.parse(r.data) : {}; } catch { o = {}; }
+  const out = {};
+  for (const k of Object.keys(OPTIONS)) out[k] = typeof o[k] === 'boolean' ? o[k] : OPTIONS[k];
+  return out;
+}
 
 const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const isDate = s => typeof s === 'string' && DATE_RE.test(s) && !isNaN(Date.parse(s + 'T00:00:00Z'));
@@ -61,7 +74,7 @@ router.use(csrfProtect);
 
 router.get('/me', (req, res) => {
   res.json({ email: req.user.email, name: req.user.name, hasPassword: !!req.user.password_hash,
-    google: !!req.user.google_sub, admin: defaults.isAdmin(req.user), ai: ai.status().configured, csrf: csrfToken(req) });
+    google: !!req.user.google_sub, admin: defaults.isAdmin(req.user), ai: ai.status().configured, ...options(), csrf: csrfToken(req) });
 });
 
 /* Each account's own meal plan (foods, day templates, week, targets), as dated changes. There are no app-wide defaults. */
@@ -111,6 +124,19 @@ router.delete('/admin/users/:id', adminOnly, (req, res) => {
     res.json(users.remove(userId(req), req.user, defaults.isAdmin));
     photos.removeFiles(files);
   } catch (e) { fail(res, e); }
+});
+
+router.get('/admin/options', adminOnly, (req, res) => res.json(options()));
+router.put('/admin/options', adminOnly, (req, res) => {
+  if (!isObj(req.body)) return bad(res, 'Options must be an object');
+  const o = options();
+  for (const [k, v] of Object.entries(req.body)) {
+    if (!Object.hasOwn(OPTIONS, k)) return bad(res, `Unknown option "${k}"`);
+    if (typeof v !== 'boolean') return bad(res, `"${k}" must be true or false`);
+    o[k] = v;
+  }
+  q.putOptions.run(JSON.stringify(o), req.user.email);
+  res.json(o);
 });
 
 /* The account the app sends email from (SMTP). */

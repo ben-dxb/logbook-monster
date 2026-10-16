@@ -192,6 +192,23 @@ test('no app defaults: every account starts with no meal plan, and a plan is che
   assert.strictEqual((await friend.req('GET', '/api/defaults')).body.mine, null);
 });
 
+test('the super admin can switch the CSV / JSON plan files off for everyone', async () => {
+  const admin = client();
+  await admin.req('GET', '/auth/config');
+  assert.strictEqual((await admin.req('POST', '/auth/login', { email: 'me@example.com', password: 'longenough1' })).status, 200);
+  assert.strictEqual((await admin.req('GET', '/api/me')).body.planFiles, true);
+  for (const bad of [{ planFiles: 'no' }, { unknown: true }, []])
+    assert.strictEqual((await admin.req('PUT', '/api/admin/options', bad)).status, 400, JSON.stringify(bad));
+  const friend = client();
+  await friend.req('GET', '/auth/config');
+  assert.strictEqual((await friend.req('POST', '/auth/login', { email: 'friend@example.com', password: 'longenough2' })).status, 200);
+  assert.strictEqual((await friend.req('PUT', '/api/admin/options', { planFiles: false })).status, 403);
+  assert.deepStrictEqual((await admin.req('PUT', '/api/admin/options', { planFiles: false })).body, { planFiles: false });
+  assert.strictEqual((await friend.req('GET', '/api/me')).body.planFiles, false);
+  assert.deepStrictEqual((await admin.req('PUT', '/api/admin/options', { planFiles: true })).body, { planFiles: true });
+  assert.strictEqual((await friend.req('GET', '/api/me')).body.planFiles, true);
+});
+
 test('account admin: day templates, foods and week of your own, only for yourself', async () => {
   const friend = client();
   await friend.req('GET', '/auth/config');

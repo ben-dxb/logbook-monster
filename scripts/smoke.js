@@ -515,6 +515,18 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await gctx.close();
         await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
         expect(/^Using /.test(await pg.textContent('#ad-aistate')) && !(await pg.isDisabled('#ad-aifile')), 'PDF upload should be on once a key is saved');
+        /* Options tab: plan files off hides the CSV / JSON buttons on Account admin, on again brings them back */
+        expect(!(await pg.isHidden('[data-ad=csv]')), 'plan file buttons should show by default');
+        await pg.click('#acct>summary'); await pg.click('#adminlink');
+        await pg.click('#ad-tabs [data-adt=options]'); await pg.waitForSelector('[data-adtab=options]:not([hidden]) #ad-planfiles');
+        await pg.uncheck('#ad-planfiles'); await pg.waitForFunction(() => document.querySelector('#v-admin').classList.contains('nofiles') && !document.querySelector('#ad-planfiles').disabled, null, { timeout: 5000 });
+        await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
+        expect(await pg.isHidden('[data-ad=csv]') && await pg.isHidden('[data-ad=json]') && await pg.isHidden('.adfile.adfiles') && !(await pg.isHidden('#ad-aibtn')), 'plan file buttons should hide when switched off, PDF stays');
+        await pg.click('#acct>summary'); await pg.click('#adminlink');
+        await pg.click('#ad-tabs [data-adt=options]'); await pg.waitForSelector('[data-adtab=options]:not([hidden]) #ad-planfiles');
+        await pg.check('#ad-planfiles'); await pg.waitForFunction(() => !document.querySelector('#v-admin').classList.contains('nofiles') && !document.querySelector('#ad-planfiles').disabled, null, { timeout: 5000 });
+        await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
+        expect(!(await pg.isHidden('[data-ad=csv]')), 'plan file buttons should be back when switched on');
       }
       await pg.click('#ad-types [data-t=R]');
       expect(await pg.inputValue('#ad-mn-0') === 'Smoke bowl', 'uploaded plan should be shown');

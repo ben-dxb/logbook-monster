@@ -16,7 +16,7 @@ let AD=null, AD_BASE=null, adSaved='', adType=null, adMsg='', adErrs=[], adBusy=
 let DEFS={mine:null,myVersions:[]};          /* your plan from the server: the change in effect today and every dated change */
 let DEFS_ON, adVer=null, adFrom='';          /* plan change applied now; the one being edited; the date a save takes effect from ('' = from the start) */
 let adAi=null, adAiBusy=false, adNotes=[], adSuper=false;
-const AD_TABS=['ai','people','email'];
+const AD_TABS=['ai','people','email','options'];
 let adTab='ai';                              /* the super admin tab shown */
 const adOpen=new Set();                      /* food editors left open */
 
@@ -100,6 +100,7 @@ function renderAdmin(){
   if(view!=='admin'&&view!=='account')return;
   const mine=view==='account';
   $('#v-admin').classList.toggle('mine',mine);
+  $('#v-admin').classList.toggle('nofiles',!planFiles);$('#ad-planfiles').checked=planFiles;
   if(!adAi)adAiLoad();
   if(!mine){if(!adSuper){adSuper=true;auLoad();amLoad();}adTabs();return;}
   if(!AD){adPick();adLoad();}
@@ -292,6 +293,13 @@ $('#ad-addfood').addEventListener('submit',e=>{
   adOpen.add(id);['ad-nf-n','ad-nf-k','ad-nf-p','ad-nf-c','ad-nf-f'].forEach(x=>{$('#'+x).value='';});
   renderAdmin();
   const d=document.querySelector(`.adfood[data-id="${id}"]`);if(d)d.scrollIntoView({block:'nearest'});
+});
+/* super admin: CSV / JSON plan files on or off for everyone */
+$('#ad-planfiles').addEventListener('change',async e=>{
+  const el=e.target;el.disabled=true;
+  try{planFiles=(await api('PUT','/api/admin/options',{planFiles:el.checked})).planFiles;}
+  catch(err){if(!err.signedOut)alert(err.message);}
+  el.disabled=false;el.checked=planFiles;$('#v-admin').classList.toggle('nofiles',!planFiles);
 });
 $('#ad-file').addEventListener('change',e=>{const el=e.target;adUpload(el.files&&el.files[0]).finally(()=>{el.value='';});});
 window.addEventListener('beforeunload',e=>{if(adDirty()){e.preventDefault();e.returnValue='';}});

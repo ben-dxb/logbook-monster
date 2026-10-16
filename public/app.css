@@ -181,6 +181,8 @@ footer{font-size:12px;color:var(--muted)}
 }
 /* ---------- admin: account admin (.mine) and super admin share one page ---------- */
 #v-admin.mine .adapp,#v-admin.mine .adsuper,#v-admin:not(.mine) .admine{display:none}
+#v-admin.nofiles .adfiles{display:none}
+.adoptfiles{margin:8px 0}
 .adtpl{display:flex;flex-wrap:wrap;gap:8px;align-items:end}
 .adtpl .adtname{flex:1 1 220px;min-width:0}
 .adtpl .adtacts{display:flex;gap:8px;flex-wrap:wrap}

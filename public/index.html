@@ -183,7 +183,7 @@
 
   <!-- ===================== ADMIN =====================
        One page, two scopes: #account (account admin – anyone, their own plan, week, targets and foods)
-       and #admin (super admin – app-wide settings, in tabs: #admin/ai, #admin/people, #admin/email).
+       and #admin (super admin – app-wide settings, in tabs: #admin/ai, #admin/people, #admin/email, #admin/options).
        .admine / .adapp / .adsuper parts show for one scope only; data-adtab says which super admin tab a panel is on. -->
   <section id="v-admin" class="view" hidden>
     <section class="panel adintro">
@@ -194,6 +194,7 @@
         <a href="#admin/ai" data-adt="ai">AI</a>
         <a href="#admin/people" data-adt="people">People</a>
         <a href="#admin/email" data-adt="email">Email</a>
+        <a href="#admin/options" data-adt="options">Options</a>
       </nav>
     </section>
     <div class="adbar admine" role="status">
@@ -206,14 +207,14 @@
     <section class="panel admine" aria-labelledby="ad-ph">
       <h2 id="ad-ph">My meal plan</h2>
       <p>Your plan is a set of day templates – one for each kind of day you eat differently on. Each has its own meals and targets.
-        Add, rename, duplicate or delete templates below, or upload a plan (download it, change it in a spreadsheet and upload it again).
+        Add, rename, duplicate or delete templates below<span class="adfiles">, or upload a plan (download it, change it in a spreadsheet and upload it again)</span>.
         Amounts are the starting point – each day still balances them to its targets. Days already in your history keep their own amounts.</p>
       <div id="ad-planstate" class="status"></div>
       <div id="ad-versions" class="adversions" hidden></div>
       <div class="adtools">
-        <label class="btn adfile">Upload plan (CSV or JSON)<input id="ad-file" type="file" accept=".csv,.json,.txt,text/csv,application/json"></label>
-        <button class="ghost" type="button" data-ad="csv">Download plan (CSV)</button>
-        <button class="ghost" type="button" data-ad="json">Download whole plan (JSON)</button>
+        <label class="btn adfile adfiles">Upload plan (CSV or JSON)<input id="ad-file" type="file" accept=".csv,.json,.txt,text/csv,application/json"></label>
+        <button class="ghost adfiles" type="button" data-ad="csv">Download plan (CSV)</button>
+        <button class="ghost adfiles" type="button" data-ad="json">Download whole plan (JSON)</button>
       </div>
       <section class="adai" id="ad-ai" aria-labelledby="ad-aih">
         <h3 class="lbl" id="ad-aih">Read a PDF with AI</h3>
@@ -223,7 +224,7 @@
           <span id="ad-aistate" class="sub" role="status"></span>
         </div>
       </section>
-      <details class="adhelp"><summary>CSV format</summary>
+      <details class="adhelp adfiles"><summary>CSV format</summary>
         <p>One row per food, with these headings in the first row: <code>day_type, meal, meal_name, box, food, grams, locked, note</code>.
           <b>day_type</b> is the name of a day template (a name you don’t have yet adds a new template); <b>meal</b> is the meal number; <b>box</b> is protein, carbs or fats (left blank, it follows the food's swap list);
           <b>food</b> is a food id or its name from My foods below; <b>locked</b> is yes to keep that amount fixed. Templates missing from the file keep their current meals.
@@ -317,6 +318,11 @@
       </form>
       <div id="ad-ivmsg" role="status"></div>
       <div id="ad-users" class="adusers"></div>
+    </section>
+    <section class="panel adsuper" aria-labelledby="ad-oh" data-adtab="options">
+      <h2 id="ad-oh">Options</h2>
+      <p>Switch parts of the app on or off for everyone.</p>
+      <label class="tog adoptfiles"><input type="checkbox" id="ad-planfiles"> Plan files <span class="muted">– the CSV / JSON plan upload and download buttons on Account admin</span></label>
     </section>
     <section class="panel adsuper" aria-labelledby="ad-eh" data-adtab="email">
       <h2 id="ad-eh">Email</h2>

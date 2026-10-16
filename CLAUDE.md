@@ -41,9 +41,10 @@
 - `public/app.js` – views (Daily Tracker, History calendar), saving, routing. A day keeps its template (`D.type`; the weekday's unless switched on the Daily Tracker) and its summary the name (`tname`). A meal marked eaten (`m.eaten`) is locked whole – the solver never moves it, its controls
   are disabled – and undoing it asks for confirmation.
 - `public/admin.js` – Account admin (`#account`, anyone: own plan – day templates, meals, week, targets, foods) and Super admin
-  (`#admin`, in tabs: `#admin/ai`, `#admin/people`, `#admin/email`; no plan editor) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope,
+  (`#admin`, in tabs: `#admin/ai`, `#admin/people`, `#admin/email`, `#admin/options`; no plan editor) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope,
   `data-adtab` per super admin tab. AI settings (OpenRouter key, default model and a model per task – `TASKS` in `server/ai.js`:
-  plan, workout, food, pose, summary; pass `{ task }` to `ai.ask`/`ai.askText`) are super admin only.
+  plan, workout, food, pose, summary; pass `{ task }` to `ai.ask`/`ai.askText`) are super admin only. App-wide switches (`OPTIONS` in `server/api.js`, stored in `app_config` 'options', sent in `/api/me`;
+  `planFiles` shows the CSV / JSON plan upload and download buttons on Account admin) are set on the super admin Options tab via `PUT /api/admin/options`.
 - `public/gym.js` – the Gym view (workouts, exercise sets, sessions, AI import preview).
 - `server/foods.js` / `public/foods.js` – the food library: meals and ingredients (`kind`) people enter (per 100 g/ml
   or per item) with an optional recipe, private or shared with everyone. `POST /api/foods/ai-fill` estimates blank

@@ -21,7 +21,7 @@ const WEIGHTS={};                           /* date -> kg */
 const SAVED={days:{},settings:null};        /* last JSON stored on the server, to spot what changed */
 const LOGGED=new Set();                     /* dates stored on the server */
 let view='day', month=todayStr().slice(0,7)+'-01', csrf='', ME='';
-let resetArmed=false, isAdmin=false, aiOn=false;
+let resetArmed=false, isAdmin=false, aiOn=false, planFiles=true;
 let LIB=[], LIBV=0;                         /* the food library (yours and shared), and a version to spot changes */
 
 /* ---------- server ---------- */
@@ -556,7 +556,7 @@ document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(
     const me=await api('GET','/api/me');csrf=me.csrf;ME=me.email;
     $('#who').textContent=me.name||me.email;$('#who').title=me.email;
     if(!me.hasPassword){$('#pwcur').hidden=true;$('#pwbox').querySelector('summary').textContent='Set a password';}
-    isAdmin=!!me.admin;aiOn=!!me.ai;$('#adminlink').hidden=!isAdmin;
+    isAdmin=!!me.admin;aiOn=!!me.ai;planFiles=me.planFiles!==false;$('#adminlink').hidden=!isAdmin;
     const [settings,sums,weights,defs,lib]=await Promise.all([api('GET','/api/settings'),api('GET','/api/days'),api('GET','/api/weights'),api('GET','/api/defaults'),api('GET','/api/foods')]);
     LIB=(lib&&lib.foods)||[];fAiOn=!!(lib&&lib.ai);
     setDefaults(defs);
