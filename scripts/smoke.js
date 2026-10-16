@@ -270,6 +270,14 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       expect(pscroll <= 1, `horizontal overflow of ${pscroll}px on the photos page at ${w}px wide`);
       await pg.click('#p-d-2026-09-01 .ptile >> nth=0'); await pg.waitForSelector('#p-eform');
       await pg.waitForFunction(() => { const i = document.querySelector('.pbig img'); return i && i.complete && i.naturalWidth > 0; }, null, { timeout: 5000 });
+      if (!first) {
+        /* AI is set up by now (the key saved on the Admin page in the first pass); the AI's answer is faked here */
+        await pg.route('**/api/photos/*/ai-pose', r => r.fulfill({ json: { pose: 'side', model: 'test/vision', photo: {} } }));
+        expect(await pg.locator('#p-epose').inputValue() !== 'side', 'the photo should not start as side');
+        await pg.click('[data-pa=aione]');
+        await pg.waitForFunction(() => document.querySelector('#p-epose').value === 'side' && /AI says Side/.test(document.querySelector('#p-aisay').textContent), null, { timeout: 5000 });
+        await pg.selectOption('#p-epose', 'front');
+      }
       await pg.fill('#p-enote', 'smoke edited ' + w); await pg.click('#p-eform button[type=submit]');
       await pg.waitForFunction(() => /Saved/.test((document.querySelector('#p-list') || {}).textContent || ''), null, { timeout: 5000 });
       /* bodyweight: the latest weigh-in is today's 80.5 kg, so only 1 October (80.4) is within 1 kg; then 85 kg finds 1 September */
@@ -279,6 +287,7 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.waitForFunction(() => document.querySelectorAll('#p-list .pday').length === 1 && document.querySelector('#p-d-2026-09-01'));
       await pg.fill('#p-nearkg', ''); await pg.uncheck('#p-near');
       await pg.waitForFunction(() => document.querySelectorAll('#p-list .pday').length === 2);
+      expect(first === !(await pg.locator('#p-aibtn').count()), '"Tag poses with AI" only once AI is set up');
       await pg.fill('#p-jump', '2026-09-04'); await pg.waitForSelector('#p-d-2026-09-01.hit');
       /* pick two photos in the catalog and compare them, older on the left */
       await pg.click('#p-selbtn'); await pg.waitForSelector('#p-selbar:not([hidden])');

@@ -128,8 +128,9 @@ function tidy(raw, foods) {
   return { ...out, notes };
 }
 
-/* One file plus instructions to the model; returns the JSON object in its reply. */
-async function ask(system, buf, type, what) {
+/* One file plus instructions to the model; returns the JSON object in its reply. A quick question about a
+   picture can ask for a shorter reply and wait less (opts.maxTokens, opts.timeout). */
+async function ask(system, buf, type, what, opts = {}) {
   if (!current().key) throw Object.assign(new Error('Add an OpenRouter API key first'), { status: 400 });
   if (!TYPES_IN.includes(type)) throw Object.assign(new Error('Upload a PDF or a PNG, JPEG or WebP image'), { status: 400 });
   if (!buf || !buf.length) throw Object.assign(new Error('The file is empty'), { status: 400 });
@@ -137,7 +138,7 @@ async function ask(system, buf, type, what) {
   const part = type === 'application/pdf'
     ? { type: 'file', file: { filename: `${what.replace(/\W+/g, '-')}.pdf`, file_data: data } }
     : { type: 'image_url', image_url: { url: data } };
-  return call(system, [{ type: 'text', text: `Here is the ${what}. Reply with the JSON only.` }, part], 16000, 240000);
+  return call(system, [{ type: 'text', text: `Here is the ${what}. Reply with the JSON only.` }, part], opts.maxTokens || 16000, opts.timeout || 240000);
 }
 
 /* Instructions plus text only (no file). */
