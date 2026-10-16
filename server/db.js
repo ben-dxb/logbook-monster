@@ -105,6 +105,12 @@ CREATE TABLE IF NOT EXISTS foods (
 );
 CREATE INDEX IF NOT EXISTS foods_user ON foods(user_id);
 CREATE INDEX IF NOT EXISTS foods_public ON foods(public);
+/* An account's own plan, week, targets and food values, layered over the app defaults (app_config 'defaults'). */
+CREATE TABLE IF NOT EXISTS user_defaults (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  data       TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 /* Supplements: a library like the foods (a name, a usual amount and unit, notes, private or shared) and
    the log of what each account took on a day. A log entry keeps its own name, amount and unit, so it
    can be free text, and survives the library entry being changed or deleted. */

@@ -13,7 +13,7 @@ try { ({ chromium } = require('playwright')); } catch {
 }
 if (!chromium) { console.log('smoke: Playwright not installed – skipped'); process.exit(0); }
 
-const PORT = 3800 + Math.floor(Math.random() * 90), BASE = `http://127.0.0.1:${PORT}`;
+const [PORT] = require('../test/_ports').freePorts(1), BASE = `http://127.0.0.1:${PORT}`;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'logbook-monster-smoke-'));
 const env = { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', BASE_URL: BASE, DB_PATH: path.join(dir, 's.db'),
   SESSION_SECRET: 'x'.repeat(40), AUTH_RATE_LIMIT: '1000', ALLOWED_EMAILS: '', ALLOW_REGISTRATION: 'false', GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: '' };
@@ -197,11 +197,31 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         expect(/guest@example\.com/.test(await gp.textContent('#intro')), 'invite page should name the invited email');
         await gp.fill('#password', 'guest-password-1'); await gp.click('#submit');
         await gp.waitForSelector('#v-day:not([hidden]) #meals .meal', { timeout: 5000 });
+        /* account admin: the guest has their own plan page but no super admin page */
+        expect(await gp.isHidden('#adminlink'), 'super admin link should be hidden for other accounts');
+        await gp.evaluate(() => { location.hash = '#admin'; });
+        await gp.waitForSelector('#v-day:not([hidden])', { timeout: 5000 });
+        await gp.click('#acct>summary'); await gp.click('#accountlink');
+        await gp.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal', { timeout: 5000 });
+        expect(await gp.isHidden('#ad-uh') && await gp.isHidden('#ad-eh') && await gp.isHidden('#ad-keybox'), 'people, email and the AI key are super admin only');
+        expect(await gp.inputValue('#ad-wd-0') === 'R', 'the guest should start from the app defaults');
+        await gp.selectOption('#ad-wd-0', 'T'); await gp.click('#ad-save');
+        await gp.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent) && !document.querySelector('#ad-reset').hidden, null, { timeout: 5000 });
+        const gscroll = await gp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        expect(gscroll <= 1, `horizontal overflow of ${gscroll}px on the account admin page`);
+        await gp.evaluate(() => { location.hash = '#day/2030-01-07'; });
+        await gp.waitForFunction(() => /Training day/.test(document.querySelector('#dsub').textContent), null, { timeout: 5000 });
         await gctx.close();
       }
       await pg.click('#ad-types [data-t=R]');
       expect(await pg.inputValue('#ad-mn-0') === 'Smoke bowl', 'uploaded plan should be shown');
       expect(await pg.inputValue('#ad-wd-0') === 'R', 'Monday should now be a rest day');
+      /* the super admin's own account admin page follows the app defaults until they change something */
+      await pg.click('#acct>summary'); await pg.click('#accountlink');
+      await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
+      expect(await pg.isHidden('#ad-uh') && /App plan/.test(await pg.textContent('#ad-planstate')), 'account admin should show the app plan and no people');
+      await pg.click('#acct>summary'); await pg.click('#adminlink');
+      await pg.waitForSelector('#v-admin:not(.mine):not([hidden]) #ad-users .aduser');
       await pg.click('a[data-view=day]'); await pg.click('[data-act=next]'); await pg.waitForTimeout(200);
       await pg.evaluate(() => { location.hash = '#day/2030-01-07'; }); /* a Monday nobody has saved */
       await pg.waitForFunction(() => /Rest day/.test(document.querySelector('#dsub').textContent), null, { timeout: 5000 });

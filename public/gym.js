@@ -74,7 +74,7 @@ function gHomePage(){
   const aiRow=GY.ai
     ?`<label class="grow gadd gfile${gAiBusy?' off':''}"><span>✦ ${gAiBusy?'Reading your plan – this can take a minute or two…':'Read a workout plan with AI (PDF or photo)…'}</span>
         <input id="g-aifile" type="file" accept=".pdf,application/pdf,image/png,image/jpeg,image/webp"${gAiBusy?' disabled':''}></label>`
-    :`<div class="grow gadd off"><span>✦ Read a workout plan with AI – ${isAdmin?'add an OpenRouter key on the <a href="#admin">Admin page</a> to turn this on':'an admin needs to add an OpenRouter key first'}</span></div>`;
+    :`<div class="grow gadd off"><span>✦ Read a workout plan with AI – ${isAdmin?'add an OpenRouter key on the <a href="#admin">Super admin page</a> to turn this on':'the super admin needs to add an OpenRouter key first'}</span></div>`;
   return `<div class="gbar"><h2>My workouts</h2>${ws.length>1?`<button class="ghost" type="button" data-g="reorder" aria-pressed="${gReorder}">${gReorder?'Done':'Reorder'}</button>`:''}</div>
     <div class="glist">
       <a class="grow gadd" href="#gym/new"><span>+ New workout…</span></a>

@@ -1,5 +1,6 @@
 'use strict';
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const { requireAuth, csrfProtect, csrfToken } = require('./auth');
 const defaults = require('./defaults');
@@ -56,27 +57,40 @@ router.use(csrfProtect);
 
 router.get('/me', (req, res) => {
   res.json({ email: req.user.email, name: req.user.name, hasPassword: !!req.user.password_hash,
-    google: !!req.user.google_sub, admin: defaults.isAdmin(req.user), csrf: csrfToken(req) });
+    google: !!req.user.google_sub, admin: defaults.isAdmin(req.user), ai: ai.status().configured, csrf: csrfToken(req) });
 });
 
-/* The baseline plan, food values and week every account starts from. */
-router.get('/defaults', (req, res) => res.json(defaults.get()));
+/* The baseline plan, food values and week: the app's (super admin) plus this account's own layer ("mine"). */
+router.get('/defaults', (req, res) => res.json(defaults.forUser(req.user)));
 router.put('/admin/defaults', (req, res) => {
-  if (!defaults.isAdmin(req.user)) return res.status(403).json({ error: 'Only an admin can change the defaults' });
+  if (!defaults.isAdmin(req.user)) return res.status(403).json({ error: 'Only the super admin can change the app defaults' });
   try { res.json(defaults.put(req.body, req.user)); } catch (e) { bad(res, e.message); }
 });
+/* Account admin: anyone can keep their own plan, week, targets and food values. */
+router.put('/my/defaults', (req, res) => {
+  try { res.json(defaults.putMine(req.body, req.user)); } catch (e) { bad(res, e.message); }
+});
+router.delete('/my/defaults', (req, res) => res.json(defaults.delMine(req.user)));
 
 /* AI import: an OpenRouter key and model, and reading a plan PDF into the defaults format. */
-const adminOnly = (req, res, next) => (defaults.isAdmin(req.user) ? next() : res.status(403).json({ error: 'Only an admin can do this' }));
+const adminOnly = (req, res, next) => (defaults.isAdmin(req.user) ? next() : res.status(403).json({ error: 'Only the super admin can do this' }));
+const readPlan = user => async (req, res) => {
+  try { res.json(await ai.importPlan(Buffer.isBuffer(req.body) ? req.body : null, String(req.get('content-type') || '').split(';')[0].trim(), user && req.user)); }
+  catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); if (!e.status) console.error(e); }
+};
 router.get('/admin/ai', adminOnly, (req, res) => res.json(ai.status()));
 router.put('/admin/ai', adminOnly, (req, res) => {
   if (!isObj(req.body)) return bad(res, 'Settings must be an object');
   try { res.json(ai.save(req.body, req.user)); } catch (e) { bad(res, e.message); }
 });
-router.post('/admin/ai-import', adminOnly, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), async (req, res) => {
-  try { res.json(await ai.importPlan(Buffer.isBuffer(req.body) ? req.body : null, String(req.get('content-type') || '').split(';')[0].trim())); }
-  catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); if (!e.status) console.error(e); }
+router.post('/admin/ai-import', adminOnly, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), readPlan(false));
+/* The OpenRouter key is the super admin's, so each account gets a handful of reads an hour. */
+const aiLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, limit: 12, standardHeaders: 'draft-7', legacyHeaders: false,
+  keyGenerator: req => 'u' + req.user.id, skip: req => defaults.isAdmin(req.user),
+  message: { error: 'That’s a lot of AI reads – wait a while and try again.' },
 });
+router.post('/my/ai-import', aiLimit, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), readPlan(true));
 
 /* Accounts: the list, inviting someone (emailed if email is set up) and removing an account. */
 const fail = (res, e) => { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); };
@@ -173,6 +187,7 @@ router.get('/export', (req, res) => {
     exported: new Date().toISOString(),
     email: req.user.email,
     settings: s ? JSON.parse(s.data) : {},
+    defaults: defaults.mine(req.user),
     days: q.allDays.all(req.user.id).map(r => ({ date: r.date, data: JSON.parse(r.data) })),
     weights: q.listWeights.all(req.user.id, '0000-01-01', '9999-12-31'),
     gym: gym.exportFor(req.user),

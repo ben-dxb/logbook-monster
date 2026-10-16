@@ -138,6 +138,13 @@ function applyDefaults(cfg){
   CUSTOM_PLAN=cfg.plan||null;
   if(typeof recalcPudding==='function'&&typeof S!=='undefined')recalcPudding();
 }
+/* an account's own defaults on top of the app's: its foods, week, targets and plan win wherever it has set them */
+function layerDefaults(app,mine){
+  app=app||{};mine=mine||{};
+  const plan=app.plan||mine.plan?{...(app.plan||{}),...(mine.plan||{})}:null;
+  return {foods:{...(app.foods||{}),...(mine.foods||{})},schedule:mine.schedule||app.schedule||null,
+    targets:{...(app.targets||{}),...(mine.targets||{})},plan};
+}
 /* meals of an uploaded plan for one day type; foods that no longer exist are left out */
 function customPlan(t){
   return CUSTOM_PLAN[t].map(m=>{const o={id:String(m.id),name:m.name,p:[],c:[],x:[]};if(m.note)o.note=m.note;
@@ -283,4 +290,4 @@ function packPortion(g,pack,meat){return g>0&&pack>0&&meat>0?g/meat*pack:null;}
 function fmtG(i){const u=FOODS[i.f].unit||'g';return Math.round(i.g)+u;}
 
 /* lets the server check food ids against the same data */
-if(typeof module!=='undefined') module.exports={FOODS,TYPE,COACH,packPortion};
+if(typeof module!=='undefined') module.exports={FOODS,TYPE,COACH,packPortion,layerDefaults};
