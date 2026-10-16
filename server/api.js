@@ -11,6 +11,7 @@ const users = require('./users');
 const gym = require('./gym');
 const foods = require('./foods');
 const supps = require('./supps');
+const photos = require('./photos');
 
 const q = {
   getSettings: db.prepare('SELECT data FROM settings WHERE user_id = ?'),
@@ -107,7 +108,11 @@ router.post('/admin/users/:id/invite', adminOnly, async (req, res) => {
   try { res.json(await users.resend(userId(req), req.user)); } catch (e) { fail(res, e); }
 });
 router.delete('/admin/users/:id', adminOnly, (req, res) => {
-  try { res.json(users.remove(userId(req), req.user, defaults.isAdmin)); } catch (e) { fail(res, e); }
+  try {
+    const files = photos.filesOf(userId(req));
+    res.json(users.remove(userId(req), req.user, defaults.isAdmin));
+    photos.removeFiles(files);
+  } catch (e) { fail(res, e); }
 });
 
 /* The account the app sends email from (SMTP). */
@@ -181,6 +186,7 @@ router.delete('/weights/:date', (req, res) => {
 router.use('/gym', gym.router);
 router.use('/foods', foods.router);
 router.use('/supps', supps.router);
+router.use('/photos', photos.router);
 
 /* Everything you've stored, as one JSON file. */
 router.get('/export', (req, res) => {
@@ -197,6 +203,7 @@ router.get('/export', (req, res) => {
     gym: gym.exportFor(req.user),
     foods: foods.exportFor(req.user),
     supplements: supps.exportFor(req.user),
+    photos: photos.exportFor(req.user),
   });
 });
 
