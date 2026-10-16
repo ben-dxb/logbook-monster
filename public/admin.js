@@ -153,8 +153,8 @@ document.addEventListener('click',e=>{
     delete AD.foods[id];adOpen.delete(id);}
   else if(a==='restore'){if(!confirm('Go back to the built-in meal plan? Your plan edits are dropped when you save.'))return;
     AD.plan=builtinPlanData();AD.custom=false;adMsg='Built-in plan restored – save to use it.';adErrs=[];}
-  else if(a==='csv'){adDownload(`mealswap-plan-${todayStr()}.csv`,planCsv(AD.plan),'text/csv');return;}
-  else if(a==='json'){adDownload(`mealswap-defaults-${todayStr()}.json`,JSON.stringify({...adPayload(),plan:AD.plan},null,2),'application/json');return;}
+  else if(a==='csv'){adDownload(`logbook-monster-plan-${todayStr()}.csv`,planCsv(AD.plan),'text/csv');return;}
+  else if(a==='json'){adDownload(`logbook-monster-defaults-${todayStr()}.json`,JSON.stringify({...adPayload(),plan:AD.plan},null,2),'application/json');return;}
   else if(a==='discard'){adLoad();adMsg='';adErrs=[];adNotes=[];}
   else if(a==='save'){adSave();return;}
   else return;
@@ -341,7 +341,7 @@ function auRender(){
     return `<div class="aduser" data-id="${u.id}"><span class="who"><b>${esc(u.name||u.email)}${u.you?' (you)':''}</b>${u.name?`<span class="sub">${esc(u.email)}</span>`:''}<span class="sub">${esc(sub)}</span></span>
       <span class="chip ${c}">${t}</span>${u.admin?'<span class="chip">Admin</span>':''}
       <span class="acts">${u.status!=='active'?`<button type="button" class="ghost" data-au="resend" data-id="${u.id}">${u.status==='expired'?'New invite':'Resend'}</button>`:''}
-        ${u.you?'':`<button type="button" class="ghost" data-au="remove" data-id="${u.id}">Remove</button>`}</span></div>`;}).join('');
+        ${u.you||u.admin?'':`<button type="button" class="ghost" data-au="remove" data-id="${u.id}">Remove</button>`}</span></div>`;}).join('');
 }
 function auResult(r){auLink={link:r.link,error:r.emailed?'':r.emailError,msg:r.emailed?`Invite emailed to ${r.email}.`:`Invite ready for ${r.email}.`};}
 $('#ad-invite').addEventListener('submit',async e=>{
@@ -374,7 +374,7 @@ function amFill(){
   $('#ad-mailstate').innerHTML=AM.configured?`<span class="chip ok">✓ Set up</span> Sending from ${esc(AM.from)} via ${esc(AM.host)}${AM.source==='env'?' (from .env)':''}.`
     :'<span class="chip bad">Not set up</span> Invites give you a link to send yourself until this is filled in.';
   const host=AM.host||AM_PROV.gmail[0];
-  $('#ad-m-from').value=AM.from||'';$('#ad-m-name').value=AM.fromName==='Meal Swap'?'':AM.fromName||'';
+  $('#ad-m-from').value=AM.from||'';$('#ad-m-name').value=AM.fromName==='Logbook Monster'?'':AM.fromName||'';
   $('#ad-m-host').value=host;$('#ad-m-port').value=AM.host?AM.port:AM_PROV.gmail[1];$('#ad-m-user').value=AM.user||'';$('#ad-m-pass').value='';
   $('#ad-m-prov').value=Object.keys(AM_PROV).find(k=>AM_PROV[k][0]===host)||'other';
   $('#ad-m-pass').placeholder=AM.hasPassword?`Saved${AM.passwordSource==='env'?' in .env':''} – type a new one to replace it`:'';

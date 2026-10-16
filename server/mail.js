@@ -30,7 +30,7 @@ function current() {
   const from = pick('from') || (EMAIL_RE.test(pick('user') || '') ? pick('user') : '');
   /* Gmail and most providers sign in as the address you send from, so a blank username means that. */
   const user = pick('user') || (pass ? from : '');
-  return { host: pick('host') || '', port, secure, user, pass, from, fromName: pick('fromName') || 'Meal Swap',
+  return { host: pick('host') || '', port, secure, user, pass, from, fromName: pick('fromName') || 'Logbook Monster',
     source: s.host ? 'admin' : env.host ? 'env' : null, passSource: s.pass ? 'admin' : env.pass ? 'env' : null };
 }
 const configured = () => { const c = current(); return !!(c.host && c.from); };

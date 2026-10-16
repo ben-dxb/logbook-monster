@@ -7,6 +7,7 @@ const ai = require('./ai');
 const config = require('./config');
 const mail = require('./mail');
 const users = require('./users');
+const gym = require('./gym');
 
 const q = {
   getSettings: db.prepare('SELECT data FROM settings WHERE user_id = ?'),
@@ -87,7 +88,7 @@ router.post('/admin/users/:id/invite', adminOnly, async (req, res) => {
   try { res.json(await users.resend(userId(req), req.user)); } catch (e) { fail(res, e); }
 });
 router.delete('/admin/users/:id', adminOnly, (req, res) => {
-  try { res.json(users.remove(userId(req), req.user)); } catch (e) { fail(res, e); }
+  try { res.json(users.remove(userId(req), req.user, defaults.isAdmin)); } catch (e) { fail(res, e); }
 });
 
 /* The account the app sends email from (SMTP). */
@@ -99,8 +100,8 @@ router.put('/admin/email', adminOnly, (req, res) => {
 router.post('/admin/email/test', adminOnly, async (req, res) => {
   const to = String((req.body && req.body.to) || req.user.email).trim();
   try {
-    await mail.send({ to, subject: 'Meal Swap test email',
-      text: `This is a test from Meal Swap at ${config.baseUrl}.\n\nIf you can read this, invites and notifications will reach people.\n` });
+    await mail.send({ to, subject: 'Logbook Monster test email',
+      text: `This is a test from Logbook Monster at ${config.baseUrl}.\n\nIf you can read this, invites and notifications will reach people.\n` });
     res.json({ ok: true, to });
   } catch (e) { fail(res, e); }
 });
@@ -158,16 +159,19 @@ router.delete('/weights/:date', (req, res) => {
   res.json({ ok: true });
 });
 
+router.use('/gym', gym.router);
+
 /* Everything you've stored, as one JSON file. */
 router.get('/export', (req, res) => {
   const s = q.getSettings.get(req.user.id);
-  res.attachment(`mealswap-${new Date().toISOString().slice(0, 10)}.json`);
+  res.attachment(`logbook-monster-${new Date().toISOString().slice(0, 10)}.json`);
   res.json({
     exported: new Date().toISOString(),
     email: req.user.email,
     settings: s ? JSON.parse(s.data) : {},
     days: q.allDays.all(req.user.id).map(r => ({ date: r.date, data: JSON.parse(r.data) })),
     weights: q.listWeights.all(req.user.id, '0000-01-01', '9999-12-31'),
+    gym: gym.exportFor(req.user),
   });
 });
 

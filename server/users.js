@@ -50,8 +50,8 @@ async function sendInvite(user, link, admin) {
   const who = admin.name ? `${admin.name} (${admin.email})` : admin.email;
   await mail.send({
     to: user.email, replyTo: admin.email,
-    subject: 'You’re invited to Meal Swap',
-    text: `Hi${user.name ? ' ' + user.name : ''},\n\n${who} has invited you to Meal Swap, the meal plan calculator.\n\n`
+    subject: 'You’re invited to Logbook Monster',
+    text: `Hi${user.name ? ' ' + user.name : ''},\n\n${who} has invited you to Logbook Monster, for meal plans, weight and gym tracking.\n\n`
       + `Open this link to pick a password and sign in:\n${link}\n\n`
       + `The link works once and runs out in ${INVITE_DAYS} days. If you weren’t expecting this, you can ignore this email.\n`,
   });
@@ -85,10 +85,12 @@ async function deliver(user, admin) {
   return { id: user.id, email: user.email, link, emailed, emailError };
 }
 
-function remove(id, admin) {
+function remove(id, admin, isAdmin) {
   const user = q.byId.get(id);
   if (!user) { const e = new Error('No such account'); e.status = 404; throw e; }
   if (user.id === admin.id) { const e = new Error('You can’t remove your own account'); e.status = 400; throw e; }
+  /* ADMIN_EMAILS can't be turned off from here, so an admin account stays; take them out of ADMIN_EMAILS first. */
+  if (isAdmin(user)) { const e = new Error('That account is an admin. Take it out of ADMIN_EMAILS first.'); e.status = 400; throw e; }
   q.remove.run(user.id);
   db.prepare("DELETE FROM sessions WHERE json_extract(sess, '$.userId') = ?").run(user.id);
   return { ok: true };

@@ -1,27 +1,27 @@
 {
-  "name": "mealswap",
+  "name": "logbook-monster",
   "version": "1.0.0",
-  "description": "Meal Swap Calculator – meal plan balancing with saved days, history and weight tracking",
+  "description": "Logbook Monster – meal plan balancing with saved days, history and weight tracking",
   "main": "server/index.js",
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server/index.js",
     "dev": "node --disable-warning=ExperimentalWarning --watch server/index.js",
     "create-user": "node --disable-warning=ExperimentalWarning scripts/create-user.js",
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
-    "lint": "node --check server/index.js && node --check server/auth.js && node --check server/api.js && node --check server/defaults.js && node --check server/ai.js && node --check server/db.js && node --check server/config.js && node --check server/passwords.js && node --check server/sessionStore.js && node --check server/mail.js && node --check server/users.js && node --check public/invite.js && node --check public/engine.js && node --check public/app.js && node --check public/admin.js && node --check public/login.js && node --check scripts/create-user.js",
+    "lint": "node --check server/index.js && node --check server/auth.js && node --check server/api.js && node --check server/defaults.js && node --check server/ai.js && node --check server/gym.js && node --check server/db.js && node --check server/config.js && node --check server/passwords.js && node --check server/sessionStore.js && node --check server/mail.js && node --check server/users.js && node --check public/invite.js && node --check public/engine.js && node --check public/app.js && node --check public/admin.js && node --check public/gym.js && node --check public/login.js && node --check scripts/create-user.js",
     "smoke": "node --disable-warning=ExperimentalWarning scripts/smoke.js",
     "check": "npm run -s lint && npm test && npm run -s smoke"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ben-dxb/mealswap.git"
+    "url": "git+https://github.com/ben-dxb/logbook-monster.git"
   },
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/ben-dxb/mealswap/issues"
+    "url": "https://github.com/ben-dxb/logbook-monster/issues"
   },
-  "homepage": "https://github.com/ben-dxb/mealswap#readme",
+  "homepage": "https://github.com/ben-dxb/logbook-monster#readme",
   "dependencies": {
     "dotenv": "^18.0.8",
     "express": "^5.3.0",

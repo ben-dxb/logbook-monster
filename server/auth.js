@@ -74,6 +74,15 @@ const limiter = rateLimit({
   message: { error: 'Too many attempts. Wait a few minutes and try again.' },
 });
 
+/* Invite links get their own budget so opening one doesn't use up sign-in attempts (and the reverse). */
+const inviteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many attempts. Wait a few minutes and try again.' },
+});
+
 const router = express.Router();
 router.use(express.json({ limit: '10kb' }));
 
@@ -113,13 +122,13 @@ router.post('/register', limiter, csrfProtect, async (req, res) => {
 });
 
 /* ---------- accepting an invite: the link is /invite#<token> ---------- */
-router.post('/invite/check', limiter, csrfProtect, (req, res) => {
+router.post('/invite/check', inviteLimiter, csrfProtect, (req, res) => {
   const inv = users.findInvite(String(req.body.token || ''));
   if (!inv) return res.status(404).json({ error: 'This invite link has expired or was already used. Ask for a new one.' });
   res.json({ email: inv.email, name: inv.name, google: config.google.enabled });
 });
 
-router.post('/invite/accept', limiter, csrfProtect, async (req, res) => {
+router.post('/invite/accept', inviteLimiter, csrfProtect, async (req, res) => {
   const inv = users.findInvite(String(req.body.token || ''));
   if (!inv) return res.status(404).json({ error: 'This invite link has expired or was already used. Ask for a new one.' });
   const password = String(req.body.password || '');
@@ -130,15 +139,15 @@ router.post('/invite/accept', limiter, csrfProtect, async (req, res) => {
   if (name) q.setName.run(name, inv.user_id);
   await logIn(req, q.byId.get(inv.user_id));
   if (inv.created_by) {
-    mail.notify({ to: inv.created_by, subject: `${inv.email} joined Meal Swap`,
-      text: `${name || inv.email} accepted your invite and has signed in to Meal Swap.\n\n${config.baseUrl}/#admin\n` });
+    mail.notify({ to: inv.created_by, subject: `${inv.email} joined Logbook Monster`,
+      text: `${name || inv.email} accepted your invite and has signed in to Logbook Monster.\n\n${config.baseUrl}/#admin\n` });
   }
   res.json({ ok: true });
 });
 
 router.post('/logout', csrfProtect, (req, res) => {
   req.session.destroy(() => {
-    res.clearCookie('mealswap.sid', { path: '/' });
+    res.clearCookie('logbookmonster.sid', { path: '/' });
     res.json({ ok: true });
   });
 });

@@ -1,0 +1,363 @@
+'use strict';
+/* Gym view: workouts (lists of exercises with a target), the exercise library and the sets you log.
+   #gym, #gym/w/3, #gym/w/3/edit, #gym/new, #gym/e/5 (an exercise's sets), #gym/s/9 (edit a set),
+   #gym/sessions, #gym/d/2026-10-15, #gym/x (all exercises). Uses helpers from app.js. */
+
+let GY=null;                     /* {exercises:[{id,name,notes,sets,last}], workouts:[{id,name,description,items}], ai} */
+const GSETS={};                  /* exercise id -> its sets, oldest first */
+const GDAY={};                   /* date -> sets that day */
+let gSessions=null, gArgs=[], gTok=0, gTimer=null, gBackE='#gym';
+let gDraft=null, gAi=null, gAiBusy=false, gMsg='', gReorder=false, gTab='sets', gShow=30, gQuick=null;
+
+/* ---------- helpers ---------- */
+const exById=id=>GY&&GY.exercises.find(e=>e.id===id);
+const exName=id=>{const e=exById(id);return e?e.name:'Deleted exercise';};
+const nowAt=()=>{const d=new Date();return `${ymd(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;};
+const atMs=a=>{const [d,t]=a.split('T');const [h,m,s]=t.split(':').map(Number);const x=parse(d);x.setHours(h,m,s||0);return x.getTime();};
+const e1rm=s=>s.reps<=0?0:s.reps===1?s.kg:s.kg*(1+s.reps/30);   /* Epley */
+const kgTxt=k=>String(Math.round(k*100)/100);
+const fmtDur=ms=>{const s=Math.max(0,Math.round(ms/1000)),h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?`${h}:${pad(m)}:${pad(s%60)}`:`${m}:${pad(s%60)}`;};
+function ago(d){if(!d)return '';const n=Math.round((parse(todayStr())-parse(d))/86400000);
+  return n===0?'Today':n===1?'Yesterday':n>1&&n<7?`${n} days ago`:fmtShort(d);}
+function dayLabel(d){const t=todayStr();if(d===t)return 'Today';if(d===addDays(t,-1))return 'Yesterday';
+  return parse(d).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short',...(d.slice(0,4)!==t.slice(0,4)?{year:'numeric'}:{})});}
+const gEmpty=t=>`<p class="empty">${t}</p>`;
+function gHead(back,title,extra){return `<div class="gbar"><a class="nav" href="${back}" aria-label="Back">‹</a><h2>${esc(title)}</h2>${extra||''}</div>`;}
+
+async function gLoad(){const ai=GY?GY.ai:false;GY=await api('GET','/api/gym');if(GY.ai==null)GY.ai=ai;}
+async function gSetsOf(id){if(!GSETS[id])GSETS[id]=(await api('GET','/api/gym/sets?exercise='+id))||[];return GSETS[id];}
+async function gSetsOn(d){if(!GDAY[d])GDAY[d]=(await api('GET','/api/gym/sets?date='+d))||[];return GDAY[d];}
+/* after a set changes: counts on the list pages and the per-day caches are out of date */
+function gChanged(){gSessions=null;Object.keys(GDAY).forEach(k=>delete GDAY[k]);}
+
+/* Per exercise: sets by day, which sets beat the best estimated 1RM so far, which days beat the best volume. */
+function gAnalyse(sets){
+  const days=new Map(), pr=new Set(), volPr=new Set();let best=-1,bestVol=-1;
+  sets.forEach(s=>{const d=s.at.slice(0,10);if(!days.has(d))days.set(d,[]);days.get(d).push(s);
+    const v=e1rm(s);if(best>=0&&v>best+1e-9)pr.add(s.id);best=Math.max(best,v);});
+  for(const [d,ss] of days){const v=ss.reduce((a,s)=>a+s.reps*s.kg,0);if(bestVol>=0&&v>bestVol+1e-9)volPr.add(d);bestVol=Math.max(bestVol,v);}
+  return {days,pr,volPr};
+}
+
+/* ---------- routing ---------- */
+async function renderGym(args){
+  if(args)gArgs=args;
+  if(view!=='gym')return;
+  const tok=++gTok, box=$('#g-body'), [p,a,b]=gArgs;
+  clearInterval(gTimer);gTimer=null;
+  document.querySelectorAll('#g-tabs a').forEach(x=>{const on=x.dataset.g===(p==='sessions'||p==='d'?'sessions':p==='x'?'x':'');
+    if(on)x.setAttribute('aria-current','page');else x.removeAttribute('aria-current');});
+  if(p!=='e'&&p!=='s')gBackE='#'+['gym',...gArgs].join('/');
+  if(p!=='e')gQuick=null;
+  if(p!=='new'&&!(p==='w'&&b==='edit'))gDraft=null;
+  try{
+    if(!GY){box.innerHTML='<p class="note">Loading…</p>';await gLoad();}
+    let html;
+    if(p==='new'||(p==='w'&&b==='edit'))html=gEditPage(p==='new'?null:+a);
+    else if(p==='w')html=await gWorkoutPage(+a);
+    else if(p==='e')html=await gExercisePage(+a);
+    else if(p==='s')html=await gSetPage(+a);
+    else if(p==='sessions'){if(!gSessions)gSessions=await api('GET','/api/gym/sessions');html=gSessionsPage();}
+    else if(p==='d')html=await gDayPage(a);
+    else if(p==='x')html=gExercisesPage();
+    else html=gHomePage();
+    if(tok!==gTok)return;                    /* you moved on while this loaded */
+    box.innerHTML=html;
+    if(p==='e')gAfterExercise(+a);
+  }catch(e){if(tok===gTok&&!e.signedOut)box.innerHTML=`<p class="note">Couldn’t load this: ${esc(e.message)}</p>`;}
+}
+
+/* ---------- workouts list ---------- */
+function gHomePage(){
+  const ws=GY.workouts;
+  const aiRow=GY.ai
+    ?`<label class="grow gadd gfile${gAiBusy?' off':''}"><span>✦ ${gAiBusy?'Reading your plan – this can take a minute or two…':'Read a workout plan with AI (PDF or photo)…'}</span>
+        <input id="g-aifile" type="file" accept=".pdf,application/pdf,image/png,image/jpeg,image/webp"${gAiBusy?' disabled':''}></label>`
+    :`<div class="grow gadd off"><span>✦ Read a workout plan with AI – ${isAdmin?'add an OpenRouter key on the <a href="#admin">Admin page</a> to turn this on':'an admin needs to add an OpenRouter key first'}</span></div>`;
+  return `<div class="gbar"><h2>My workouts</h2>${ws.length>1?`<button class="ghost" type="button" data-g="reorder" aria-pressed="${gReorder}">${gReorder?'Done':'Reorder'}</button>`:''}</div>
+    <div class="glist">
+      <a class="grow gadd" href="#gym/new"><span>+ New workout…</span></a>
+      ${aiRow}
+      <a class="grow" href="#gym/x"><span class="gt"><b>My exercises</b></span><span class="gc">${GY.exercises.length}</span><i class="gch">›</i></a>
+      ${ws.map((w,i)=>gReorder
+        ?`<div class="grow"><span class="gt"><b>${esc(w.name)}</b></span><span class="gmv"><button class="ghost" type="button" data-g="wup" data-i="${i}" aria-label="Move ${esc(w.name)} up"${i?'':' disabled'}>↑</button><button class="ghost" type="button" data-g="wdown" data-i="${i}" aria-label="Move ${esc(w.name)} down"${i<ws.length-1?'':' disabled'}>↓</button></span></div>`
+        :`<a class="grow" href="#gym/w/${w.id}"><span class="gt"><b>${esc(w.name)}</b>${w.description?`<small>${esc(w.description)}</small>`:''}</span><span class="gc">${w.items.length}</span><i class="gch">›</i></a>`).join('')}
+    </div>
+    ${ws.length?'':'<p class="note">Make a workout for each training day – or read your coach’s plan with AI – then tap an exercise to log your sets.</p>'}
+    <div id="g-msg" role="status">${gMsg?`<p class="admsg">${esc(gMsg)}</p>`:''}</div>
+    ${gAi?gAiPreview():''}`;
+}
+function gAiPreview(){
+  const n=gAi.workouts.filter(w=>w.on).length;
+  return `<section class="panel gai" aria-labelledby="g-aih"><h2 id="g-aih">From ${esc(gAi.file)}</h2>
+    <p>Check what the AI found. Exercises marked <span class="chip ok">yours</span> already have history and keep it; the rest are added to My exercises. You can change anything afterwards with Edit.</p>
+    ${gAi.workouts.map((w,i)=>`<div class="gaiw"><label class="tog"><input type="checkbox" id="g-aion-${i}" data-g="aion" data-i="${i}"${w.on?' checked':''}> <b>${esc(w.name)}</b> <span class="sub">${w.exercises.length} exercises</span></label>
+      ${w.description?`<p>${esc(w.description)}</p>`:''}
+      <ol>${w.exercises.map(x=>`<li><b>${esc(x.name)}</b>${x.existing?' <span class="chip ok">yours</span>':' <span class="chip info">new</span>'}${x.target?` <span class="sub">${esc(x.target)}</span>`:''}</li>`).join('')}</ol></div>`).join('')}
+    ${gAi.notes.length?`<details class="adnotes" open><summary>What the AI wasn’t sure about (${gAi.notes.length})</summary><ul>${gAi.notes.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></details>`:''}
+    <div class="gactions"><button class="btn" type="button" data-g="aiadd"${n?'':' disabled'}>Add ${n} workout${n===1?'':'s'}</button><button class="ghost" type="button" data-g="aidrop">Discard</button></div>
+  </section>`;
+}
+
+/* ---------- one workout ---------- */
+async function gWorkoutPage(id){
+  const w=GY.workouts.find(x=>x.id===id);
+  if(!w)return gHead('#gym','Workout')+gEmpty('This workout doesn’t exist any more.');
+  const today=await gSetsOn(todayStr());
+  return gHead('#gym',w.name,`<a class="ghost" href="#gym/w/${w.id}/edit">Edit</a>`)
+    +(w.description?`<p class="gdesc">${esc(w.description)}</p>`:'')
+    +`<div class="glist">${w.items.map(i=>{const e=exById(i.e), n=today.filter(s=>s.e===i.e).length;
+      return `<a class="grow" href="#gym/e/${i.e}"><span class="gt"><b>${esc(e.name)}</b>${i.target?`<small>${esc(i.target)}</small>`:''}</span>
+        ${n?`<span class="chip ok">✓ ${n} today</span>`:`<span class="gwhen">${esc(ago(e.last&&e.last.slice(0,10)))}</span>`}<i class="gch">›</i></a>`;}).join('')
+      ||'<p class="empty grow">No exercises yet – tap Edit to add some.</p>'}</div>`;
+}
+
+/* ---------- new / edit workout ---------- */
+function gEditPage(id){
+  const w=id==null?null:GY.workouts.find(x=>x.id===id);
+  if(id!=null&&!w)return gHead('#gym','Workout')+gEmpty('This workout doesn’t exist any more.');
+  if(!gDraft||gDraft.id!==id)gDraft=w?{id,name:w.name,description:w.description,items:w.items.map(i=>({e:i.e,target:i.target||''}))}:{id:null,name:'',description:'',items:[]};
+  const D=gDraft, back=w?`#gym/w/${w.id}`:'#gym';
+  return gHead(back,w?'Edit workout':'New workout')+`<section class="panel">
+    <label class="f"><span class="lbl">Name</span><input id="g-wname" data-g="wf" data-k="name" value="${esc(D.name)}" maxlength="80" placeholder="e.g. Monday — Upper"></label>
+    <label class="f"><span class="lbl">Description (optional)</span><textarea id="g-wdesc" data-g="wf" data-k="description" rows="3" maxlength="1000">${esc(D.description)}</textarea></label>
+    <h3 class="lbl">Exercises</h3>
+    <div class="gedit">${D.items.map((i,ix)=>`<div class="gerow"><span class="gi">${ix+1}</span><b class="gen">${esc(i.e?exName(i.e):i.name)}${i.e?'':' <span class="chip info">new</span>'}</b>
+        <input id="g-wt-${ix}" class="gtarget" data-g="wt" data-i="${ix}" value="${esc(i.target)}" maxlength="200" placeholder="Target, e.g. 3 × 8–12" aria-label="Target for ${esc(i.e?exName(i.e):i.name)}">
+        <span class="gmv"><button class="ghost" type="button" data-g="iup" data-i="${ix}" aria-label="Move up"${ix?'':' disabled'}>↑</button><button class="ghost" type="button" data-g="idown" data-i="${ix}" aria-label="Move down"${ix<D.items.length-1?'':' disabled'}>↓</button>
+        <button class="x" type="button" data-g="idel" data-i="${ix}" aria-label="Remove">×</button></span></div>`).join('')||gEmpty('No exercises yet.')}</div>
+    <form id="g-addex" class="gaddex"><label class="f"><span class="lbl">Add an exercise</span><input id="g-exname" list="g-exlist" maxlength="80" autocomplete="off" placeholder="Pick one or type a new name"></label>
+      <datalist id="g-exlist">${GY.exercises.map(e=>`<option value="${esc(e.name)}"></option>`).join('')}</datalist><button class="btn" type="submit">Add</button></form>
+    <div class="gactions"><button class="btn" type="button" data-g="wsave">Save workout</button>${w?'<button class="ghost" type="button" data-g="wdel">Delete workout</button>':''}</div>
+    <p id="g-emsg" class="sub" role="alert"></p>
+  </section>`;
+}
+async function gSaveDraft(){
+  const D=gDraft, msg=$('#g-emsg');
+  if(!D.name.trim()){msg.textContent='Give the workout a name.';$('#g-wname').focus();return;}
+  try{
+    for(const i of D.items){if(!i.e){const e=await api('POST','/api/gym/exercises',{name:i.name});i.e=e.id;delete i.name;}}
+    const body={name:D.name,description:D.description,items:D.items.map(i=>({e:i.e,target:i.target}))};
+    const r=D.id==null?await api('POST','/api/gym/workouts',body):await api('PUT','/api/gym/workouts/'+D.id,body);
+    gDraft=null;await gLoad();go('gym/w/'+r.id);
+  }catch(e){if(!e.signedOut){await gLoad().catch(()=>{});msg.textContent=e.message;}}
+}
+
+/* ---------- one exercise: sets, chart, records, and the bar to log a set ---------- */
+async function gExercisePage(id){
+  const e=exById(id);
+  if(!e)return gHead(gBackE,'Exercise')+gEmpty('This exercise doesn’t exist any more.');
+  const sets=await gSetsOf(id), A=gAnalyse(sets), last=sets[sets.length-1];
+  if(!gQuick||gQuick.e!==id)gQuick={e:id,reps:last?last.reps:8,kg:last?last.kg:20,note:''};
+  const tabs=[['sets','Sets'],['chart','Chart'],['records','Records']].map(([t,n])=>`<button type="button" data-g="tab" data-t="${t}" aria-pressed="${gTab===t}">${n}</button>`).join('');
+  let body;
+  if(gTab==='chart')body=`<section class="panel"><h2>Estimated 1 rep max</h2><div class="clegend"><span><i class="sw line"></i>Best estimated 1RM of the day</span><span><i class="sw dots"></i>Heaviest weight</span></div><div class="chart" id="g-chart"></div></section>`;
+  else if(gTab==='records')body=gRecords(sets,A);
+  else{
+    const days=[...A.days.keys()].reverse();
+    body=days.length?`<div class="gdays">${days.slice(0,gShow).map((d,di)=>{const ss=A.days.get(d), prev=A.days.get(days[di+1]);
+      const cmp=(v,ix,k)=>{const p=prev&&prev[ix];return !p||v===p[k]?'':v>p[k]?' up':' down';};
+      return `<section class="gday"><h3><a href="#gym/d/${d}">${esc(dayLabel(d))} ›</a>${A.volPr.has(d)?'<span class="chip gvol">🏆 Volume</span>':''}</h3>
+        ${ss.map((s,ix)=>{const isPr=A.pr.has(s.id);return `<a class="gset" href="#gym/s/${s.id}"><span class="gi">${ix+1}</span>
+          <span class="gtm">${ix?`<span class="grest">+${fmtDur(atMs(s.at)-atMs(ss[ix-1].at))}</span>`:esc(s.at.slice(11,16))}${isPr?' <span class="gtro" title="Best estimated 1RM so far">🏆</span>':''}</span>
+          <span class="gnum${isPr?' pr':cmp(s.reps,ix,'reps')}">${s.reps}<small>rep</small></span><span class="gnum${isPr?' pr':cmp(s.kg,ix,'kg')}">${kgTxt(s.kg)}<small>kg</small></span><i class="gch">›</i>
+          ${s.note?`<span class="gnote">${esc(s.note)}</span>`:''}</a>`;}).join('')}</section>`;}).join('')}
+      ${days.length>gShow?`<button class="ghost" type="button" data-g="more">Show older sets</button>`:''}</div>`
+      :gEmpty('No sets yet – log your first one below.');
+  }
+  const Q=gQuick;
+  return gHead(gBackE,e.name)+`<div class="seg" role="group" aria-label="Show">${tabs}</div>${e.notes?`<p class="gdesc">${esc(e.notes)}</p>`:''}${body}
+    <form id="g-quick" class="gquick" aria-label="Log a set">
+      <div class="gqf"><label class="gqin"><input id="g-reps" type="number" inputmode="numeric" min="0" max="1000" step="1" value="${Q.reps}" aria-label="Reps"><em>rep</em></label>
+        <span class="gstep"><button type="button" data-g="adj" data-f="reps" data-d="-1" aria-label="One rep less">−</button><button type="button" data-g="adj" data-f="reps" data-d="1" aria-label="One rep more">+</button></span></div>
+      <div class="gqf"><label class="gqin"><input id="g-kg" type="number" inputmode="decimal" min="-500" max="2000" step="any" value="${kgTxt(Q.kg)}" aria-label="Weight in kg"><em>kg</em></label>
+        <span class="gstep two"><button type="button" data-g="adj" data-f="kg" data-d="-1" aria-label="1 kg less">−1</button><button type="button" data-g="adj" data-f="kg" data-d="1" aria-label="1 kg more">+1</button>
+          <button type="button" data-g="adj" data-f="kg" data-d="-5" aria-label="5 kg less">−5</button><button type="button" data-g="adj" data-f="kg" data-d="5" aria-label="5 kg more">+5</button></span></div>
+      <div class="gqrow"><input id="g-note" value="${esc(Q.note)}" maxlength="300" placeholder="Add note" aria-label="Note"><span id="g-rest" class="sub" aria-live="off"></span>
+        <button class="btn gok" type="submit">✓ Log set</button></div>
+    </form>
+    <details class="panel gexset"><summary>Exercise settings</summary>
+      <form id="g-exform" class="gexform"><label class="f"><span class="lbl">Name</span><input id="g-exn" value="${esc(e.name)}" maxlength="80" required></label>
+        <label class="f"><span class="lbl">Notes (seat height, grip…)</span><textarea id="g-exnotes" rows="2" maxlength="1000">${esc(e.notes||'')}</textarea></label>
+        <div class="gactions"><button class="btn" type="submit">Save</button><button class="ghost" type="button" data-g="exdel">Delete exercise and its ${sets.length} set${sets.length===1?'':'s'}</button></div>
+        <p id="g-exmsg" class="sub" role="status"></p></form>
+    </details>`;
+}
+function gAfterExercise(id){
+  if(gTab==='chart')gChart(GSETS[id]||[]);
+  const last=(GSETS[id]||[]).slice(-1)[0], el=$('#g-rest');
+  if(!last||!el)return;
+  const tick=()=>{const ms=Date.now()-atMs(last.at);if(!document.body.contains(el)||ms<0||ms>3*3600000){el.textContent='';return;}el.textContent='Rest '+fmtDur(ms);};
+  tick();gTimer=setInterval(tick,1000);
+}
+function gRecords(sets,A){
+  if(!sets.length)return gEmpty('No sets yet.');
+  const max=f=>sets.reduce((b,s)=>(f(s)>f(b)?s:b),sets[0]);
+  const when=s=>`${s.reps} × ${kgTxt(s.kg)} kg · ${fmtShort(s.at.slice(0,10))}`;
+  const b1=max(e1rm), bk=max(s=>s.kg*10000+s.reps), br=max(s=>s.reps*10000+s.kg), bv=max(s=>s.reps*s.kg);
+  let bd=null,bdv=-1;for(const [d,ss] of A.days){const v=ss.reduce((a,s)=>a+s.reps*s.kg,0);if(v>bdv){bdv=v;bd=d;}}
+  const reps=[];for(let r=1;r<=15;r++){const ok=sets.filter(s=>s.reps>=r);if(ok.length)reps.push([r,ok.reduce((b,s)=>(s.kg>b.kg?s:b),ok[0])]);}
+  return `<div class="wstats">${[
+    ['Est. 1 rep max',`${kgTxt(Math.round(e1rm(b1)*10)/10)}<i>kg</i>`,when(b1)],
+    ['Heaviest',`${kgTxt(bk.kg)}<i>kg</i>`,when(bk)],
+    ['Most reps',`${br.reps}<i>reps</i>`,when(br)],
+    ['Best set volume',`${kgTxt(Math.round(bv.reps*bv.kg))}<i>kg</i>`,when(bv)],
+    ['Best day volume',`${kgTxt(Math.round(bdv))}<i>kg</i>`,fmtShort(bd)],
+    ['Logged',`${sets.length}<i>sets</i>`,`on ${A.days.size} day${A.days.size===1?'':'s'}`],
+  ].map(([l,v,s])=>`<div class="stat"><span class="lbl">${l}</span><span class="num">${v}</span><span class="sub">${esc(s)}</span></div>`).join('')}</div>
+  <section class="panel"><h2>Rep maxes</h2><p>The heaviest weight you’ve moved for at least that many reps.</p>
+    <div class="greps">${reps.map(([r,s])=>`<span class="lbl">${r} rep${r>1?'s':''}</span><b>${kgTxt(s.kg)} kg</b><span class="sub">${esc(fmtShort(s.at.slice(0,10)))}${s.reps>r?` (${s.reps} reps)`:''}</span>`).join('')}</div></section>`;
+}
+function gChart(sets){
+  const box=$('#g-chart');if(!box)return;
+  const days=new Map();sets.forEach(s=>{const d=s.at.slice(0,10),o=days.get(d)||{d,e:0,k:-Infinity};o.e=Math.max(o.e,e1rm(s));o.k=Math.max(o.k,s.kg);days.set(d,o);});
+  const pts=[...days.values()];
+  if(pts.length<2){box.innerHTML='<p class="emptyc">Log this exercise on two different days to see a trend.</p>';return;}
+  const W=Math.max(300,box.clientWidth||600), H=Math.round(Math.min(320,Math.max(220,W*0.42))), m={l:44,r:12,t:12,b:26};
+  const t0=parse(pts[0].d).getTime(), t1=parse(pts[pts.length-1].d).getTime();
+  const vals=pts.flatMap(p=>[p.e,p.k]);let lo=Math.min(...vals),hi=Math.max(...vals);const padv=Math.max(1,(hi-lo)*0.12);lo-=padv;hi+=padv;
+  const step=[1,2,5,10,20,25,50,100,200].find(s=>(hi-lo)/s<=5)||500;lo=Math.floor(lo/step)*step;hi=Math.ceil(hi/step)*step;
+  const x=d=>m.l+(parse(d).getTime()-t0)/Math.max(1,t1-t0)*(W-m.l-m.r), y=v=>m.t+(hi-v)/(hi-lo)*(H-m.t-m.b);
+  let g='<g class="grid">';for(let v=lo;v<=hi+1e-9;v+=step)g+=`<line x1="${m.l}" x2="${W-m.r}" y1="${y(v)}" y2="${y(v)}"/>`;
+  g+='</g><g class="axis">';for(let v=lo;v<=hi+1e-9;v+=step)g+=`<text x="${m.l-6}" y="${y(v)+4}" text-anchor="end">${v}</text>`;
+  [pts[0].d,pts[pts.length-1].d].forEach((d,i)=>{g+=`<text x="${x(d)}" y="${H-6}" text-anchor="${i?'end':'start'}">${esc(fmtShort(d))}</text>`;});
+  g+='</g>';
+  box.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Estimated 1 rep max from ${esc(fmtShort(pts[0].d))} to ${esc(fmtShort(pts[pts.length-1].d))}">${g}
+    ${pts.map(p=>`<circle class="pt" cx="${x(p.d).toFixed(1)}" cy="${y(p.k).toFixed(1)}" r="3"><title>${esc(fmtShort(p.d))}: ${kgTxt(p.k)} kg</title></circle>`).join('')}
+    <path class="avg" d="${pts.map((p,i)=>(i?'L':'M')+x(p.d).toFixed(1)+' '+y(p.e).toFixed(1)).join('')}"/></svg>`;
+}
+
+/* ---------- edit one set ---------- */
+async function gSetPage(id){
+  let s=null;for(const k in GSETS){s=GSETS[k].find(x=>x.id===id);if(s)break;}
+  if(!s)s=await api('GET','/api/gym/sets/'+id);
+  if(!s)return gHead(gBackE,'Edit set')+gEmpty('This set doesn’t exist any more.');
+  return gHead('#gym/e/'+s.e,'Edit set')+`<form id="g-setform" class="panel gsetform" data-id="${s.id}">
+    <label class="f"><span class="lbl">Exercise</span><select id="g-se">${GY.exercises.map(e=>`<option value="${e.id}"${e.id===s.e?' selected':''}>${esc(e.name)}</option>`).join('')}</select></label>
+    <div class="g2"><label class="f"><span class="lbl">Reps</span><input id="g-sr" type="number" inputmode="numeric" min="0" max="1000" step="1" value="${s.reps}" required></label>
+      <label class="f"><span class="lbl">Weight kg</span><input id="g-sk" type="number" inputmode="decimal" min="-500" max="2000" step="any" value="${kgTxt(s.kg)}" required></label></div>
+    <label class="f"><span class="lbl">Notes</span><input id="g-sn" value="${esc(s.note)}" maxlength="300" placeholder="Comment"></label>
+    <div class="g2"><label class="f"><span class="lbl">Date</span><input id="g-sd" type="date" value="${s.at.slice(0,10)}" required></label>
+      <label class="f"><span class="lbl">Time</span><input id="g-st" type="time" step="1" value="${s.at.slice(11,19)}" required></label></div>
+    <div class="gactions"><button class="btn" type="submit">Save</button><button class="ghost gdel" type="button" data-g="sdel" data-id="${s.id}" data-e="${s.e}">Delete set</button></div>
+    <p id="g-smsg" class="sub" role="alert"></p></form>`;
+}
+
+/* ---------- sessions: every day you trained ---------- */
+function gSessionsPage(){
+  const rows=gSessions||[];
+  return `<div class="gbar"><h2>Sessions</h2></div>`+(rows.length?`<div class="glist">${rows.map(r=>{const names=r.ex.map(exName);
+    return `<a class="grow" href="#gym/d/${r.date}"><span class="gt"><b>${esc(dayLabel(r.date))}</b>
+      <small>${r.sets} set${r.sets===1?'':'s'} · ${r.ex.length} exercise${r.ex.length===1?'':'s'} · ${r.volume.toLocaleString()} kg${r.sets>1?` · ${fmtDur(atMs(r.last)-atMs(r.first))}`:''}</small>
+      <small>${esc(names.join(', '))}</small></span><i class="gch">›</i></a>`;}).join('')}</div>`
+    :'<p class="note">No sessions yet. Open a workout or an exercise and log a set.</p>');
+}
+async function gDayPage(d){
+  if(!isDate(d))return gHead('#gym/sessions','Session')+gEmpty('That isn’t a date.');
+  const sets=await gSetsOn(d), by=new Map();
+  sets.forEach(s=>{if(!by.has(s.e))by.set(s.e,[]);by.get(s.e).push(s);});
+  const vol=sets.reduce((a,s)=>a+s.reps*s.kg,0);
+  return gHead('#gym/sessions',dayLabel(d))+`<p class="gdesc">${esc(fmtLong(d))}${sets.length?` · ${sets.length} sets · ${Math.round(vol).toLocaleString()} kg${sets.length>1?` · ${fmtDur(atMs(sets[sets.length-1].at)-atMs(sets[0].at))}`:''}`:''}</p>`
+    +(sets.length?[...by].map(([e,ss])=>`<section class="gday"><h3><a href="#gym/e/${e}">${esc(exName(e))} ›</a></h3>
+      ${ss.map((s,ix)=>`<a class="gset" href="#gym/s/${s.id}"><span class="gi">${ix+1}</span><span class="gtm">${esc(s.at.slice(11,16))}</span><span class="gnum">${s.reps}<small>rep</small></span><span class="gnum">${kgTxt(s.kg)}<small>kg</small></span><i class="gch">›</i>${s.note?`<span class="gnote">${esc(s.note)}</span>`:''}</a>`).join('')}</section>`).join('')
+    :gEmpty('Nothing logged on this day.'));
+}
+
+/* ---------- exercise library ---------- */
+function gExercisesPage(){
+  return `<div class="gbar"><h2>My exercises</h2></div>
+    <form id="g-newex" class="gaddex"><label class="f"><span class="lbl">Find or add</span><input id="g-find" maxlength="80" autocomplete="off" placeholder="e.g. Hack squat"></label><button class="btn" type="submit">Add</button></form>
+    <div class="glist" id="g-exlist">${GY.exercises.map(e=>`<a class="grow" href="#gym/e/${e.id}" data-n="${esc(e.name.toLowerCase())}"><span class="gt"><b>${esc(e.name)}</b><small>${e.sets?`${e.sets} set${e.sets===1?'':'s'}`:'No sets yet'}</small></span><span class="gwhen">${esc(ago(e.last&&e.last.slice(0,10)))}</span><i class="gch">›</i></a>`).join('')
+      ||'<p class="empty grow">No exercises yet. Add one above, or make a workout.</p>'}</div>`;
+}
+
+/* ---------- actions ---------- */
+async function gLogSet(){
+  const Q=gQuick, reps=+$('#g-reps').value, kg=+$('#g-kg').value, note=$('#g-note').value.trim();
+  if(!Number.isInteger(reps)||reps<0||reps>1000){alert('Reps must be a whole number.');return;}
+  if(!Number.isFinite(kg)||$('#g-kg').value===''){alert('Enter a weight (0 for bodyweight).');return;}
+  const btn=$('#g-quick .gok');btn.disabled=true;
+  try{
+    const s=await api('POST','/api/gym/sets',{exercise:Q.e,reps,kg,note,at:nowAt()});
+    (GSETS[Q.e]=GSETS[Q.e]||[]).push(s);
+    const e=exById(Q.e);if(e){e.sets++;e.last=s.at;}
+    Object.assign(Q,{reps,kg,note:''});gChanged();
+    if(gTab!=='sets')gTab='sets';
+    await renderGym();
+  }catch(err){btn.disabled=false;if(!err.signedOut)alert('Couldn’t log the set: '+err.message);}
+}
+async function gAiRead(file){
+  if(file.size>10*1024*1024){gMsg='That file is over 10 MB.';renderGym();return;}
+  gAiBusy=true;gMsg='';gAi=null;renderGym();
+  try{
+    let r;
+    try{r=await fetch('/api/gym/ai-import',{method:'POST',credentials:'same-origin',headers:{'content-type':file.type||'application/pdf','x-csrf-token':csrf},body:file});}
+    catch{throw new Error('Can’t reach the server – is it still running?');}
+    if(r.status===401){location.href='/login'+location.hash;return;}
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);
+    gAi={file:file.name,notes:j.notes||[],workouts:j.workouts.map(w=>({...w,on:true}))};
+  }catch(err){gMsg='The AI couldn’t read that: '+err.message;}
+  gAiBusy=false;renderGym();
+}
+async function gAiAdd(){
+  const list=gAi.workouts.filter(w=>w.on).map(w=>({name:w.name,description:w.description,exercises:w.exercises.map(x=>({name:x.name,target:x.target}))}));
+  try{const r=await api('POST','/api/gym/import',{workouts:list});GY={...r,ai:GY.ai};
+    gMsg=`Added ${list.length} workout${list.length===1?'':'s'}.`;gAi=null;renderGym();}
+  catch(err){if(!err.signedOut){gMsg='Couldn’t add them: '+err.message;renderGym();}}
+}
+
+document.addEventListener('click',async e=>{
+  const b=e.target.closest('[data-g]');if(!b||view!=='gym'||b.tagName==='INPUT'||b.tagName==='TEXTAREA'||b.tagName==='A')return;
+  const g=b.dataset.g, i=+b.dataset.i;
+  if(g==='tab'){gTab=b.dataset.t;renderGym();}
+  else if(g==='more'){gShow+=30;renderGym();}
+  else if(g==='adj'){const el=$(b.dataset.f==='reps'?'#g-reps':'#g-kg');const v=Math.max(b.dataset.f==='reps'?0:-500,(+el.value||0)+ +b.dataset.d);
+    el.value=b.dataset.f==='reps'?Math.round(v):kgTxt(v);gQuick[b.dataset.f]=+el.value;}
+  else if(g==='reorder'){gReorder=!gReorder;renderGym();}
+  else if(g==='wup'||g==='wdown'){const ws=GY.workouts.slice(),j=g==='wup'?i-1:i+1;if(j<0||j>=ws.length)return;[ws[i],ws[j]]=[ws[j],ws[i]];
+    try{await api('PUT','/api/gym/order',{ids:ws.map(w=>w.id)});GY.workouts=ws;renderGym();}catch(err){if(!err.signedOut)alert(err.message);}}
+  else if(g==='iup'||g==='idown'){const it=gDraft.items,j=g==='iup'?i-1:i+1;if(j<0||j>=it.length)return;[it[i],it[j]]=[it[j],it[i]];renderGym();}
+  else if(g==='idel'){gDraft.items.splice(i,1);renderGym();}
+  else if(g==='wsave'){gSaveDraft();}
+  else if(g==='wdel'){if(!confirm(`Delete the workout “${gDraft.name}”? Your exercises and sets stay.`))return;
+    try{await api('DELETE','/api/gym/workouts/'+gDraft.id);gDraft=null;await gLoad();go('gym');}catch(err){if(!err.signedOut)alert(err.message);}}
+  else if(g==='sdel'){if(!confirm('Delete this set?'))return;const id=+b.dataset.id,ex=+b.dataset.e;
+    try{await api('DELETE','/api/gym/sets/'+id);delete GSETS[ex];gChanged();await gLoad();go('gym/e/'+ex);}catch(err){if(!err.signedOut)alert(err.message);}}
+  else if(g==='exdel'){const id=+gArgs[1],ex=exById(id);if(!ex||!confirm(`Delete ${ex.name} and all ${ex.sets} of its sets? This can’t be undone.`))return;
+    try{await api('DELETE','/api/gym/exercises/'+id);delete GSETS[id];gChanged();await gLoad();go('gym/x');}catch(err){if(!err.signedOut)alert(err.message);}}
+  else if(g==='aiadd'){gAiAdd();}
+  else if(g==='aidrop'){gAi=null;gMsg='';renderGym();}
+});
+document.addEventListener('input',e=>{
+  const el=e.target;if(view!=='gym')return;
+  if(el.dataset.g==='wf'&&gDraft)gDraft[el.dataset.k]=el.value;
+  else if(el.dataset.g==='wt'&&gDraft)gDraft.items[+el.dataset.i].target=el.value;
+  else if(gQuick&&el.id==='g-reps')gQuick.reps=+el.value;
+  else if(gQuick&&el.id==='g-kg')gQuick.kg=+el.value;
+  else if(gQuick&&el.id==='g-note')gQuick.note=el.value;
+  else if(el.id==='g-find'){const t=el.value.trim().toLowerCase();document.querySelectorAll('#g-exlist .grow[data-n]').forEach(r=>{r.hidden=!!t&&!r.dataset.n.includes(t);});}
+});
+document.addEventListener('change',e=>{
+  const el=e.target;if(view!=='gym')return;
+  if(el.id==='g-aifile'){const f=el.files&&el.files[0];el.value='';if(f&&!gAiBusy)gAiRead(f);}
+  else if(el.dataset.g==='aion'&&gAi){gAi.workouts[+el.dataset.i].on=el.checked;renderGym();}
+});
+document.addEventListener('submit',async e=>{
+  const f=e.target;if(view!=='gym'||!f.id||!f.id.startsWith('g-'))return;
+  e.preventDefault();
+  if(f.id==='g-quick')gLogSet();
+  else if(f.id==='g-addex'){const v=$('#g-exname').value.replace(/\s+/g,' ').trim();if(!v)return;
+    const ex=GY.exercises.find(x=>x.name.toLowerCase()===v.toLowerCase());
+    gDraft.items.push(ex?{e:ex.id,target:''}:{e:null,name:v,target:''});await renderGym();$('#g-exname').focus();}
+  else if(f.id==='g-newex'){const v=$('#g-find').value.replace(/\s+/g,' ').trim();if(!v)return;
+    try{const ex=await api('POST','/api/gym/exercises',{name:v});await gLoad();go('gym/e/'+ex.id);}catch(err){if(!err.signedOut)alert(err.message);}}
+  else if(f.id==='g-exform'){const id=+gArgs[1];
+    try{await api('PUT','/api/gym/exercises/'+id,{name:$('#g-exn').value,notes:$('#g-exnotes').value});await gLoad();renderGym();}
+    catch(err){if(!err.signedOut)$('#g-exmsg').textContent=err.message;}}
+  else if(f.id==='g-setform'){const id=+f.dataset.id, t=$('#g-st').value;
+    const body={exercise:+$('#g-se').value,reps:+$('#g-sr').value,kg:+$('#g-sk').value,note:$('#g-sn').value,at:`${$('#g-sd').value}T${t.length===5?t+':00':t}`};
+    try{const old=Object.keys(GSETS).find(k=>GSETS[k].some(s=>s.id===id));const s=await api('PUT','/api/gym/sets/'+id,body);
+      if(old)delete GSETS[old];delete GSETS[s.e];gChanged();await gLoad();go('gym/e/'+s.e);}
+    catch(err){if(!err.signedOut)$('#g-smsg').textContent=err.message;}}
+});

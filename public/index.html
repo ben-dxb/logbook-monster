@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Meal Swap Calculator</title>
+<title>Logbook Monster</title>
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,400..800&display=swap">
@@ -13,11 +13,12 @@
 <body>
 <div class="wrap">
   <header class="top">
-    <h1>Meal Swap</h1>
+    <h1>Logbook Monster</h1>
     <nav class="views" aria-label="Views">
       <a href="#day" data-view="day">Day</a>
       <a href="#history" data-view="history">History</a>
       <a href="#weight" data-view="weight">Weight</a>
+      <a href="#gym" data-view="gym">Gym</a>
     </nav>
     <details class="acct" id="acct">
       <summary><span id="who">Account</span></summary>
@@ -154,6 +155,16 @@
     </section>
   </section>
 
+  <!-- ===================== GYM ===================== -->
+  <section id="v-gym" class="view" hidden>
+    <nav class="seg gtabs" id="g-tabs" aria-label="Gym">
+      <a href="#gym" data-g="">Workouts</a>
+      <a href="#gym/sessions" data-g="sessions">Sessions</a>
+      <a href="#gym/x" data-g="x">Exercises</a>
+    </nav>
+    <div id="g-body" class="gbody"></div>
+  </section>
+
   <!-- ===================== ADMIN ===================== -->
   <section id="v-admin" class="view" hidden>
     <div class="adbar" role="status">
@@ -234,11 +245,11 @@
     </section>
     <section class="panel" aria-labelledby="ad-eh">
       <h2 id="ad-eh">Email</h2>
-      <p>The email account Meal Swap sends invites and notifications from. The password is kept on the server and never shown again.</p>
+      <p>The email account Logbook Monster sends invites and notifications from. The password is kept on the server and never shown again.</p>
       <div id="ad-mailstate" class="status"></div>
       <form id="ad-mailform" class="admail">
         <label class="f adwide"><span class="lbl">Send from (email address)</span><input id="ad-m-from" type="email" autocomplete="off" spellcheck="false" placeholder="you@gmail.com"></label>
-        <label class="f"><span class="lbl">Sender name</span><input id="ad-m-name" autocomplete="off" maxlength="100" placeholder="Meal Swap"></label>
+        <label class="f"><span class="lbl">Sender name</span><input id="ad-m-name" autocomplete="off" maxlength="100" placeholder="Logbook Monster"></label>
         <label class="f"><span class="lbl">Provider</span><select id="ad-m-prov"><option value="gmail">Gmail</option><option value="outlook">Outlook / Microsoft 365</option><option value="other">Other (SMTP)</option></select></label>
         <label class="f"><span class="lbl">SMTP server</span><input id="ad-m-host" autocomplete="off" spellcheck="false" placeholder="smtp.gmail.com"></label>
         <label class="f"><span class="lbl">Port</span><input id="ad-m-port" type="number" inputmode="numeric" min="1" max="65535" placeholder="465"></label>
@@ -263,5 +274,6 @@
 <script src="/engine.js"></script>
 <script src="/app.js"></script>
 <script src="/admin.js"></script>
+<script src="/gym.js"></script>
 </body>
 </html>
