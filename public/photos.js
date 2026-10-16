@@ -4,14 +4,19 @@
    #photos (the catalog, newest day first: filter by pose or by bodyweight, jump to a date, pick two to compare),
    #photos/12 (one photo: view, change, delete), #photos/compare/12/34 (two photos side by side, older on the left).
    Pictures are shrunk to a JPEG in the browser before upload (which also drops the EXIF data, location
-   included) and a small thumbnail is sent after it for the catalog. Uses helpers from app.js and gym.js (gHead, gEmpty). */
+   included) and a small thumbnail is sent after it for the catalog. Many can go at once (up to P_MAX_TOTAL picked),
+   each dated from its own data (ExifDate, exifdate.js) unless the person turns that off; the date picked is used for
+   any without one. Uses helpers from app.js and gym.js (gHead, gEmpty). */
 
 let PHOTOS=null, PPOSES=['front','side','back','other'], PWT={};
 let pPose='all', pDate=todayStr(), pUpPose='front', pMsg='', pTok=0, pBusy=false;
 let pSel=false, pPick=[];                          /* picking photos to compare, and the ones picked (up to 2) */
 let pAi=false, pAiBusy=false;                     /* AI set up (an admin's OpenRouter key), and a "Tag with AI" run going */
+let pUseExif=true;                                /* date each photo from its own data (the date picked for any without one) */
 let pNear=false, pNearKg='', pTol=1;              /* only days when you weighed about the same: around pNearKg (blank = your latest weigh-in), ± pTol kg */
 const P_MAX=2000, P_THUMB=480;                     /* longest side in pixels: the photo, the thumbnail */
+const P_MAX_TOTAL=5*1024**3, P_MAX_PHOTOS=3000;     /* most picked in one go (the originals; they're shrunk before upload), most an account keeps */
+const P_PARALLEL=3;                                /* photos shrunk and uploaded at a time */
 const P_NAME={front:'Front',side:'Side',back:'Back',other:'Other'}, P_TOLS=[0.5,1,2,3];
 const P_NEAR_DAYS=3;                               /* a day without a weigh-in takes the closest one this many days either side */
 
@@ -93,12 +98,14 @@ function pCatalogPage(){
   return `<div class="gbar"><h2>Progress photos</h2></div>
     <form id="p-form" class="panel sform">
       <label class="f swide"><span class="lbl">Photos</span><input id="p-file" type="file" accept="image/*" multiple required></label>
-      <label class="f"><span class="lbl">Date taken</span><input id="p-date" type="date" required value="${pDate}" max="${todayStr()}"></label>
+      <label class="f"><span class="lbl">${pUseExif?'Date if a photo has none':'Date taken'}</span><input id="p-date" type="date" required value="${pDate}" max="${todayStr()}"></label>
       <label class="f"><span class="lbl">Pose</span><select id="p-pose">${pPoseOptions(pAi||pUpPose!=='ai'?pUpPose:'front',true)}</select></label>
+      <label class="tog swide"><input type="checkbox" id="p-exif"${pUseExif?' checked':''}> Date each photo from its own data (when it was taken)</label>
       <label class="f swide"><span class="lbl">Note (optional)</span><input id="p-note" maxlength="200" placeholder="e.g. morning, fasted, after the cut"></label>
+      <p id="p-pick" class="sub swide" role="status"></p>
       <p id="p-err" class="aderr swide" role="alert" hidden></p>
       <div class="factions swide"><button class="btn" type="submit">Upload</button><span id="p-state" class="sub" role="status"></span></div>
-      <p class="sub swide">Only you can see your photos. They’re made smaller before upload and the camera’s details, location included, are left out.${pAi?' With “Let AI tell”, the small version of each photo goes to the AI service set up for this app to pick the pose.':''}</p>
+      <p class="sub swide">Pick as many as you like, up to 5 GB at a time. Only you can see your photos. They’re made smaller before upload and the camera’s details, location included, are left out.${pAi?' With “Let AI tell”, the small version of each photo goes to the AI service set up for this app to pick the pose.':''}</p>
     </form>
     <div class="ptools">
       <div class="seg" role="group" aria-label="Pose">${seg}</div>
@@ -193,38 +200,95 @@ async function pSend(method,url,blob){
   if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);
   return j;
 }
+const pGB=n=>n>=1024**3?(n/1024**3).toFixed(1)+' GB':Math.max(0.1,n/1024**2).toFixed(1)+' MB';
+/* what's wrong with the files picked, or '' */
+function pTooMany(files){
+  const size=files.reduce((t,f)=>t+f.size,0), room=P_MAX_PHOTOS-PHOTOS.length;
+  if(size>P_MAX_TOTAL)return `That’s ${pGB(size)} of photos – pick up to 5 GB at a time.`;
+  if(files.length>room)return `You can keep ${P_MAX_PHOTOS} photos and have room for ${room} more – pick fewer.`;
+  return '';
+}
+/* each file's date: its own (when asked for and it has one that isn't in the future), else the date picked */
+async function pDates(files,fallback,useExif){
+  const today=todayStr();
+  return Promise.all(files.map(async f=>{
+    const d=useExif?await ExifDate.ofFile(f):null;
+    return d&&d<=today?{date:d,own:true}:{date:fallback,own:false};
+  }));
+}
+/* on picking files: how many, how big, how many have their own date */
+let pPickTok=0;
+async function pPicked(){
+  const el=$('#p-pick'), inp=$('#p-file');if(!el||!inp)return;
+  const files=[...inp.files], tok=++pPickTok;
+  if(!files.length){el.textContent='';return;}
+  const size=files.reduce((t,f)=>t+f.size,0), bad=pTooMany(files);
+  let txt=`${files.length} photo${files.length===1?'':'s'}, ${pGB(size)}.`;
+  if(bad){el.textContent=txt+' '+bad;return;}
+  if(pUseExif){
+    el.textContent=txt+' Reading their dates…';
+    const ds=await pDates(files,'',true);if(tok!==pPickTok)return;
+    const own=ds.filter(d=>d.own), days=new Set(own.map(d=>d.date)).size, none=files.length-own.length;
+    if(own.length){const sorted=own.map(d=>d.date).sort();
+      txt+=` ${own.length===files.length?(files.length===1?'Taken':'All taken'):own.length+' taken'} ${days===1?'on '+fmtShort(sorted[0]):`over ${days} days, ${fmtShort(sorted[0])} to ${fmtShort(sorted[sorted.length-1])}`}.`;}
+    if(none)txt+=` ${none===files.length?(none===1?'It has':'None have'):none+(none===1?' has':' have')} no date of ${none===1&&files.length===1?'its':'their'} own – ${none===1?'it':'they'}’ll get the date picked.`;
+  }
+  el.textContent=txt;
+}
 async function pUpload(form){
   if(pBusy)return;
   const err=$('#p-err'), st=$('#p-state'), btn=form.querySelector('button[type=submit]');
   const files=[...$('#p-file').files], date=$('#p-date').value, pick=$('#p-pose').value, note=$('#p-note').value.trim();
-  const byAi=pick==='ai', pose=byAi?'other':pick;
+  const byAi=pick==='ai', pose=byAi?'other':pick, useExif=pUseExif;
   err.hidden=true;
   if(!files.length){err.textContent='Pick one or more photos.';err.hidden=false;return;}
-  if(!isDate(date)){err.textContent='Pick the date the photos were taken.';err.hidden=false;return;}
+  if(!isDate(date)){err.textContent=useExif?'Pick a date for any photos without one of their own.':'Pick the date the photos were taken.';err.hidden=false;return;}
+  const bad=pTooMany(files);if(bad){err.textContent=bad;err.hidden=false;return;}
   pBusy=true;btn.disabled=true;pDate=date;pUpPose=pick;
-  let done=0, aiMiss=0;
+  const n=files.length, many=n>1, fails=[], dates=new Set();
+  let done=0, started=0, aiMiss=0, own=0, stop=null;
+  const say=t=>{st.textContent=t;};
   try{
-    for(const f of files){
-      st.textContent=files.length>1?`Uploading ${done+1} of ${files.length}…`:'Uploading…';
-      const big=await pShrink(f,P_MAX,0.86), small=await pShrink(f,P_THUMB,0.8);
-      let p=await pSend('POST',`/api/photos?${new URLSearchParams({date,pose,note})}`,big);
-      try{p=await pSend('PUT',`/api/photos/${p.id}/thumb`,small);}catch(e){if(e.signedOut)throw e;}   /* the catalog falls back to the full picture */
-      PHOTOS.push(p);done++;
-      if(byAi){
-        st.textContent=files.length>1?`Asking the AI about ${done} of ${files.length}…`:'Asking the AI which pose it is…';
-        try{const a=await pAskAi(p.id,true);PHOTOS[PHOTOS.length-1]=a.photo;}catch(e){if(e.signedOut)throw e;aiMiss++;}   /* stays "other" */
+    say(useExif?'Reading the photos’ dates…':'Uploading…');
+    const when=await pDates(files,date,useExif);
+    /* a few at a time; one bad picture is skipped, but signing out, a lost server or a full account stops the lot */
+    const one=async i=>{
+      const f=files[i], d=when[i].date;
+      try{
+        const big=await pShrink(f,P_MAX,0.86), small=await pShrink(f,P_THUMB,0.8);
+        if(stop)return;
+        let p=await pSend('POST',`/api/photos?${new URLSearchParams({date:d,pose,note})}`,big);
+        try{p=await pSend('PUT',`/api/photos/${p.id}/thumb`,small);}catch(e){if(e.signedOut)throw e;}   /* the catalog falls back to the full picture */
+        PHOTOS.push(p);done++;dates.add(d);if(when[i].own)own++;
+        if(byAi){
+          try{const a=await pAskAi(p.id,true);const k=PHOTOS.findIndex(x=>x.id===p.id);if(k>=0)PHOTOS[k]=a.photo;}
+          catch(e){if(e.signedOut)throw e;aiMiss++;}   /* stays "other" */
+        }
+      }catch(e){
+        if(e.signedOut||/reach the server|most photos/.test(e.message))stop=stop||e;
+        else fails.push(`${f.name}: ${e.message}`);
       }
+      if(many&&!stop)say(`${byAi?'Uploading and tagging':'Uploading'} ${done+fails.length} of ${n} done…`);
+    };
+    const worker=async()=>{while(!stop&&started<n)await one(started++);};
+    await Promise.all(Array.from({length:Math.min(P_PARALLEL,n)},worker));
+    if(stop&&stop.signedOut)return;
+    const ds=[...dates].sort();
+    pMsg=!done?'':`Added ${done} photo${done===1?'':'s'} `+(ds.length===1?`for ${fmtLong(ds[0])}`:`over ${ds.length} days, ${fmtShort(ds[0])} to ${fmtShort(ds[ds.length-1])}`)+
+      (useExif&&many&&own?` (${own===done?'all':own} dated from the photo${own===1?'':'s'}${own<done?`, ${done-own} on ${fmtShort(date)}`:''})`:'')+'.'+
+      (aiMiss?` The AI couldn’t tag ${aiMiss===done?(done===1?'it':'them'):aiMiss} – ${aiMiss===1?'it’s':'they’re'} under Other; change the pose on the photo.`:'');
+    if(stop||fails.length){
+      err.textContent=(done?`Added ${done} of ${n}. `:'')+(stop?stop.message+' ':'')+(fails.length?`${fails.length} couldn’t be added – ${fails.slice(0,3).join('; ')}${fails.length>3?'; …':''}`:'');
+      err.hidden=false;
     }
-    pMsg=`Added ${done} photo${done===1?'':'s'} for ${fmtLong(date)}.`+(aiMiss?` The AI couldn’t tag ${aiMiss===done?(done===1?'it':'them'):aiMiss} – ${aiMiss===1?'it’s':'they’re'} under Other; change the pose on the photo.`:'');
   }catch(e){
     if(e.signedOut)return;
-    err.textContent=(done?`Added ${done} of ${files.length}. `:'')+e.message;err.hidden=false;
+    err.textContent=(done?`Added ${done} of ${n}. `:'')+e.message;err.hidden=false;
   }finally{pBusy=false;}
   pSort();
   if(view!=='photos'||location.hash.replace(/^#/,'').split('/')[1])return;
-  if(err.hidden){form.reset();$('#p-date').value=pDate;$('#p-pose').value=pUpPose;st.textContent='';}
-  else st.textContent='';
-  btn.disabled=false;renderPhotoList();
+  if(err.hidden){form.reset();$('#p-date').value=pDate;$('#p-pose').value=pUpPose;$('#p-exif').checked=pUseExif;$('#p-pick').textContent='';}
+  st.textContent='';btn.disabled=false;renderPhotoList();
 }
 
 /* ---------- one photo ---------- */
@@ -364,6 +428,8 @@ document.addEventListener('change',e=>{
   const id=e.target.id;
   if(id==='p-ca'||id==='p-cb'){pMsg='';go(`photos/compare/${e.target.value}/${e.target.dataset.other}`);}
   else if(id==='p-jump')pJump(e.target.value);
+  else if(id==='p-file')pPicked();
+  else if(id==='p-exif'){pUseExif=e.target.checked;const l=$('#p-date').closest('label').querySelector('.lbl');l.textContent=pUseExif?'Date if a photo has none':'Date taken';pPicked();}
   else if(id==='p-near'){pNear=e.target.checked;pMsg='';renderPhotoList();}
   else if(id==='p-tol'){pTol=+e.target.value;if(pNear)renderPhotoList();}
 });

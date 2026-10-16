@@ -261,8 +261,17 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
           { name: 'side.png', mimeType: 'image/png', buffer: await pic(600, 800, '#3c3') }]);
         await pg.fill('#p-date', '2026-09-01'); await pg.fill('#p-note', 'smoke start'); await pg.click('#p-form button[type=submit]');
         await pg.waitForFunction(() => /Added 2 photos/.test(document.querySelector('#p-list').textContent), null, { timeout: 10000 });
-        await pg.setInputFiles('#p-file', { name: 'later.png', mimeType: 'image/png', buffer: await pic(600, 800, '#33c') });
-        await pg.fill('#p-date', '2026-10-01'); await pg.click('#p-form button[type=submit]');
+        /* a camera JPEG: its EXIF DateTimeOriginal (1 October) beats the date in the form, which is only for photos without one */
+        const jpg = Buffer.from(await pg.evaluate(() => { const c = document.createElement('canvas'); c.width = 600; c.height = 800;
+          const g = c.getContext('2d'); g.fillStyle = '#33c'; g.fillRect(0, 0, 600, 800); return c.toDataURL('image/jpeg').split(',')[1]; }), 'base64');
+        const when = Buffer.from('2026:10:01 07:45:00\0', 'latin1');                 /* TIFF, little-endian: IFD0 → Exif IFD → DateTimeOriginal */
+        const tiff = Buffer.concat([Buffer.from([0x49, 0x49, 42, 0, 8, 0, 0, 0, 1, 0, 0x69, 0x87, 4, 0, 1, 0, 0, 0, 26, 0, 0, 0, 0, 0, 0, 0,
+          1, 0, 0x03, 0x90, 2, 0, when.length, 0, 0, 0, 44, 0, 0, 0, 0, 0, 0, 0]), when]);
+        const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, 0, tiff.length + 8]), Buffer.from('Exif\0\0', 'latin1'), tiff]);
+        await pg.uncheck('#p-exif'); await pg.check('#p-exif');
+        await pg.setInputFiles('#p-file', { name: 'later.jpg', mimeType: 'image/jpeg', buffer: Buffer.concat([jpg.subarray(0, 2), app1, jpg.subarray(2)]) });
+        await pg.waitForFunction(() => /Taken on (1 Oct|Oct 1)\b/.test(document.querySelector('#p-pick').textContent), null, { timeout: 5000 });
+        await pg.fill('#p-date', '2026-09-20'); await pg.click('#p-form button[type=submit]');
         await pg.waitForFunction(() => /Added 1 photo /.test(document.querySelector('#p-list').textContent), null, { timeout: 10000 });
         const big = await pg.evaluate(async () => (await api('GET', '/api/photos')).photos.find(p => p.note === 'smoke start'));
         expect(big && big.tv && big.size < 1500000, 'uploaded photo should be shrunk and have a thumbnail');
