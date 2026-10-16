@@ -45,6 +45,10 @@
   `data-adtab` per super admin tab. AI settings (OpenRouter key, default model and a model per task – `TASKS` in `server/ai.js`:
   plan, workout, supps, food, pose, exercise, summary; pass `{ task }` to `ai.ask`/`ai.askText`) are super admin only. App-wide switches (`OPTIONS` in `server/api.js`, stored in `app_config` 'options', sent in `/api/me`;
   `planFiles` shows the CSV / JSON plan upload and download buttons on Account admin) are set on the super admin Options tab via `PUT /api/admin/options`.
+- `public/dash.js` / `server/checklist.js` – the Dashboard (`#dash`, the landing page; `#dash/<date>` for one of the last 7 days): the daily checklist and a card per module
+  (food today vs targets, weight, gym, supplement regime, latest photo). Each account's checklist items (`{id, label, show, auto}`, `/api/checklist`; none stored = `DEFAULTS`)
+  are edited on Account admin › Daily checklist; `show` is `all`, `training` (day template `T` or a name with "train" – `dIsTraining`; every day while there's no plan) or `tpl:<id>`;
+  `auto` (`weight`/`supps`/`gym`) counts an item done on a day that has one logged. Ticks are per day (`PUT /api/checklist/days/<date>`).
 - `public/gym.js` – the Gym view (workouts, exercise sets, sessions, AI import preview). Exercises carry body parts (`exercises.parts`, ids from `PARTS` in `server/gym.js`, main mover first, sent as `parts` in `GET /api/gym`):
   ticked in the exercise's settings, set by `POST /api/gym/exercises/ai-parts` ("Tag … with AI", 40 ids a call) or by the AI workout import for exercises it creates. The workout builder's picker (`gPickList`) and My exercises filter by them (`gPick.part`).
 - `server/foods.js` / `public/foods.js` – the food library: meals and ingredients (`kind`) people enter (per 100 g/ml
