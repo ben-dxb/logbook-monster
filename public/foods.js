@@ -10,8 +10,9 @@
    #foods, #foods/new, #foods/12 (edit one of yours). Uses helpers and LIB from app.js. */
 
 const F_KEY='lm.foodFilters';
-const fF={kind:'all',who:'all',order:'name',tags:[]};      /* filters, remembered per browser */
+const fF={kind:'all',who:'all',order:'name',tags:[],group:''};      /* filters, remembered per browser */
 try{const s=JSON.parse(localStorage.getItem(F_KEY)||'null');if(s&&typeof s==='object')Object.assign(fF,s);if(!Array.isArray(fF.tags))fF.tags=[];}catch{}
+if(!FOOD_GROUPS.includes(fF.group))fF.group='';
 const fKeep=()=>{try{localStorage.setItem(F_KEY,JSON.stringify(fF));}catch{}};
 let fQuery='', fAdding=null, fMsg='', fTok=0, fAiOn=false, fEdit=null;
 const fOpen=new Set();                                     /* foods whose AI source is showing */
@@ -26,7 +27,7 @@ function fPlanFoods(){
   const out=[], used=new Set(), meals=new Map();
   const ing=(id)=>{const F=FOODS[id];if(!F||isLib(id)||used.has(id))return;used.add(id);
     out.push({id:'plan:f:'+id,fid:id,plan:true,mine:false,public:false,ai:null,by:null,kind:'ingredient',
-      name:F.n,unit:F.unit==='ml'?'ml':'g',k:fRound(F.k),p:fRound(F.p),c:fRound(F.c),f:fRound(F.f),
+      name:F.n,unit:F.unit==='ml'?'ml':'g',group:SWAP_LISTS.x.includes(id)?'Fats':guessGroup(F.n),k:fRound(F.k),p:fRound(F.p),c:fRound(F.c),f:fRound(F.f),
       recipe:id==='pudding'?'Values from your rice pudding batch on the Food Tracker page.':''});};
   /* every meal of every day of the week, with both built-in breakfasts and the Saturday pie */
   for(let d=0;d<7;d++){
@@ -116,24 +117,27 @@ async function renderFoods(args){
 const TAGS=[['hp','High protein'],['lc','Low calorie'],['recipe','Has recipe'],['ai','AI estimates']];
 const ORDERS=[['name','A–Z'],['kcal','Fewest calories'],['protein','Most protein'],['ratio','Protein per calorie']];
 const fRatio=f=>f.k>0?f.p*4/f.k:f.p>0?1:0;
+/* a food's group: starter and plan foods carry one, other ingredients are guessed from the name; meals have none */
+const fGroup=f=>f.kind==='meal'?'':f.group!=null?f.group:guessGroup(f.name);
 const fTest={
   hp:f=>fRatio(f)>=0.3,                                    /* 30 % or more of the calories from protein */
   lc:f=>f.unit==='each'?f.k<=400:f.k<=100,                 /* a portion up to 400 kcal, or up to 100 kcal per 100 g/ml */
   recipe:f=>!!f.recipe,
   ai:f=>!!f.ai,
 };
-function fMatch(f,skipKind){
+function fMatch(f,skipKind,skipGroup){
   const q=fQuery.trim().toLowerCase();
   return (skipKind||fF.kind==='all'||f.kind===fF.kind)
     &&(fF.who==='all'||(fF.who==='plan'?f.plan:fF.who==='starter'?f.std:fF.who==='mine'?f.mine:!f.mine&&!f.plan&&!f.std))
     &&fF.tags.every(t=>!fTest[t]||fTest[t](f))
+    &&(skipGroup||!fF.group||fGroup(f)===fF.group)
     &&(!q||f.name.toLowerCase().includes(q)||f.recipe.toLowerCase().includes(q)||(!!f.by&&f.by.toLowerCase().includes(q)));
 }
 function fOrdered(list){
   const by={kcal:(a,b)=>a.k-b.k,protein:(a,b)=>b.p-a.p,ratio:(a,b)=>fRatio(b)-fRatio(a)}[fF.order];
   return list.slice().sort((a,b)=>(by?by(a,b):0)||a.name.localeCompare(b.name,undefined,{sensitivity:'base'}));
 }
-const fBusy=()=>fF.who!=='all'||fF.tags.length||fQuery.trim()||fF.kind!=='all';
+const fBusy=()=>fF.who!=='all'||fF.tags.length||fF.group||fQuery.trim()||fF.kind!=='all';
 
 /* ---------- the list ---------- */
 function fListPage(){
@@ -148,6 +152,7 @@ function fListPage(){
       <label class="fsel"><span class="lbl">Sort</span><select id="f-order">${ord}</select></label>
       <div class="fsel"><span class="lbl">Weights</span><div class="seg" role="group" aria-label="Show weights" id="f-wt">${fWtSeg(fF.wt,'wtall','')}</div></div></div>
     <div class="seg ftags" role="group" aria-label="Filters">${tags}</div>
+    <div class="seg ftags fgroups" id="f-groups" role="group" aria-label="Food group"></div>
     <div class="fcount"><span id="f-count" role="status"></span><button type="button" class="ghost" data-fa="clear" id="f-clear">Clear filters</button></div>
     <div id="f-list" class="flist"></div>`;
 }
@@ -158,12 +163,16 @@ function renderFoodList(){
   const n={all:base.length,meal:base.filter(f=>f.kind==='meal').length,ingredient:base.filter(f=>f.kind!=='meal').length};
   $('#f-kinds').innerHTML=[['all','All'],['meal','Meals'],['ingredient','Ingredients']]
     .map(([v,l])=>`<button type="button" data-fa="kind" data-v="${v}" aria-pressed="${fF.kind===v}">${l} <small>${n[v]}</small></button>`).join('');
+  /* the group chips count what the other filters leave too; tapping the one picked shows every group again */
+  const inGroups=all.filter(f=>fMatch(f,false,true));
+  $('#f-groups').innerHTML=FOOD_GROUPS.map(g=>[g,inGroups.filter(f=>fGroup(f)===g).length]).filter(([g,c])=>c||fF.group===g)
+    .map(([g,c])=>`<button type="button" data-fa="group" data-v="${esc(g)}" aria-pressed="${fF.group===g}">${esc(g)} <small>${c}</small></button>`).join('');
   const list=fOrdered(base.filter(f=>fF.kind==='all'||f.kind===fF.kind));
   $('#f-count').textContent=all.length?`${list.length} of ${all.length} food${all.length===1?'':'s'}`:'';
   $('#f-clear').hidden=!fBusy();
   let h=fMsg?`<p class="note fmsg" role="status">${esc(fMsg)}</p>`:'';
   if(!all.length)h+=gEmpty('Nothing here yet. Tap “New food” to add a meal or an ingredient, or tick “Save to my food library” when you add something off plan on the Food Tracker page.');
-  else if(!list.length)h+=gEmpty(fF.who==='shared'&&!fQuery.trim()&&!fF.tags.length?'Nobody has shared a food like that yet.':'No foods match. Try fewer filters.');
+  else if(!list.length)h+=gEmpty(fF.who==='shared'&&!fQuery.trim()&&!fF.tags.length&&!fF.group?'Nobody has shared a food like that yet.':'No foods match. Try fewer filters.');
   /* A–Z gets letter headings once the list is long enough to scroll */
   let last='';
   for(const f of list){
@@ -305,7 +314,8 @@ document.addEventListener('click',e=>{
   fMsg='';
   if(a==='kind'){fF.kind=b.dataset.v;fKeep();renderFoodList();}
   else if(a==='tag'){const t=b.dataset.v;fF.tags=fF.tags.includes(t)?fF.tags.filter(x=>x!==t):[...fF.tags,t];fKeep();b.setAttribute('aria-pressed',String(fF.tags.includes(t)));renderFoodList();}
-  else if(a==='clear'){Object.assign(fF,{kind:'all',who:'all',tags:[]});fQuery='';fKeep();$('#f-q').value='';$('#f-who').value='all';
+  else if(a==='group'){fF.group=fF.group===b.dataset.v?'':b.dataset.v;fKeep();renderFoodList();const nb=document.querySelector(`#f-groups [data-v="${CSS.escape(b.dataset.v)}"]`);if(nb)nb.focus();}
+  else if(a==='clear'){Object.assign(fF,{kind:'all',who:'all',tags:[],group:''});fQuery='';fKeep();$('#f-q').value='';$('#f-who').value='all';
     document.querySelectorAll('[data-fa=tag]').forEach(x=>x.setAttribute('aria-pressed','false'));renderFoodList();}
   else if(a==='wtall'){fF.wt=b.dataset.v;fWt.clear();fKeep();$('#f-wt').innerHTML=fWtSeg(fF.wt,'wtall','');renderFoodList();}
   else if(a==='wt'){fWt.set(b.dataset.id,b.dataset.v);if(fAdding&&fAdding.id===b.dataset.id)fAdding=null;renderFoodList();

@@ -7,8 +7,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const ctx = {};
-vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/starter.js'), 'utf8') + ';this.STARTER = STARTER;', ctx);
-const STARTER = ctx.STARTER;
+vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/starter.js'), 'utf8') + ';this.STARTER = STARTER;this.FOOD_GROUPS = FOOD_GROUPS;this.guessGroup = guessGroup;', ctx);
+const { STARTER, FOOD_GROUPS, guessGroup } = ctx;
 
 test('starter foods are complete and add up', () => {
   assert.ok(STARTER.length >= 25);
@@ -25,4 +25,20 @@ test('starter foods are complete and add up', () => {
     if (f.s) assert.ok(f.y >= 50 && f.y <= 400, `${f.id}: a raw food needs a cooked yield`);
     else assert.strictEqual(f.y, undefined, `${f.id}: no yield without raw`);
   }
+});
+
+/* The library's group filter: starter foods use their own group, other ingredients a guess from the name. */
+test('food groups are guessed from names', () => {
+  for (const f of STARTER) {
+    assert.ok(FOOD_GROUPS.includes(f.g), `${f.id}: unknown group ${f.g}`);
+    assert.strictEqual(guessGroup(f.n), f.g, `${f.n} should be guessed as ${f.g}`);
+  }
+  const want = {
+    'Health Road chicken breast': 'Meat and fish', 'Chicken livers (raw)': 'Meat and fish', 'Egg (50g each)': 'Eggs and dairy',
+    'Amix whey isolate': 'Eggs and dairy', 'Alpro unsweetened almond': 'Eggs and dairy', 'Cream of rice (dry)': 'Grains and potatoes',
+    'Boiled potatoes (Health Road)': 'Grains and potatoes', 'Coco Pops': 'Grains and potatoes', 'Rice pudding (batch)': 'Grains and potatoes',
+    'Passata': 'Fruit and veg', 'Tomato paste': 'Fruit and veg', 'Dates': 'Fruit and veg', 'Lurpak Lighter': 'Fats',
+    'Strawberry jam': '', 'Biscoff spread': '', 'Turkey mince, 7% fat': 'Meat and fish', 'Mixed nuts': 'Fats', 'Chickpeas': 'Plant protein',
+  };
+  for (const [n, g] of Object.entries(want)) assert.strictEqual(guessGroup(n), g, n);
 });

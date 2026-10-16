@@ -1,6 +1,6 @@
 'use strict';
 /* Browser smoke test: starts a throwaway server, signs in, weighs a meal-prep pack, edits and saves a day, logs a weight,
-   opens History and Weight, logs gym sets, adds a shared food to the library and to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, uploads a plan and invites someone on the Admin page, at desktop and phone widths. Fails on any page error.
+   opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, uploads a plan and invites someone on the Admin page, at desktop and phone widths. Fails on any page error.
    Needs Playwright (npm i -g playwright, or available in the environment); skips if missing. */
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -187,6 +187,13 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       expect(/\(cooked\)/.test(await pg.textContent('#f-list .fcard[data-id="std:white-rice"] h3')), 'whole list should switch to cooked');
       const wscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(wscroll <= 1, `horizontal overflow of ${wscroll}px on the starter foods at ${w}px wide`);
+      /* food groups: Fats keeps only the fats; tapping it again shows every group */
+      await pg.click('#f-groups [data-v=Fats]');
+      await pg.waitForFunction(() => document.querySelectorAll('#f-list .fcard').length === 4);
+      expect(/Olive oil/.test(await pg.textContent('#f-list')) && !/Chicken/.test(await pg.textContent('#f-list')), 'Fats should show only the fats');
+      const fgscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(fgscroll <= 1, `horizontal overflow of ${fgscroll}px on the food groups at ${w}px wide`);
+      await pg.click('#f-groups [data-v=Fats]'); await pg.waitForFunction(() => document.querySelectorAll('#f-list .fcard').length > 20);
       await pg.click('#f-wt [data-v=raw]'); await pg.selectOption('#f-who', 'mine');
       await pg.fill('#f-q', 'oats'); await pg.waitForFunction(() => document.querySelectorAll('#f-list .fcard').length === 1);
       expect(/Shared/.test(await pg.textContent('#f-list .fcard')), 'shared food should be marked Shared');
