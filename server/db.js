@@ -205,4 +205,10 @@ if (!db.prepare('PRAGMA table_info(exercises)').all().some(c => c.name === 'tren
   db.exec('ALTER TABLE exercises ADD COLUMN trend INTEGER NOT NULL DEFAULT 0');
 }
 
+/* Added later: pose_ai = 1 when a photo's pose came from the AI (or was left for it: "Let AI tell" on upload, the
+   AI not answering), so "Tag poses with AI" can leave the poses people set themselves alone. Older photos count as set by hand. */
+if (!db.prepare('PRAGMA table_info(photos)').all().some(c => c.name === 'pose_ai')) {
+  db.exec('ALTER TABLE photos ADD COLUMN pose_ai INTEGER NOT NULL DEFAULT 0');
+}
+
 module.exports = db;

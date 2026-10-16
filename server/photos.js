@@ -14,19 +14,19 @@ const ai = require('./ai');
 
 fs.mkdirSync(config.photoDir, { recursive: true });
 
-const COLS = 'id, date, pose, note, size, created_at AS created, file, thumb';
+const COLS = 'id, date, pose, pose_ai, note, size, created_at AS created, file, thumb';
 const q = {
   list: db.prepare(`SELECT ${COLS} FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date DESC, id DESC`),
   get: db.prepare(`SELECT ${COLS} FROM photos WHERE user_id = ? AND id = ?`),
   files: db.prepare('SELECT file, type, thumb FROM photos WHERE user_id = ? AND id = ?'),
   allFiles: db.prepare('SELECT file, thumb FROM photos WHERE user_id = ?'),
   count: db.prepare('SELECT COUNT(*) AS n FROM photos WHERE user_id = ?'),
-  add: db.prepare('INSERT INTO photos (user_id, date, pose, note, file, type, size) VALUES (?, ?, ?, ?, ?, ?, ?)'),
-  put: db.prepare('UPDATE photos SET date = ?, pose = ?, note = ? WHERE user_id = ? AND id = ?'),
+  add: db.prepare('INSERT INTO photos (user_id, date, pose, pose_ai, note, file, type, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
+  put: db.prepare('UPDATE photos SET date = ?, pose = ?, pose_ai = ?, note = ? WHERE user_id = ? AND id = ?'),
   thumb: db.prepare('UPDATE photos SET thumb = ? WHERE user_id = ? AND id = ?'),
   del: db.prepare('DELETE FROM photos WHERE user_id = ? AND id = ?'),
   delRange: db.prepare('DELETE FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? RETURNING file, thumb'),
-  all: db.prepare('SELECT id, date, pose, note, size, created_at AS created FROM photos WHERE user_id = ? ORDER BY date, id'),
+  all: db.prepare('SELECT id, date, pose, pose_ai, note, size, created_at AS created FROM photos WHERE user_id = ? ORDER BY date, id'),
 };
 
 const MAX_PHOTOS = 3000, MAX_BYTES = 10 * 1024 * 1024, MAX_THUMB = 512 * 1024;
@@ -70,7 +70,8 @@ router.get('/', (req, res) => {
   res.json({ photos: q.list.all(req.user.id, from, to).map(view), poses: POSES, ai: ai.status().configured });
 });
 
-/* POST /api/photos?date=…&pose=…&note=… with the image itself as the body */
+/* POST /api/photos?date=…&pose=…&note=… with the image itself as the body; ai=1 when the AI is to pick the pose
+   (the pose sent is a stand-in until it does, and counts as not set by hand) */
 router.post('/', rawImage(MAX_BYTES), (req, res) => {
   try {
     const m = meta(req.query);
@@ -80,7 +81,7 @@ router.post('/', rawImage(MAX_BYTES), (req, res) => {
     const file = newName(EXT[type]);
     fs.writeFileSync(fileAt(file), req.body, { flag: 'wx' });
     try {
-      const { lastInsertRowid } = q.add.run(req.user.id, m.date, m.pose, m.note, file, type, req.body.length);
+      const { lastInsertRowid } = q.add.run(req.user.id, m.date, m.pose, req.query.ai === '1' ? 1 : 0, m.note, file, type, req.body.length);
       res.json(view(q.get.get(req.user.id, Number(lastInsertRowid))));
     } catch (e) { unlink(file); throw e; }
   } catch (e) { send(res, e); }
@@ -103,9 +104,11 @@ router.put('/:id/thumb', rawImage(MAX_THUMB), (req, res) => {
 router.put('/:id', (req, res) => {
   try {
     const id = idOf(req.params.id);
-    if (!q.get.get(req.user.id, id)) throw fail('No such photo', 404);
+    const old = q.get.get(req.user.id, id);
+    if (!old) throw fail('No such photo', 404);
     const m = meta(req.body);
-    q.put.run(m.date, m.pose, m.note, req.user.id, id);
+    /* a pose the person changes is theirs; keeping the AI's (e.g. only the note changed) leaves it the AI's */
+    q.put.run(m.date, m.pose, m.pose === old.pose ? old.pose_ai : 0, m.note, req.user.id, id);
     res.json(view(q.get.get(req.user.id, id)));
   } catch (e) { send(res, e); }
 });
@@ -131,7 +134,7 @@ router.delete('/:id', (req, res) => {
 
 /* Ask the AI which pose a photo shows. It is sent the thumbnail (the full picture if there is none yet), and
    only when the person asks: on upload with "Let AI tell", "Tag with AI" in the catalog or "Ask AI" on one photo.
-   POST /api/photos/12/ai-pose {save: true} also stores the answer; without it the answer is only returned. */
+   POST /api/photos/12/ai-pose {save: true} also stores the answer (marked as the AI's); without it the answer is only returned. */
 const POSE_PROMPT = `You sort fitness progress photos by pose. Look at the picture and say which way the person's body faces the camera:
 - "front": the chest and face (or front of the body) toward the camera, including front double biceps and front relaxed poses
 - "back": the back toward the camera, including back double biceps and rear relaxed poses
@@ -153,7 +156,7 @@ router.post('/:id/ai-pose', poseLimit, async (req, res) => {
     const pose = POSES.includes(reply && reply.pose) ? reply.pose : 'other';
     const now = q.get.get(req.user.id, id);
     if (!now) throw fail('No such photo', 404);                  /* deleted while the AI was looking */
-    if (req.body && req.body.save === true) q.put.run(now.date, pose, now.note, req.user.id, id);
+    if (req.body && req.body.save === true) q.put.run(now.date, pose, 1, now.note, req.user.id, id);
     res.json({ pose, model, photo: view(q.get.get(req.user.id, id)) });
   } catch (e) { send(res, e); }
 });
@@ -177,7 +180,7 @@ router.get('/:id/thumb', serve('thumb'));
 /* v and tv are a piece of each file's random name: the app puts them in the picture URLs, so a replaced
    thumbnail or a reused id is never served from the browser's cache. */
 function view(r) {
-  return { id: r.id, date: r.date, pose: r.pose, note: r.note, size: r.size, created: r.created,
+  return { id: r.id, date: r.date, pose: r.pose, poseAi: !!r.pose_ai, note: r.note, size: r.size, created: r.created,
     v: r.file.slice(0, 8), tv: r.thumb ? r.thumb.slice(0, 8) : null };
 }
 

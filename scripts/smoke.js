@@ -321,6 +321,21 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.waitForFunction(() => document.querySelectorAll('#p-list .pday').length === 2);
       expect(first === !(await pg.locator('#p-aibtn').count()), '"Tag poses with AI" only once AI is set up');
       if (!first) expect(await pg.locator('#p-pose').inputValue() === 'ai', 'with AI set up, uploads default to "Let AI tell"');
+      if (!first) {
+        /* the photos went in with AI off (no pose picked), so they're left for the AI; only the one whose pose was set by
+           hand above is asked about – "leave it" tags the rest. The faked AI keeps each pose, so later steps see the same photos. */
+        await pg.unroute('**/api/photos/*/ai-pose');
+        await pg.route('**/api/photos/*/ai-pose', async r => {
+          const id = +r.request().url().match(/photos\/(\d+)\/ai-pose/)[1];
+          const ph = await pg.evaluate(id => PHOTOS.find(x => x.id === id), id);
+          await r.fulfill({ json: { pose: ph.pose, model: 'test/vision', photo: { ...ph, poseAi: true } } });
+        });
+        const asked = [], answer = d => { asked.push(d.message()); return asked.length === 1 ? d.dismiss() : d.accept(); };
+        pg.on('dialog', answer); await pg.click('#p-aibtn');
+        await pg.waitForFunction(() => /The AI looked at \d+ photo/.test(document.querySelector('#p-list').textContent), null, { timeout: 5000 });
+        pg.off('dialog', answer);
+        expect(/1 of the \d+ photos shown has a pose you set yourself/.test(asked[0]), `"Tag poses with AI" should ask about the one pose set by hand, asked: ${asked[0]}`);
+      }
       await pg.fill('#p-jump', '2026-09-04'); await pg.waitForSelector('#p-d-2026-09-01.hit');
       /* pick two photos in the catalog and compare them, older on the left */
       await pg.click('#p-selbtn'); await pg.waitForSelector('#p-selbar:not([hidden])');
