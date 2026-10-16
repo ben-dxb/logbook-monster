@@ -73,8 +73,8 @@ test('a day card brings together food, weight, the latest photos, supplements an
   assert.strictEqual((await ann('PUT', '/api/days/2026-09-10', day(2400, 185, 240, 66))).status, 200);
   await ann('PUT', '/api/weights/2026-09-07', { kg: 82 });
   await ann('PUT', '/api/weights/2026-09-08', { kg: 81 });
-  for (const [date, pose] of [['2026-09-01', 'front'], ['2026-09-05', 'front'], ['2026-09-02', 'side'], ['2026-09-20', 'front']]) {
-    assert.strictEqual((await ann('POST', `/api/photos?date=${date}&pose=${pose}`, jpeg, 'image/jpeg')).status, 200);
+  for (const [date, pose, style] of [['2026-09-01', 'front', ''], ['2026-09-05', 'front', 'most_muscular'], ['2026-09-02', 'side', ''], ['2026-09-20', 'front', '']]) {
+    assert.strictEqual((await ann('POST', `/api/photos?date=${date}&pose=${pose}&style=${style}`, jpeg, 'image/jpeg')).status, 200);
   }
   const cre = (await ann('POST', '/api/supps', { name: 'Creatine', amount: 5, unit: 'g' })).body;
   await ann('POST', '/api/supps/log', { date: '2026-09-10', supplement: cre.id, amount: 5, unit: 'g' });
@@ -90,7 +90,7 @@ test('a day card brings together food, weight, the latest photos, supplements an
   assert.strictEqual(c.food.summary.k, 2400);
   assert.strictEqual(c.food.data.meals[0].name, 'Oats');
   assert.deepStrictEqual(c.weight, { kg: 81, date: '2026-09-08', ago: 2, avg7: 81.5 }, 'the last weigh-in before the day, and how long before');
-  assert.deepStrictEqual(c.photos.map(p => [p.pose, p.date, p.ago]), [['front', '2026-09-05', 5], ['side', '2026-09-02', 8]],
+  assert.deepStrictEqual(c.photos.map(p => [p.pose, p.style, p.date, p.ago]), [['front', 'most_muscular', '2026-09-05', 5], ['side', '', '2026-09-02', 8]],
     'the latest photo of each pose up to that day – not the later one');
   assert.ok(c.photos[0].v && !('file' in c.photos[0]), 'photos carry their URL version, never the file name');
   assert.deepStrictEqual(c.supps.taken.map(e => e.name), ['Creatine']);

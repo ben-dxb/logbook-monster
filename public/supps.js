@@ -4,12 +4,15 @@
    supplements plus ones other people have shared.
    #supps, #supps/2026-10-15 (a day's log), #supps/lib, #supps/lib/new, #supps/lib/12 (edit one of yours).
    "Trend" on a supplement follows it (by name) on the Timeline's trend chart.
+   On the Library tab a supplement regime (PDF or photo) can be read with AI into line items, checked and edited,
+   then added to the library – and logged for a day – in one go.
    Uses helpers from app.js and gym.js (gHead, gEmpty). */
 
 let SUPPS=null, SUNITS=['g','mg','mcg','IU','ml','drops','capsules','tablets','softgels','scoops','servings'];
 const SLOG={};                    /* date -> that day's entries */
 let STREND=new Set();             /* names followed on the Timeline chart, lower case */
 let sDate=todayStr(), sPick='', sUnit='mg', sQuery='', sFilter='all', sMsg='', sTok=0;
+let SAI=false, sAi=null, sAiBusy=false, sAiMsg='';   /* AI set up; the regime being checked; reading now; its error */
 
 const sById=id=>SUPPS&&SUPPS.find(s=>s.id===id);
 const sNum=n=>String(Math.round(n*1000)/1000);
@@ -17,7 +20,7 @@ const sNum=n=>String(Math.round(n*1000)/1000);
 const sUnitTxt=(u,n)=>/s$/.test(u)&&+n===1?u.slice(0,-1):u;
 const sDose=(n,u)=>`${sNum(n)} ${sUnitTxt(u,n)}`;
 function sSort(){SUPPS.sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})||a.id-b.id);}
-async function sLoad(){const r=await api('GET','/api/supps');SUPPS=(r&&r.supplements)||[];if(r&&r.units)SUNITS=r.units;sTrends(r&&r.trends);sSort();}
+async function sLoad(){const r=await api('GET','/api/supps');SUPPS=(r&&r.supplements)||[];if(r&&r.units)SUNITS=r.units;SAI=!!(r&&r.ai);sTrends(r&&r.trends);sSort();}
 function sTrends(list){STREND=new Set((list||[]).map(n=>n.toLowerCase()));}
 const sTrendBox=name=>`<label class="tog strend" title="Follow it on the Timeline’s trend chart"><input type="checkbox" data-st="${esc(name)}"${STREND.has(name.toLowerCase())?' checked':''}> Trend</label>`;
 async function sSetTrend(el){
@@ -121,7 +124,69 @@ function sLibPage(){
     <p class="fintro">Supplements you take regularly, with your usual amount. Share one and everyone can pick it when they log. You can always log something that isn’t here by describing it.</p>
     <div class="ftools"><input id="s-q" type="search" placeholder="Search supplements" aria-label="Search supplements" value="${esc(sQuery)}">
       <div class="seg" role="group" aria-label="Show">${seg}</div></div>
+    <div id="s-ai">${sAiBlock()}</div>
     <div id="s-list" class="flist"></div>`;
+}
+
+/* ---------- AI: a supplement regime into line items ---------- */
+function sAiBlock(){
+  const row=SAI
+    ?`<label class="grow gadd gfile${sAiBusy?' off':''}"><span>✦ ${sAiBusy?'Reading your regime – this can take a minute…':'Read a supplement regime with AI (PDF or photo)…'}</span>
+        <input id="s-aifile" type="file" accept=".pdf,application/pdf,image/png,image/jpeg,image/webp"${sAiBusy?' disabled':''}></label>`
+    :`<div class="grow gadd off"><span>✦ Read a supplement regime with AI – ${isAdmin?'add an OpenRouter key on the <a href="#admin">Super admin page</a> to turn this on':'the super admin needs to add an OpenRouter key first'}</span></div>`;
+  return `<div class="glist">${row}</div>${sAiMsg?`<p class="aderr" role="alert">${esc(sAiMsg)}</p>`:''}${sAi?sAiPreview():''}`;
+}
+function renderSuppAi(){const el=$('#s-ai');if(el)el.innerHTML=sAiBlock();}
+function sAiPreview(){
+  const n=sAi.items.filter(x=>x.on).length;
+  return `<section class="panel gai sai" aria-labelledby="s-aih"><h2 id="s-aih">From ${esc(sAi.file)}</h2>
+    <p class="fintro">Check what the AI found and fix anything it got wrong. Ticked lines go into your library (only you see them until you share one);
+      one marked <span class="chip ok">in library</span> has the same name as one of yours and gets this amount, unit and notes.</p>
+    ${sAi.items.map((x,i)=>`<div class="sairow${x.on?'':' off'}">
+      <label class="sion"><input type="checkbox" data-sai="on" data-i="${i}"${x.on?' checked':''} aria-label="Add ${esc(x.name)}"></label>
+      <label class="f sainame"><span class="lbl">Name ${x.existing?'<span class="chip ok">in library</span>':'<span class="chip info">new</span>'}</span><input data-sai="name" data-i="${i}" maxlength="80" value="${esc(x.name)}"></label>
+      <label class="f"><span class="lbl">Amount</span><input data-sai="amount" data-i="${i}" type="number" inputmode="decimal" min="0" step="any" value="${x.amount==null?'':esc(sNum(x.amount))}"></label>
+      <label class="f"><span class="lbl">Unit</span><select data-sai="unit" data-i="${i}">${sUnitOptions(x.unit)}</select></label>
+      <label class="f sainotes"><span class="lbl">Notes</span><input data-sai="notes" data-i="${i}" maxlength="300" value="${esc(x.notes)}" placeholder="e.g. Morning with food"></label>
+    </div>`).join('')}
+    ${sAi.notes.length?`<details class="adnotes" open><summary>What the AI wasn’t sure about (${sAi.notes.length})</summary><ul>${sAi.notes.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></details>`:''}
+    <div class="gactions">
+      <label class="tog"><input type="checkbox" id="s-ailog"${sAi.log?' checked':''}> Also log them on</label>
+      <input type="date" id="s-ailogdate" aria-label="Day to log them on" value="${esc(sAi.day)}"${sAi.log?'':' disabled'}>
+    </div>
+    <p id="s-aierr" class="aderr" role="alert" hidden></p>
+    <div class="gactions"><button class="btn" type="button" data-sa="aiadd"${n?'':' disabled'}>Add ${n} supplement${n===1?'':'s'}</button><button class="ghost" type="button" data-sa="aidrop">Discard</button></div>
+  </section>`;
+}
+async function sAiRead(file){
+  if(file.size>10*1024*1024){sAiMsg='That file is over 10 MB.';renderSuppAi();return;}
+  sAiBusy=true;sAiMsg='';sAi=null;renderSuppAi();
+  try{
+    let r;
+    try{r=await fetch('/api/supps/ai-import',{method:'POST',credentials:'same-origin',headers:{'content-type':file.type||'application/pdf','x-csrf-token':csrf},body:file});}
+    catch{throw new Error('Can’t reach the server – is it still running?');}
+    if(r.status===401){location.href='/login'+location.hash;return;}
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);
+    sAi={file:file.name,notes:j.notes||[],items:j.items.map(x=>({...x,on:true})),log:false,day:todayStr()};
+  }catch(err){sAiMsg='The AI couldn’t read that: '+err.message;}
+  sAiBusy=false;renderSuppAi();
+}
+async function sAiAdd(btn){
+  const err=$('#s-aierr'), items=sAi.items.filter(x=>x.on).map(({name,amount,unit,notes})=>({name,amount,unit,notes}));
+  const day=sAi.log?sAi.day:null;
+  if(day&&!isDate(day)){err.textContent='Pick a day to log them on.';err.hidden=false;return;}
+  btn.disabled=true;err.hidden=true;
+  try{
+    const r=await api('POST','/api/supps/import',{items,log:day});
+    SUPPS=r.supplements;sSort();
+    if(day&&SLOG[day])SLOG[day].push(...r.entries);
+    const skipped=day?items.length-r.entries.length:0;
+    sMsg=[r.added?`Added ${r.added} to your library`:'',r.updated?`updated ${r.updated} you already had`:''].filter(Boolean).join(', ')+'.'
+      +(day?` Logged ${r.entries.length} on ${fmtLong(day)}${skipped?` (${skipped} without an amount weren’t logged)`:''}.`:'');
+    sMsg=sMsg[0].toUpperCase()+sMsg.slice(1);
+    sAi=null;renderSuppAi();renderSuppList();
+  }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message;err.hidden=false;}}
 }
 function renderSuppList(){
   const el=$('#s-list');if(!el)return;
@@ -187,6 +252,8 @@ document.addEventListener('click',async e=>{
   else if(a==='filter'){sFilter=b.dataset.v;document.querySelectorAll('[data-sa=filter]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderSuppList();}
   else if(a==='log'){sPick=String(id);go('supps/'+sDate);}
   else if(a==='sdel')sDeleteLib(id);
+  else if(a==='aiadd'&&sAi)sAiAdd(b);
+  else if(a==='aidrop'){sAi=null;renderSuppAi();}
   else if(a==='quick'){const s=sById(id);if(!s)return;b.disabled=true;
     try{await sAdd({date:sDate,supplement:s.id,amount:s.amount,unit:s.unit});}catch(err){if(!err.signedOut)alert(err.message);}b.disabled=false;}
   else if(a==='del'){
@@ -197,10 +264,22 @@ document.addEventListener('click',async e=>{
 document.addEventListener('change',e=>{
   if(view!=='supps')return;
   if(e.target.dataset.st!=null)sSetTrend(e.target);
+  else if(e.target.id==='s-aifile'){const f=e.target.files&&e.target.files[0];e.target.value='';if(f&&!sAiBusy)sAiRead(f);}
+  else if(e.target.dataset.sai==='on'&&sAi){sAi.items[+e.target.dataset.i].on=e.target.checked;renderSuppAi();}
+  else if(e.target.id==='s-ailog'&&sAi){sAi.log=e.target.checked;$('#s-ailogdate').disabled=!sAi.log;}
+  else if(e.target.id==='s-ailogdate'&&sAi)sAi.day=e.target.value;
+  else if(e.target.dataset.sai==='unit'&&sAi)sAi.items[+e.target.dataset.i].unit=e.target.value;
   else if(e.target.id==='s-pick')sPickChanged();
   else if(e.target.id==='s-date'&&isDate(e.target.value))go('supps/'+e.target.value);
 });
-document.addEventListener('input',e=>{if(view==='supps'&&e.target.id==='s-q'){sQuery=e.target.value;renderSuppList();}});
+document.addEventListener('input',e=>{
+  if(view!=='supps')return;
+  if(e.target.id==='s-q'){sQuery=e.target.value;renderSuppList();}
+  else if(sAi&&['name','amount','notes'].includes(e.target.dataset.sai)){
+    const x=sAi.items[+e.target.dataset.i], k=e.target.dataset.sai, v=e.target.value;
+    x[k]=k==='amount'?(v===''?null:+v):v;
+  }
+});
 document.addEventListener('submit',e=>{
   if(e.target.id==='s-form'){e.preventDefault();sSubmit(e.target);}
   else if(e.target.id==='s-lform'){e.preventDefault();sSaveLib(e.target);}

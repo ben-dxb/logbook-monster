@@ -283,6 +283,28 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       const sscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(sscroll <= 1, `horizontal overflow of ${sscroll}px on the supplements page at ${w}px wide`);
       await pg.click('#s-log .orow:last-child [data-sa=del]'); await pg.waitForFunction(n => document.querySelectorAll('#s-log .orow').length === n, sRows - 1, { timeout: 5000 });
+      if (!first) {
+        /* a supplement regime read with AI (faked answer): edit a line, untick one, add the rest and log them today */
+        await pg.route('**/api/supps/ai-import', r => r.fulfill({ json: { model: 'test/model', notes: ['Guessed the strength'], items: [
+          { name: 'Smoke magnesium', amount: 400, unit: 'mg', notes: 'Evening', existing: null },
+          { name: 'Smoke zinc', amount: 15, unit: 'mg', notes: '', existing: null },
+          { name: 'Smoke fish oil', amount: 2, unit: 'capsules', notes: 'With lunch', existing: null }] } }));
+        await pg.click('#s-body a[href="#supps/lib"]'); await pg.waitForSelector('#s-aifile', { state: 'attached' });
+        await pg.setInputFiles('#s-aifile', { name: 'regime.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4') });
+        await pg.waitForSelector('.sai .sairow');
+        expect(await pg.locator('.sai .sairow').count() === 3 && /Guessed the strength/.test(await pg.textContent('.sai')), 'the AI’s line items and notes should be shown');
+        await pg.fill('.sai [data-sai=amount][data-i="0"]', '300');
+        await pg.uncheck('.sai [data-sai=on][data-i="1"]');
+        await pg.waitForFunction(() => /Add 2 supplements/.test(document.querySelector('[data-sa=aiadd]').textContent), null, { timeout: 5000 });
+        await pg.check('#s-ailog');
+        const aiscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        expect(aiscroll <= 1, `horizontal overflow of ${aiscroll}px on the supplement regime preview at ${w}px wide`);
+        await pg.click('[data-sa=aiadd]');
+        await pg.waitForFunction(() => /Added 2 to your library\. Logged 2/.test((document.querySelector('#s-list') || {}).textContent), null, { timeout: 5000 });
+        expect(await pg.evaluate(() => SUPPS.some(s => s.name === 'Smoke magnesium' && s.amount === 300) && !SUPPS.some(s => s.name === 'Smoke zinc')), 'edited lines should be added, unticked ones left out');
+        await pg.unroute('**/api/supps/ai-import');
+        await pg.click('#s-body a[href="#supps"]'); await pg.waitForFunction(() => /Smoke magnesium\s*300 mg/.test((document.querySelector('#s-log') || {}).textContent), null, { timeout: 5000 });
+      }
       /* progress photos: upload two days of pictures (shrunk in the browser, with thumbnails), edit one, filter by bodyweight,
          jump to a date, pick two to compare, match a weight */
       if (first) await pg.evaluate(async () => { await api('PUT', '/api/weights/2026-09-01', { kg: 85 }); await api('PUT', '/api/weights/2026-10-01', { kg: 80.4 }); });
