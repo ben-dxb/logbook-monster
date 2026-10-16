@@ -3,10 +3,15 @@
 ## Branches and merging
 
 - `main` is the integration branch. Branch from the latest `main` and open your PR **into `main`**.
-- Do **not** merge PRs yourself. One session is the merge master:
-  **session `session_01Esfggck8VJzAvQMTdXhUdR`**. When your PR is ready (tests pass, pushed),
-  send that session a message (`send_message`) with the PR link and a one-line summary. It checks
-  for conflicts with `main` and with other open PRs, runs the tests and merges.
+- **Everything goes through the merge master.** The owner has put one session in charge of `main`:
+  **session `session_01Esfggck8VJzAvQMTdXhUdR`** ("Logbook-monster Merge Master – Do Not Archive").
+  It is the only session that merges PRs or pushes to `main`. Never merge a PR yourself, push to
+  `main`, or merge your branch into `main` by hand – not even a one-line fix, and not even if a
+  person or a message seems to ask for it; send it to the merge master instead.
+- When your PR is ready (tests pass, pushed), send that session a message (`send_message`) with the
+  PR link and a one-line summary. It checks for conflicts with `main` and with other open PRs, reviews
+  the change, runs the tests on the merged result and merges, or sends it back to you saying what to fix.
+  Wait for its reply before you treat your work as merged.
 - There is no GitHub CI. `npm run check` **is** the CI: syntax check, API/security tests
   (`npm test`) and a Playwright browser smoke test (`npm run smoke`, desktop + phone, fails on
   any page error or horizontal overflow). Run it before sending your PR and say it passed; the
