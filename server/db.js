@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS foods (
 );
 CREATE INDEX IF NOT EXISTS foods_user ON foods(user_id);
 CREATE INDEX IF NOT EXISTS foods_public ON foods(public);
-/* An account's own plan, week, targets and food values, layered over the app defaults (app_config 'defaults'). */
+/* An account's own meal plan – foods, day templates, week, targets – as dated changes ({versions:[…]}, see defaults.js). */
 CREATE TABLE IF NOT EXISTS user_defaults (
   user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   data       TEXT NOT NULL,

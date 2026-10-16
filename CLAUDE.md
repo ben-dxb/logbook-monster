@@ -29,14 +29,14 @@
 ## Layout
 
 - `server/` – Express app: `config.js` (.env), `auth.js` (password + Google OIDC, CSRF),
-  `api.js` (days, weights, settings, `/my/defaults` account admin and `/admin/*` super admin routes), `gym.js` (exercises, workouts, sets, AI workout import), `db.js` (SQLite schema), `defaults.js` (app defaults + each account's own layer, kept as dated changes – each day uses the one in effect on its date; `free` says whether sauces / green veg count – foods tagged `free:'sauce'|'veg'` add no macros and the solver skips them while that kind is free),
+  `api.js` (days, weights, settings, `/my/defaults` account admin and `/admin/*` super admin routes), `gym.js` (exercises, workouts, sets, AI workout import), `db.js` (SQLite schema), `defaults.js` (each account's own meal plan – there are **no app-wide defaults** for anything from a plan: foods, day templates, week, targets; a new account starts with none. Kept as dated changes – each day uses the one in effect on its date. A plan is `{foods, templates:[{id,name}], schedule:[7 template ids], targets:{id:{k,p,c,f}}, plan:{id:[meals]}, free}`; `free` says whether sauces / green veg count – foods tagged `free:'sauce'|'veg'` add no macros and the solver skips them while that kind is free. `migrate()` ran once to give accounts that had used the app their old plan; `legacy.js` holds the old built-in plan only for that),
   `users.js` (invites, account list), `mail.js` (SMTP sending – use `mail.notify()` for fire-and-forget notifications).
-- `public/engine.js` – the original calculator data and balancing maths. Change food data and plan
-  here; keep the solver behaviour unless asked.
-- `public/app.js` – views (Daily Tracker, History calendar), saving, routing. A meal marked eaten (`m.eaten`) is locked whole – the solver never moves it, its controls
+- `public/engine.js` – the balancing maths and the plan in use (`applyDefaults(plan)` sets `FOODS`, swap lists, `TEMPLATES`, `TYPE` = template id per weekday, `COACH` = targets per template;
+  `freshDay(weekday, templateId)`). Only rice pudding (values from the batch) is built in. Keep the solver behaviour unless asked.
+- `public/app.js` – views (Daily Tracker, History calendar), saving, routing. A day keeps its template (`D.type`; the weekday's unless switched on the Daily Tracker) and its summary the name (`tname`). A meal marked eaten (`m.eaten`) is locked whole – the solver never moves it, its controls
   are disabled – and undoing it asks for confirmation.
-- `public/admin.js` – Account admin (`#account`, anyone: own plan/week/targets/foods) and Super admin
-  (`#admin`, in tabs: app defaults, `#admin/ai`, `#admin/people`, `#admin/email`) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope,
+- `public/admin.js` – Account admin (`#account`, anyone: own plan – day templates, meals, week, targets, foods) and Super admin
+  (`#admin`, in tabs: `#admin/ai`, `#admin/people`, `#admin/email`; no plan editor) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope,
   `data-adtab` per super admin tab. AI settings (OpenRouter key, default model and a model per task – `TASKS` in `server/ai.js`:
   plan, workout, food, pose, summary; pass `{ task }` to `ai.ask`/`ai.askText`) are super admin only.
 - `public/gym.js` – the Gym view (workouts, exercise sets, sessions, AI import preview).

@@ -2,36 +2,13 @@
 /* Meal plan data and the balancing maths, carried over unchanged from the original calculator.
    Uses the global S (state) for the rice pudding batch and snack overrides. */
 
-/* ---------- food data, per 100g (or 100ml for almond milk) ---------- */
-const FOODS = {
-  chicken:  {n:'Health Road chicken breast', k:171, p:31,   c:4,    f:3.4, d:31,   step:5, cat:'p', order:250},
-  mince:    {n:'Health Road breast mince',   k:165, p:31.5, c:2,    f:3.4, d:31.5, step:5, cat:'p', order:250},
-  livers:   {n:'Chicken livers (raw)',       k:119, p:16.9, c:0.7,  f:4.8, d:16.9, step:5, cat:'p', max:175},
-  rawmince: {n:'Chicken breast mince (raw)', k:116, p:23.3, c:0,    f:2.5, d:23.3, step:5, cat:'p'},
-  egg:      {n:'Egg (50g each)',             k:143, p:12.6, c:0.6,  f:9.6, d:12.6, step:50,cat:'p'},
-  whites:   {n:'Egg whites',                 k:52,  p:10.9, c:0.7,  f:0.2, d:10.9, step:5, cat:'p'},
-  cheese:   {n:'Cathedral City Lighter',     k:310, p:29.1, c:0.1,  f:21.5,d:29.1, step:5, cat:'p'},
-  whey:     {n:'Amix whey isolate',          k:371, p:87.1, c:2,    f:1.1, d:87.1, step:1, cat:'p'},
-  passata:  {n:'Passata',                    k:31,  p:1.5,  c:6,    f:0.1, d:0,    step:5, cat:'p', free:'sauce'},
-  paste:    {n:'Tomato paste',               k:82,  p:4.3,  c:15,   f:0.5, d:0,    step:5, cat:'p', free:'sauce'},
-  potato:   {n:'Boiled potatoes (Health Road)', k:77, p:1.8, c:17,  f:0.1, d:0,    step:5, cat:'c', order:400},
-  pasta:    {n:'Pasta (Health Road, cooked)', k:158, p:5.8, c:30.9, f:0.9, d:0,    step:5, cat:'c', order:300},
-  dates:    {n:'Dates',                      k:280, p:2.5,  c:75,   f:0.4, d:0,    step:1, cat:'c', max:45, spill:'syrup'},
-  pudding:  {n:'Rice pudding (batch)',       k:0,   p:0,    c:0,    f:0,   d:0,    step:5, cat:'c', max:285, spill:'dates'},
-  bakedpot: {n:'Potato, raw (baked at home)', k:77, p:1.8,  c:17,   f:0.1, d:0,    step:5, cat:'c'},
-  sour:     {n:'Sourdough',                  k:270, p:10.8, c:51.9, f:2.4, d:0,    step:5, cat:'c'},
-  cor:      {n:'Cream of rice (dry)',        k:360, p:6.5,  c:80,   f:1,   d:0,    step:5, cat:'c'},
-  banana:   {n:'Banana (peeled)',            k:89,  p:1.1,  c:23,   f:0.3, d:0,    step:5, cat:'c'},
-  coco:     {n:'Coco Pops',                  k:386, p:6.3,  c:84,   f:1.9, d:0,    step:5, cat:'c'},
-  almond:   {n:'Alpro unsweetened almond',   k:13,  p:0.4,  c:0,    f:1.1, d:0,    step:10,cat:'c', unit:'ml'},
-  syrup:    {n:'Date syrup',                 k:300, p:1,    c:74,   f:0.1, d:0,    step:1, cat:'c'},
-  jam:      {n:'Strawberry jam',             k:242, p:0.4,  c:60,   f:0.1, d:0,    step:1, cat:'c'},
-  biscoff:  {n:'Biscoff spread',             k:570, p:3,    c:57.3, f:38,  d:0,    step:1, cat:'c'},
-  malties:  {n:'Malties hazelnut spread',    k:523, p:5.5,  c:59.6, f:28.5,d:0,    step:1, cat:'c'},
-  digest:   {n:'Digestive biscuits',         k:478, p:7.1,  c:62.6, f:20.9,d:0,    step:1, cat:'c'},
-  lurpak:   {n:'Lurpak Lighter',             k:516, p:0.3,  c:0.4,  f:57,  d:0,    step:1, cat:'c', max:15},
-  avocado:  {n:'Avocado',                    k:160, p:2,    c:1.8,  f:14.7,d:0,    step:5, cat:'c', min:100},
-};
+const clone=o=>JSON.parse(JSON.stringify(o));
+/* ---------- foods in use, per 100g (or 100ml): the account's plan foods (applyDefaults) and library foods (app.js).
+   Rice pudding is always here – its values come from the batch on the Daily Tracker. */
+const PUDDING={n:'Rice pudding (batch)',k:0,p:0,c:0,f:0,d:0,step:5,cat:'c',max:285,spill:'dates'};
+const FOODS={pudding:clone(PUDDING)};
+/* when a serving cap is hit, the rest spills into another food the plan has */
+const SPILL={pudding:'dates',dates:'syrup'};
 /* rice pudding: worked out from the batch in the "Rice pudding batch" panel (per 100g of finished pudding) */
 const PUD_DEFAULT={rice:100,almond:700,oat:500,custard:20,casein:80,weight:1150};
 const PUD_ING={ /* per 100g, or per 100ml for the milks */
@@ -65,114 +42,83 @@ const SNACKS=[
 ];
 function snackVal(id){const s=SNACKS.find(x=>x.id===id);return id==='pudding'?{...s}:{...s,...((S.snackOv||{})[id]||{})};}
 function snackMac(id,q){const s=snackVal(id);const m=s.u==='g'?q/100:q;return {k:s.k*m,p:s.p*m,c:s.c*m,f:s.f*m};}
-const PROTEIN_SWAPS=['chicken','mince','livers','rawmince','egg','whites','cheese','whey'];
-const CARB_SWAPS=['potato','pasta','dates','pudding','bakedpot','sour','cor','banana','coco','syrup','jam'];
-const FAT_SWAPS=['lurpak','avocado','biscoff','malties'];
+/* the foods each box lets you swap between (from each plan food's group) */
+const PROTEIN_SWAPS=[];
+const CARB_SWAPS=[];
+const FAT_SWAPS=[];
 const BOXES=[['p','Protein'],['c','Carbs'],['x','Additional fats']];
 const DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-const TYPE=['T','T','R','T','R','S','R'];
-const SAUCE=['BBQ','Piri-piri','Curry','BBQ','Piri-piri','Curry','BBQ'];
-const PIE_TARGETS={k:2980,p:250,c:360,f:60};
-const COACH={T:{k:2980,p:250,c:360,f:60},S:{k:2980,p:250,c:360,f:60},R:{k:2740,p:250,c:300,f:60}};
+/* the account's day templates [{id,name}], which one each weekday uses (Monday first) and each one's targets */
+const TEMPLATES=[];
+const TYPE=[null,null,null,null,null,null,null];
+const COACH={};
 const MAC=['k','p','c','f'];
 
-/* ---------- the plan (d = weekday, 0 = Monday) ---------- */
+/* ---------- the account's plan: foods, day templates (each with meals and targets), week and free foods ---------- */
 const it=(f,g,lock=false)=>({f,g,lock,a:g}); /* a = the amount you chose (plan or your own edit); rebalancing always starts from it */
-function breakfast(kind,lurpak,noCheese){
-  const c=[it('sour',120,true)]; if(lurpak) c.push(it('lurpak',lurpak,false));
-  if(kind==='eggs'){const p=[it('egg',50,true),it('whites',300,true)];if(!noCheese)p.push(it('cheese',30,true));
-    return {id:'1',name:'Breakfast – egg & egg white on sourdough'+(noCheese?' (no cheese)':''),p,c};}
-  const p=[it('rawmince',150,true),it('egg',50,true)];if(!noCheese)p.push(it('cheese',30,true));
-  return {id:'1',name:'Breakfast – chicken mince omelette'+(noCheese?' (no cheese)':''),p,c};
-}
-/* spreads, Lurpak and avocado live in their own 'Additional fats' box */
-function withFats(meals){return meals.map(m=>{const x=[...(m.x||[]),...m.c.filter(i=>FAT_SWAPS.includes(i.f))];return {...m,c:m.c.filter(i=>!FAT_SWAPS.includes(i.f)),x};});}
-function planFor(d,bf,pie){return withFats(CUSTOM_PLAN&&CUSTOM_PLAN[TYPE[d]]?customPlan(TYPE[d]):planForRaw(d,bf,pie));}
-function planForRaw(d,bf,pie){return builtinPlan(TYPE[d],SAUCE[d],bf,pie);}
-function builtinPlan(t,sauce,bf,pie){
-  const hrc=(g,pg)=>({id:'2',name:'Health Road chicken – '+sauce,p:[it('chicken',g)],c:[it('potato',pg)]});
-  const hrm=(g,pg)=>({id:'4',name:'Health Road mince',p:[it('mince',g)],c:[it('pasta',pg)]});
-  const cor=()=>({id:'3',name:'Cream of rice bowl',p:[],c:[it('cor',80),it('banana',100),it('biscoff',17)]});
-  const m5=(w=30)=>({id:'5',name:'Coco Pops protein bowl',note:'Swap the Coco Pops to rice pudding if you like',p:[it('whey',w)],c:[it('coco',70),it('almond',300)]});
-  if(t==='T') return [breakfast(bf,15),hrc(230,300),cor(),hrm(220,250),m5()];
-  if(t==='S'){
-    if(pie) return [breakfast(bf,0),hrc(210,300),
-      {id:'3',name:'Lemon meringue cream of rice pie',note:'Recipe items are locked',p:[],c:[it('digest',75,true),it('banana',40,true),it('almond',20,true),it('cor',50,true),it('whites',66,true)]},
-      hrm(180,250),m5()];
-    return [breakfast(bf,15),hrc(230,300),cor(),hrm(200,250),m5()];
-  }
-  return [breakfast(bf,15),hrc(185,200),
-    {id:'3',name:'Chicken livers (cook fresh)',note:'Livers capped at 175g raw',p:[it('livers',175,true),it('passata',200,true),it('paste',25,true)],c:[it('bakedpot',300)]},
-    hrm(190,170),m5(25)];  /* 25g whey keeps rest-day direct protein inside 220g */
-}
-const clone=o=>JSON.parse(JSON.stringify(o));
-
-/* ---------- admin defaults: food values, week schedule, targets and an uploaded plan ----------
-   The built-in values above are the fallback; applyDefaults() layers the admin's saved defaults on top. */
-let CUSTOM_PLAN=null;                       /* {T:[meals],R:[meals],S:[meals]} or null for the built-in plan */
+let PLAN={};                                /* {templateId:[meals]} */
+let PUD_ON=false;                           /* rice pudding is one of the plan's foods */
 /* Free foods: a food tagged free:'sauce' or free:'veg' (green veg) counts no macros while that kind is set free
-   (cfg.free, an account setting kept with the plan, so each day uses the setting in effect on its date). */
+   (cfg.free, kept with the plan, so each day uses the setting in effect on its date). */
 const FREE_KINDS=['sauce','veg'];
 const FREE={sauce:false,veg:false};
 const isFree=f=>{const F=FOODS[f];return !!(F&&F.free&&FREE[F.free]);};
-const BUILTIN={foods:clone(FOODS),type:[...TYPE],coach:clone(COACH),
-  swaps:{p:[...PROTEIN_SWAPS],c:[...CARB_SWAPS],x:[...FAT_SWAPS]}};
 const SWAP_LISTS={p:PROTEIN_SWAPS,c:CARB_SWAPS,x:FAT_SWAPS};
 const FOOD_FIELDS=['n','k','p','c','f','d','step','unit','min','max','order','group','free'];
-function builtinGroup(id){for(const g in BUILTIN.swaps)if(BUILTIN.swaps[g].includes(id))return g;return '';}
-/* the editable view of a food: built-in fields plus which swap list it belongs to */
-function foodRecord(id){const F=FOODS[id];const r={group:foodGroup(id)};
-  FOOD_FIELDS.forEach(k=>{if(k!=='group')r[k]=F[k]!=null?F[k]:(k==='unit'?'g':k==='free'?'':null);});return r;}
+const ZERO_TARGETS={k:0,p:0,c:0,f:0};
 function foodGroup(id){for(const g in SWAP_LISTS)if(SWAP_LISTS[g].includes(id))return g;return '';}
+/* Use a plan (one of the account's dated plan changes, or null for none). Library foods (L:…) are dropped too –
+   app.js registers them again after. */
 function applyDefaults(cfg){
   cfg=cfg||{};
-  for(const id in FOODS) if(!BUILTIN.foods[id]) delete FOODS[id];
-  for(const id in BUILTIN.foods) FOODS[id]=clone(BUILTIN.foods[id]);
-  const groups={p:[...BUILTIN.swaps.p],c:[...BUILTIN.swaps.c],x:[...BUILTIN.swaps.x]};
-  for(const [id,r] of Object.entries(cfg.foods||{})){
-    const F=FOODS[id]||(FOODS[id]={cat:r.group==='p'?'p':'c'});
-    ['n','k','p','c','f','d','step'].forEach(k=>{if(r[k]!=null)F[k]=r[k];});
-    ['min','max','order'].forEach(k=>{if(r[k]!=null)F[k]=r[k];else delete F[k];});
-    if(r.unit==='ml')F.unit='ml';else delete F.unit;
-    if(r.free!=null){if(FREE_KINDS.includes(r.free))F.free=r.free;else delete F.free;}
-    if(r.group!=null){for(const g in groups)groups[g]=groups[g].filter(x=>x!==id);if(groups[r.group])groups[r.group].push(id);}
+  for(const id in FOODS) if(id!=='pudding') delete FOODS[id];
+  FOODS.pudding=clone(PUDDING);
+  const groups={p:[],c:[],x:[]};
+  const foods=cfg.foods&&typeof cfg.foods==='object'?cfg.foods:{};
+  PUD_ON=!!foods.pudding;
+  for(const [id,r] of Object.entries(foods)){
+    if(!r||typeof r!=='object')continue;
+    const F=id==='pudding'?FOODS.pudding:(FOODS[id]={cat:r.group==='p'?'p':'c'});
+    if(id!=='pudding')['n','k','p','c','f','d','step'].forEach(k=>{F[k]=+r[k]||0;});
+    if(id!=='pudding'){F.n=String(r.n||id);F.step=+r.step||1;['min','max','order'].forEach(k=>{if(r[k]!=null)F[k]=+r[k];});}
+    if(r.unit==='ml')F.unit='ml';
+    if(FREE_KINDS.includes(r.free))F.free=r.free;
+    if(groups[r.group])groups[r.group].push(id);
   }
+  for(const [a,b] of Object.entries(SPILL)){if(FOODS[a]){if(FOODS[b])FOODS[a].spill=b;else delete FOODS[a].spill;}}
   for(const g in SWAP_LISTS)SWAP_LISTS[g].splice(0,SWAP_LISTS[g].length,...groups[g]);
-  const sch=Array.isArray(cfg.schedule)&&cfg.schedule.length===7?cfg.schedule:BUILTIN.type;
-  TYPE.splice(0,7,...sch);
-  for(const t in BUILTIN.coach) COACH[t]={...BUILTIN.coach[t],...((cfg.targets||{})[t]||{})};
-  CUSTOM_PLAN=cfg.plan||null;
+  TEMPLATES.splice(0,TEMPLATES.length,...(Array.isArray(cfg.templates)?cfg.templates.filter(t=>t&&t.id).map(t=>({id:String(t.id),name:String(t.name||t.id)})):[]));
+  const first=TEMPLATES.length?TEMPLATES[0].id:null;
+  const sch=Array.isArray(cfg.schedule)&&cfg.schedule.length===7?cfg.schedule:[];
+  for(let d=0;d<7;d++)TYPE[d]=TEMPLATES.some(t=>t.id===sch[d])?sch[d]:first;
+  for(const k in COACH)delete COACH[k];
+  TEMPLATES.forEach(t=>{COACH[t.id]={...ZERO_TARGETS,...((cfg.targets||{})[t.id]||{})};});
+  PLAN=cfg.plan&&typeof cfg.plan==='object'?cfg.plan:{};
   FREE_KINDS.forEach(x=>{FREE[x]=!!(cfg.free&&cfg.free[x]);});
   if(typeof recalcPudding==='function'&&typeof S!=='undefined')recalcPudding();
 }
-/* an account's own defaults on top of the app's: its foods, week, targets and plan win wherever it has set them */
-function layerDefaults(app,mine){
-  app=app||{};mine=mine||{};
-  const plan=app.plan||mine.plan?{...(app.plan||{}),...(mine.plan||{})}:null;
-  return {foods:{...(app.foods||{}),...(mine.foods||{})},schedule:mine.schedule||app.schedule||null,
-    targets:{...(app.targets||{}),...(mine.targets||{})},plan,free:{...(app.free||{}),...(mine.free||{})}};
+const hasTemplate=id=>TEMPLATES.some(t=>t.id===id);
+const templateName=id=>{const t=TEMPLATES.find(x=>x.id===id);return t?t.name:'';};
+/* a plan food (not a library food) the account can pick in its plan's boxes */
+const planFood=id=>!!FOODS[id]&&(id!=='pudding'||PUD_ON)&&!String(id).startsWith('L:');
+/* the meals of a day template, ready to use; foods that no longer exist are left out. Fats and spreads go in their own box. */
+function planOf(t){
+  return (PLAN[t]||[]).map(m=>{const o={id:String(m.id),name:m.name,p:[],c:[],x:[]};if(m.note)o.note=m.note;
+    ['p','c','x'].forEach(b=>(m[b]||[]).forEach(i=>{if(FOODS[i.f])o[b==='c'&&FAT_SWAPS.includes(i.f)?'x':b].push(it(i.f,+i.g||0,!!i.lock));}));return o;});
 }
-/* meals of an uploaded plan for one day type; foods that no longer exist are left out */
-function customPlan(t){
-  return CUSTOM_PLAN[t].map(m=>{const o={id:String(m.id),name:m.name,p:[],c:[],x:[]};if(m.note)o.note=m.note;
-    ['p','c','x'].forEach(b=>(m[b]||[]).forEach(i=>{if(FOODS[i.f])o[b].push(it(i.f,+i.g||0,!!i.lock));}));return o;});
-}
-/* the plan in use for each day type, as plain data (what the admin page shows and downloads) */
+/* the plan in use for each day template, as plain data (what the admin page shows and downloads) */
 function planData(){
   const out={};
-  ['T','R','S'].forEach(t=>{
-    let meals;
-    if(CUSTOM_PLAN&&CUSTOM_PLAN[t]) meals=withFats(customPlan(t));
-    else{const d=BUILTIN.type.indexOf(t);meals=withFats(builtinPlan(t,SAUCE[d<0?0:d],'omelette',false));}
-    out[t]=meals.map(m=>({id:m.id,name:m.name,...(m.note?{note:m.note}:{}),
-      ...Object.fromEntries(['p','c','x'].map(b=>[b,(m[b]||[]).map(i=>({f:i.f,g:i.g,lock:!!i.lock}))]))}));
-  });
+  TEMPLATES.forEach(({id})=>{out[id]=planOf(id).map(m=>({id:m.id,name:m.name,...(m.note?{note:m.note}:{}),
+    ...Object.fromEntries(['p','c','x'].map(b=>[b,(m[b]||[]).map(i=>({f:i.f,g:i.g,lock:!!i.lock}))]))}));});
   return out;
 }
 
-function freshDay(d){
-  const meals=planFor(d,'omelette',false);
-  const D={bf:'omelette',pie:false,auto:true,targets:{...COACH[TYPE[d]]},meals,base:null,off:[]};
+/* A new day from a day template: the weekday's (d, 0 = Monday) unless one is named. No plan: no meals, no targets. */
+function freshDay(d,t){
+  if(!hasTemplate(t))t=TYPE[d];
+  const meals=t?planOf(t):[];
+  const D={type:t||null,auto:true,targets:{...(t?COACH[t]:ZERO_TARGETS)},meals,base:null,off:[]};
   solve(D,new Set(),{protect:true}); /* fit the plan around the pudding batch without touching direct protein */
   allItems(D).forEach(i=>{i.a=i.g;});
   D.base=clone(D.meals);
@@ -295,16 +241,15 @@ function placeMatched(box,f,macro,need,held,replace){
 function warnings(day){
   const w=[];const items=allItems(day);
   day.meals.forEach(m=>[...m.p,...m.c,...(m.x||[])].forEach(i=>{
-    const F=FOODS[i.f];
-    if(F.max!=null&&!F.order&&i.g>F.max+0.1&&!(m.pie&&i.f==='lurpak')) w.push(i.f==='pudding'?`Meal ${m.id}: rice pudding is ${fmtG(i)} – over ${F.max}g goes past ${CASEIN_MAX}g casein`:`Meal ${m.id}: ${F.n} is ${fmtG(i)} – the limit is ${F.max}g a serving`);
-    if(F.min!=null&&i.g>0&&i.g<F.min) w.push(`Meal ${m.id}: avocado under ${F.min}g – the rest of it goes in the bin`);
+    const F=FOODS[i.f];if(!F)return;
+    if(F.max!=null&&!F.order&&i.g>F.max+0.1&&!m.pie) w.push(i.f==='pudding'?`Meal ${m.id}: rice pudding is ${fmtG(i)} – over ${F.max}g goes past ${CASEIN_MAX}g casein`:`Meal ${m.id}: ${F.n} is ${fmtG(i)} – the limit is ${F.max}${F.unit||'g'} a serving`);
+    if(F.min!=null&&i.g>0&&i.g<F.min) w.push(`Meal ${m.id}: ${F.n} is under ${F.min}${F.unit||'g'} – the minimum serving`);
   }));
-  ['chicken','mince','potato','pasta'].forEach(f=>{
+  /* foods delivered in a set amount a day (daily order) */
+  [...new Set(items.map(i=>i.f))].forEach(f=>{const F=FOODS[f];if(!F||F.order==null)return;
     const t=items.filter(i=>i.f===f).reduce((s,i)=>s+i.g,0);
-    if(t>FOODS[f].order+0.1) w.push(`${FOODS[f].n}: ${Math.round(t)}g today is more than the ${FOODS[f].order}g Health Road sends`);
+    if(t>F.order+0.1) w.push(`${F.n}: ${Math.round(t)}${F.unit||'g'} today is more than the ${F.order}${F.unit||'g'} daily order`);
   });
-  const lv=items.filter(i=>i.f==='livers').reduce((s,i)=>s+i.g,0);
-  if(lv>175) w.push(`Livers: ${lv}g – keep to 175g raw (vitamin A)`);
   return w;
 }
 /* Health Road packs hold the meat in the plan plus sauce that isn't: weigh the whole pack and eat the
@@ -313,4 +258,4 @@ function packPortion(g,pack,meat){return g>0&&pack>0&&meat>0?g/meat*pack:null;}
 function fmtG(i){const u=FOODS[i.f].unit||'g';return Math.round(i.g)+u;}
 
 /* lets the server check food ids against the same data */
-if(typeof module!=='undefined') module.exports={FOODS,TYPE,COACH,FREE,FREE_KINDS,packPortion,layerDefaults,applyDefaults,balanceMeal,macOf,dayTotals,sum,it};
+if(typeof module!=='undefined') module.exports={FOODS,TYPE,COACH,TEMPLATES,FREE,FREE_KINDS,packPortion,applyDefaults,planOf,planData,freshDay,balanceMeal,macOf,dayTotals,sum,it,solve,warnings};
