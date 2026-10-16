@@ -1,0 +1,195 @@
+'use strict';
+/* Supplements view: a log of what you took each day, picked from the supplement library or typed in
+   free text, with an amount and a unit (g, mg, mcg, IU, capsules…), and the library itself – your own
+   supplements plus ones other people have shared.
+   #supps, #supps/2026-10-15 (a day's log), #supps/lib, #supps/lib/new, #supps/lib/12 (edit one of yours).
+   Uses helpers from app.js and gym.js (gHead, gEmpty). */
+
+let SUPPS=null, SUNITS=['g','mg','mcg','IU','ml','drops','capsules','tablets','softgels','scoops','servings'];
+const SLOG={};                    /* date -> that day's entries */
+let sDate=todayStr(), sPick='', sUnit='mg', sQuery='', sFilter='all', sMsg='', sTok=0;
+
+const sById=id=>SUPPS&&SUPPS.find(s=>s.id===id);
+const sNum=n=>String(Math.round(n*1000)/1000);
+/* "1 capsule", "2 capsules", "500 mg" */
+const sUnitTxt=(u,n)=>/s$/.test(u)&&+n===1?u.slice(0,-1):u;
+const sDose=(n,u)=>`${sNum(n)} ${sUnitTxt(u,n)}`;
+function sSort(){SUPPS.sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})||a.id-b.id);}
+async function sLoad(){const r=await api('GET','/api/supps');SUPPS=(r&&r.supplements)||[];if(r&&r.units)SUNITS=r.units;sSort();}
+async function sLogOn(d){if(!SLOG[d])SLOG[d]=((await api('GET','/api/supps/log?date='+d))||{}).entries||[];return SLOG[d];}
+
+async function renderSupps(args){
+  if(view!=='supps')return;
+  const tok=++sTok, box=$('#s-body'), [p,a]=args||[];
+  const lib=p==='lib';
+  const tabs=`<nav class="seg gtabs" aria-label="Supplements"><a href="#supps"${lib?'':' aria-current="page"'}>Log</a><a href="#supps/lib"${lib?' aria-current="page"':''}>Library</a></nav>`;
+  try{
+    if(!SUPPS){box.innerHTML=tabs+'<p class="note">Loading…</p>';await sLoad();if(tok!==sTok||view!=='supps')return;}
+    if(lib&&(a==='new'||/^\d+$/.test(a||''))){
+      const s=a==='new'?null:sById(+a);
+      if(a!=='new'&&!(s&&s.mine)){box.innerHTML=tabs+gHead('#supps/lib','Supplement')+gEmpty('That supplement isn’t in your library.');return;}
+      box.innerHTML=tabs+sEditPage(s);$('#s-name').focus();return;
+    }
+    if(lib){box.innerHTML=tabs+sLibPage();renderSuppList();return;}
+    if(isDate(p))sDate=p;
+    box.innerHTML=tabs+sLogPage();
+    await sLogOn(sDate);if(tok!==sTok||view!=='supps')return;
+    renderSuppLog();
+  }catch(e){if(!e.signedOut&&tok===sTok)box.innerHTML=tabs+gEmpty('Couldn’t load your supplements: '+esc(e.message));}
+}
+
+/* ---------- the day's log ---------- */
+function sUnitOptions(sel){return SUNITS.map(u=>`<option value="${esc(u)}"${u===sel?' selected':''}>${esc(u)}</option>`).join('');}
+function sLogPage(){
+  const t=todayStr(), title=sDate===t?'Today':sDate===addDays(t,-1)?'Yesterday':parse(sDate).toLocaleDateString(undefined,{weekday:'long'});
+  const pick=sById(+sPick);if(!pick)sPick='';
+  const opts=`<option value="">Something else – describe it</option>`+(SUPPS.length?`<optgroup label="From the library">${SUPPS.map(s=>`<option value="${s.id}"${String(s.id)===sPick?' selected':''}>${esc(s.name)}${s.amount!=null?' ('+esc(sDose(s.amount,s.unit))+')':''}</option>`).join('')}</optgroup>`:'');
+  const quick=SUPPS.filter(s=>s.amount!=null).map(s=>`<button class="ghost" type="button" data-sa="quick" data-id="${s.id}">+ ${esc(s.name)} ${esc(sDose(s.amount,s.unit))}</button>`).join('');
+  return `<div class="datebar">
+      <button class="nav" type="button" data-sa="prev" aria-label="Previous day">‹</button>
+      <div class="dt"><h2>${esc(title)}</h2><span class="sub">${esc(fmtLong(sDate))}</span></div>
+      <button class="nav" type="button" data-sa="next" aria-label="Next day">›</button>
+      ${sDate===t?'':'<button class="ghost" type="button" data-sa="today">Today</button>'}
+      <label class="ghost pick" title="Pick a date"><span>Pick date</span><input type="date" id="s-date" aria-label="Pick a date" value="${sDate}"></label>
+    </div>
+    <form id="s-form" class="panel sform">
+      <label class="f swide"><span class="lbl">Supplement</span><select id="s-pick">${opts}</select></label>
+      <label class="f swide"><span class="lbl" id="s-desclbl">${pick?'Note (optional)':'Description'}</span><input id="s-desc" maxlength="200" placeholder="${pick?'e.g. with breakfast':'e.g. Vitamin D3 + K2'}"></label>
+      <label class="f"><span class="lbl">Amount</span><input id="s-amt" type="number" inputmode="decimal" min="0" step="any" value="${pick&&pick.amount!=null?sNum(pick.amount):''}" required></label>
+      <label class="f"><span class="lbl">Unit</span><select id="s-unit">${sUnitOptions(pick?pick.unit:sUnit)}</select></label>
+      <label class="tog swide" id="s-savebox"${pick?' hidden':''}><input type="checkbox" id="s-save"> Save to my supplement library</label>
+      <p id="s-err" class="aderr swide" role="alert" hidden></p>
+      <div class="factions swide"><button class="btn" type="submit">Add</button></div>
+    </form>
+    ${quick?`<div class="squick" aria-label="Quick add"><span class="lbl">Quick add (usual amount)</span><div class="factions">${quick}</div></div>`:''}
+    <section class="panel" aria-labelledby="s-logh"><h2 id="s-logh" class="lbl">Taken</h2><div id="s-log"><p class="note">Loading…</p></div></section>`;
+}
+function renderSuppLog(){
+  const el=$('#s-log');if(!el)return;
+  const list=SLOG[sDate]||[];
+  el.innerHTML=(sMsg?`<p class="note fmsg" role="status">${esc(sMsg)}</p>`:'')+(list.length
+    ?list.map(e=>`<div class="orow"><span>${esc(e.name)}</span><b class="sdose">${esc(sDose(e.amount,e.unit))}</b>${e.note?`<span class="ml">${esc(e.note)}</span>`:''}<button class="x" type="button" data-sa="del" data-id="${e.id}" aria-label="Remove ${esc(e.name)}">×</button></div>`).join('')
+    :gEmpty('Nothing logged for this day.'));
+}
+async function sAdd(body){
+  const e=await api('POST','/api/supps/log',body);
+  (SLOG[e.date]=SLOG[e.date]||[]).push(e);sMsg='';
+  if(e.date===sDate)renderSuppLog();
+  return e;
+}
+function sPickChanged(){
+  sPick=$('#s-pick').value;const s=sById(+sPick);
+  $('#s-desclbl').textContent=s?'Note (optional)':'Description';
+  $('#s-desc').placeholder=s?'e.g. with breakfast':'e.g. Vitamin D3 + K2';
+  $('#s-savebox').hidden=!!s;
+  if(s){$('#s-amt').value=s.amount!=null?sNum(s.amount):'';$('#s-unit').value=s.unit;}
+}
+async function sSubmit(form){
+  const err=$('#s-err'), btn=form.querySelector('button[type=submit]'), s=sById(+sPick);
+  const desc=$('#s-desc').value.trim(), amount=$('#s-amt').value, unit=$('#s-unit').value;
+  err.hidden=true;
+  if(!s&&!desc){err.textContent='Pick a supplement from the library or describe it.';err.hidden=false;$('#s-desc').focus();return;}
+  const save=!s&&$('#s-save').checked;
+  btn.disabled=true;
+  try{
+    if(save){
+      const n=await api('POST','/api/supps',{name:desc,amount,unit,notes:'',public:false});
+      SUPPS.push(n);sSort();
+      await sAdd({date:sDate,supplement:n.id,amount,unit});
+    }else await sAdd(s?{date:sDate,supplement:s.id,note:desc,amount,unit}:{date:sDate,name:desc,amount,unit});
+    if(!s)sUnit=unit;
+    if(save){sPick='';renderSupps([sDate]);}
+    else{$('#s-desc').value='';if(!s)$('#s-amt').value='';btn.disabled=false;}
+  }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message;err.hidden=false;}}
+}
+
+/* ---------- the library ---------- */
+function sLibPage(){
+  const seg=[['all','All'],['mine','Mine'],['shared','Shared']].map(([v,l])=>`<button type="button" data-sa="filter" data-v="${v}" aria-pressed="${sFilter===v}">${l}</button>`).join('');
+  return `<div class="gbar"><h2>Supplement library</h2><a class="btn" href="#supps/lib/new">New supplement</a></div>
+    <p class="fintro">Supplements you take regularly, with your usual amount. Share one and everyone can pick it when they log. You can always log something that isn’t here by describing it.</p>
+    <div class="ftools"><input id="s-q" type="search" placeholder="Search supplements" aria-label="Search supplements" value="${esc(sQuery)}">
+      <div class="seg" role="group" aria-label="Show">${seg}</div></div>
+    <div id="s-list" class="flist"></div>`;
+}
+function renderSuppList(){
+  const el=$('#s-list');if(!el)return;
+  const q=sQuery.trim().toLowerCase();
+  const list=SUPPS.filter(s=>(sFilter==='all'||(sFilter==='mine')===s.mine)&&(!q||s.name.toLowerCase().includes(q)||s.notes.toLowerCase().includes(q)));
+  let h=sMsg?`<p class="note fmsg" role="status">${esc(sMsg)}</p>`:'';
+  if(!SUPPS.length)h+=gEmpty('Nothing here yet. Tap “New supplement” to add one, or tick “Save to my supplement library” when you log one.');
+  else if(!list.length)h+=gEmpty(sFilter==='shared'&&!q?'Nobody has shared a supplement yet.':sFilter==='mine'&&!q?'You haven’t added any supplements yet.':'No supplements match.');
+  h+=list.map(sCard).join('');
+  el.innerHTML=h;
+}
+function sCard(s){
+  const tag=s.mine?(s.public?'<span class="chip ok">Shared</span>':'<span class="chip">Only you</span>')
+    :`<span class="chip info">Shared${s.by?' by '+esc(s.by):''}</span>`;
+  return `<article class="fcard" data-id="${s.id}">
+    <div class="fhead"><h3>${esc(s.name)}</h3>${tag}</div>
+    <span class="ml">${s.amount!=null?`Usual amount <b>${esc(sDose(s.amount,s.unit))}</b>`:`Measured in ${esc(s.unit)}`}</span>
+    ${s.notes?`<details class="frecipe"><summary>Notes</summary><p>${esc(s.notes)}</p></details>`:''}
+    <div class="factions"><button class="btn" type="button" data-sa="log" data-id="${s.id}">Log it</button>
+      ${s.mine?`<a class="ghost" href="#supps/lib/${s.id}">Edit</a>`:''}
+      ${s.mine||isAdmin?`<button class="ghost" type="button" data-sa="sdel" data-id="${s.id}">${s.mine?'Delete':'Delete (admin)'}</button>`:''}</div>
+  </article>`;
+}
+function sEditPage(s){
+  const v=s||{name:'',amount:'',unit:'mg',notes:'',public:false};
+  return gHead('#supps/lib',s?'Edit supplement':'New supplement')+`
+    <form id="s-lform" class="panel fform" data-id="${s?s.id:''}">
+      <label class="f fwide"><span class="lbl">Name</span><input id="s-name" maxlength="80" required value="${esc(v.name)}" placeholder="e.g. Creatine monohydrate"></label>
+      <label class="f"><span class="lbl">Usual amount (optional)</span><input id="s-lamt" type="number" inputmode="decimal" min="0" step="any" value="${v.amount==null?'':esc(sNum(v.amount))}"></label>
+      <label class="f"><span class="lbl">Unit</span><select id="s-lunit">${sUnitOptions(v.unit)}</select></label>
+      <label class="f fwide"><span class="lbl">Notes (optional)</span><textarea id="s-notes" rows="4" maxlength="2000" placeholder="e.g. Take with food. Brand, strength per capsule…">${esc(v.notes)}</textarea></label>
+      <label class="tog fwide"><input type="checkbox" id="s-public"${v.public?' checked':''}> Share with everyone – any account can see it and log it (only you can change it)</label>
+      <p id="s-lerr" class="aderr fwide" role="alert" hidden></p>
+      <div class="factions fwide"><button class="btn" type="submit">${s?'Save changes':'Add to library'}</button><a class="ghost" href="#supps/lib">Cancel</a>
+        ${s?`<button class="ghost fdel" type="button" data-sa="sdel" data-id="${s.id}">Delete</button>`:''}</div>
+    </form>`;
+}
+async function sSaveLib(form){
+  const err=$('#s-lerr'), id=form.dataset.id, btn=form.querySelector('button[type=submit]');
+  const body={name:$('#s-name').value,amount:$('#s-lamt').value,unit:$('#s-lunit').value,notes:$('#s-notes').value,public:$('#s-public').checked};
+  btn.disabled=true;err.hidden=true;
+  try{
+    const s=await api(id?'PUT':'POST','/api/supps'+(id?'/'+id:''),body);
+    SUPPS=SUPPS.filter(x=>x.id!==s.id);SUPPS.push(s);sSort();
+    sMsg=id?`Saved “${s.name}”.`:`Added “${s.name}” to your library.`;go('supps/lib');
+  }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message;err.hidden=false;}}
+}
+async function sDeleteLib(id){
+  const s=sById(id);if(!s)return;
+  if(!confirm(s.mine?`Delete “${s.name}” from your library? Days you’ve already logged it keep it.`:`Delete “${s.name}”${s.by?' (shared by '+s.by+')':''} from the library for everyone?`))return;
+  try{await api('DELETE','/api/supps/'+id);}catch(e){if(!e.signedOut)alert(e.message);return;}
+  SUPPS=SUPPS.filter(x=>x.id!==id);if(sPick===String(id))sPick='';sMsg=`Deleted “${s.name}”.`;
+  if(location.hash==='#supps/lib')renderSuppList();else go('supps/lib');
+}
+
+/* ---------- events ---------- */
+document.addEventListener('click',async e=>{
+  const b=e.target.closest('[data-sa]');if(!b||view!=='supps')return;
+  const a=b.dataset.sa, id=+b.dataset.id;
+  if(a!=='del'&&a!=='quick')sMsg='';
+  if(a==='prev'||a==='next')go('supps/'+addDays(sDate,a==='prev'?-1:1));
+  else if(a==='today')go('supps/'+todayStr());
+  else if(a==='filter'){sFilter=b.dataset.v;document.querySelectorAll('[data-sa=filter]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderSuppList();}
+  else if(a==='log'){sPick=String(id);go('supps/'+sDate);}
+  else if(a==='sdel')sDeleteLib(id);
+  else if(a==='quick'){const s=sById(id);if(!s)return;b.disabled=true;
+    try{await sAdd({date:sDate,supplement:s.id,amount:s.amount,unit:s.unit});}catch(err){if(!err.signedOut)alert(err.message);}b.disabled=false;}
+  else if(a==='del'){
+    try{await api('DELETE','/api/supps/log/'+id);}catch(err){if(!err.signedOut)alert(err.message);return;}
+    Object.keys(SLOG).forEach(d=>{SLOG[d]=SLOG[d].filter(x=>x.id!==id);});renderSuppLog();
+  }
+});
+document.addEventListener('change',e=>{
+  if(view!=='supps')return;
+  if(e.target.id==='s-pick')sPickChanged();
+  else if(e.target.id==='s-date'&&isDate(e.target.value))go('supps/'+e.target.value);
+});
+document.addEventListener('input',e=>{if(view==='supps'&&e.target.id==='s-q'){sQuery=e.target.value;renderSuppList();}});
+document.addEventListener('submit',e=>{
+  if(e.target.id==='s-form'){e.preventDefault();sSubmit(e.target);}
+  else if(e.target.id==='s-lform'){e.preventDefault();sSaveLib(e.target);}
+});
