@@ -22,6 +22,8 @@ const config = {
   host: process.env.HOST || (isProd ? '0.0.0.0' : '127.0.0.1'),
   baseUrl,
   dbPath: process.env.DB_PATH || defaultDbPath(),
+  /* progress photos are files, kept next to the database unless PHOTO_DIR says otherwise */
+  photoDir: process.env.PHOTO_DIR || '',
   sessionSecret: process.env.SESSION_SECRET || '',
   sessionDays: +process.env.SESSION_DAYS || 30,
   cookieSecure: bool(process.env.COOKIE_SECURE, baseUrl.startsWith('https://')),
@@ -36,6 +38,7 @@ const config = {
     clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
   },
 };
+if (!config.photoDir) config.photoDir = require('path').join(require('path').dirname(config.dbPath), 'photos');
 config.google.enabled = !!(config.google.clientId && config.google.clientSecret);
 
 if (!config.sessionSecret || config.sessionSecret.length < 32) {
