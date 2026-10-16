@@ -64,6 +64,10 @@ router.put('/admin/defaults', (req, res) => {
   if (!defaults.isAdmin(req.user)) return res.status(403).json({ error: 'Only an admin can change the defaults' });
   try { res.json(defaults.put(req.body, req.user)); } catch (e) { bad(res, e.message); }
 });
+router.delete('/admin/defaults/:from', (req, res) => {
+  if (!defaults.isAdmin(req.user)) return res.status(403).json({ error: 'Only an admin can change the defaults' });
+  try { res.json(defaults.remove(req.params.from, req.user)); } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
 
 /* AI import: an OpenRouter key and model, and reading a plan PDF into the defaults format. */
 const adminOnly = (req, res, next) => (defaults.isAdmin(req.user) ? next() : res.status(403).json({ error: 'Only an admin can do this' }));

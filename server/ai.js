@@ -47,7 +47,7 @@ function save(body, user) {
 
 /* The foods the model can pick from: built-in plus the admin's own. */
 function foodList() {
-  const saved = defaults.get().foods || {};
+  const saved = defaults.latest().foods || {};
   const out = {};
   for (const [id, F] of Object.entries(FOODS)) if (id !== 'pudding') out[id] = { n: F.n, k: F.k, p: F.p, c: F.c, f: F.f, unit: F.unit || 'g' };
   for (const [id, r] of Object.entries(saved)) out[id] = { n: r.n, k: r.k, p: r.p, c: r.c, f: r.f, unit: r.unit || 'g' };

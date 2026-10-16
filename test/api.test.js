@@ -188,6 +188,49 @@ test('only the admin can change the defaults, everyone reads them', async () => 
   assert.strictEqual(seen.body.plan.R[0].name, 'Skyr bowl');
 });
 
+test('defaults changes take effect from a date; earlier days keep the plan they had', async () => {
+  const admin = client();
+  await admin.req('GET', '/auth/config');
+  await admin.req('POST', '/auth/login', { email: 'me@example.com', password: 'longenough1' });
+  await admin.req('GET', '/api/me');
+  const { foods, schedule, targets, plan: kept } = (await admin.req('GET', '/api/defaults')).body;
+  const plan = name => ({ R: [{ id: '1', name, p: [{ f: 'whey', g: 40 }], c: [{ f: 'banana', g: 100 }], x: [] }] });
+  /* without a date it replaces everything: one version from the start */
+  let r = await admin.req('PUT', '/api/admin/defaults', { plan: plan('Base bowl') });
+  assert.deepStrictEqual(r.body.versions.map(v => v.from), [null]);
+  r = await admin.req('PUT', '/api/admin/defaults', { plan: plan('Future bowl'), targets: { R: { k: 2500, p: 240, c: 250, f: 55 } }, from: '2999-01-04' });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(r.body.versions.map(v => v.from), [null, '2999-01-04']);
+  assert.strictEqual(r.body.plan.R[0].name, 'Base bowl', 'today still uses the plan in effect now');
+  r = await admin.req('PUT', '/api/admin/defaults', { plan: plan('Past bowl'), from: '2020-03-02' });
+  assert.deepStrictEqual(r.body.versions.map(v => v.from), [null, '2020-03-02', '2999-01-04']);
+  assert.strictEqual(r.body.plan.R[0].name, 'Past bowl');
+  assert.strictEqual(r.body.versions[2].targets.R.k, 2500);
+  assert.strictEqual(r.body.versions[1].updatedBy, 'me@example.com');
+  /* same date again replaces that version */
+  r = await admin.req('PUT', '/api/admin/defaults', { plan: plan('Past bowl 2'), from: '2020-03-02' });
+  assert.deepStrictEqual(r.body.versions.map(v => v.plan.R[0].name), ['Base bowl', 'Past bowl 2', 'Future bowl']);
+  assert.strictEqual((await admin.req('PUT', '/api/admin/defaults', { from: '2020-13-01' })).status, 400);
+  assert.strictEqual((await admin.req('PUT', '/api/admin/defaults', { from: 'soon' })).status, 400);
+  /* everyone reads the versions; only the admin deletes them */
+  const friend = client();
+  await friend.req('GET', '/auth/config');
+  await friend.req('POST', '/auth/login', { email: 'friend@example.com', password: 'longenough2' });
+  await friend.req('GET', '/api/me');
+  assert.strictEqual((await friend.req('GET', '/api/defaults')).body.versions.length, 3);
+  assert.strictEqual((await friend.req('DELETE', '/api/admin/defaults/2999-01-04')).status, 403);
+  assert.strictEqual((await admin.req('DELETE', '/api/admin/defaults/2998-01-01')).status, 404);
+  r = await admin.req('DELETE', '/api/admin/defaults/2020-03-02');
+  assert.deepStrictEqual(r.body.versions.map(v => v.from), [null, '2999-01-04']);
+  assert.strictEqual(r.body.plan.R[0].name, 'Base bowl');
+  r = await admin.req('DELETE', '/api/admin/defaults/start');
+  assert.deepStrictEqual(r.body.versions.map(v => v.from), ['2999-01-04']);
+  assert.strictEqual(r.body.plan, null, 'before the first change the built-in plan applies');
+  /* back to the defaults the earlier test saved, as one version, for the tests after this one */
+  r = await admin.req('PUT', '/api/admin/defaults', { foods, schedule, targets, plan: kept });
+  assert.deepStrictEqual(r.body.versions.map(v => v.from), [null]);
+});
+
 test('AI import: admin-only key that is never shown, and the reply is tidied', async () => {
   const admin = client();
   await admin.req('GET', '/auth/config');

@@ -1,6 +1,8 @@
 'use strict';
 /* App-wide defaults the admin sets: food values, which weekdays are training/rest, day targets
-   and an uploaded meal plan. Stored as one JSON document and layered over engine.js in the browser. */
+   and an uploaded meal plan. Layered over engine.js in the browser.
+   Each save is a version that takes effect from a date (from: 'YYYY-MM-DD'; null = from the start),
+   so days before a change keep the plan they had. Stored as one JSON document: {versions:[…]}. */
 const config = require('./config');
 const db = require('./db');
 const { FOODS } = require('../public/engine.js');
@@ -103,15 +105,64 @@ function clean(input) {
   return out;
 }
 
-function get() {
+const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+const isDate = v => typeof v === 'string' && DATE_RE.test(v) && !isNaN(Date.parse(v + 'T00:00:00Z'));
+const MAX_VERSIONS = 100;
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+
+/* every version, oldest first; a document from before versions is one version from the start */
+function versions() {
   const row = q.get.get();
-  if (!row) return { foods: {}, schedule: null, targets: {}, plan: null };
-  return { ...JSON.parse(row.data), updatedBy: row.updated_by, updatedAt: row.updated_at };
+  if (!row) return [];
+  const doc = JSON.parse(row.data);
+  if (!Array.isArray(doc.versions)) return [{ from: null, ...doc, updatedBy: row.updated_by, updatedAt: row.updated_at }];
+  return doc.versions;
 }
+function store(list, user) {
+  list.sort((a, b) => (a.from || '').localeCompare(b.from || ''));
+  q.put.run(JSON.stringify({ versions: list }), user.email);
+}
+/* the version in effect on a date (today by default), or the built-in values */
+function on(list, date) {
+  let v = null;
+  for (const x of list) if (!x.from || x.from <= date) v = x;
+  return v;
+}
+const EMPTY = { from: null, foods: {}, schedule: null, targets: {}, plan: null };
+/* The defaults in effect today, plus every version for the browser to pick per day. */
+function get() {
+  const list = versions();
+  return { ...(on(list, today()) || EMPTY), versions: list };
+}
+/* The newest defaults, whatever their date (food ids the AI may use). */
+function latest() {
+  const list = versions();
+  return list.length ? list[list.length - 1] : EMPTY;
+}
+/* With a from date (or null for "from the start") this saves the version taking effect then,
+   replacing one with the same date; versions dated later still apply from their dates.
+   Without one it replaces everything, as before versions existed. */
 function put(input, user) {
   const data = clean(input);
-  q.put.run(JSON.stringify(data), user.email);
+  const has = isObj(input) && Object.prototype.hasOwnProperty.call(input, 'from');
+  const from = has && input.from != null && input.from !== '' ? input.from : null;
+  if (from !== null && !isDate(from)) throw new Error('The date it takes effect from must be a date');
+  const v = { from, ...data, updatedBy: user.email, updatedAt: new Date().toISOString().replace('T', ' ').slice(0, 19) };
+  const list = has ? versions().filter(x => x.from !== from) : [];
+  if (list.length >= MAX_VERSIONS) throw new Error('Too many plan changes – delete some old ones first');
+  list.push(v);
+  store(list, user);
+  return get();
+}
+/* Delete the version taking effect on a date ('start' for the first one): the one before it applies again. */
+function remove(from, user) {
+  const key = from === 'start' ? null : from;
+  if (key !== null && !isDate(key)) throw new Error('Bad date');
+  const list = versions();
+  const rest = list.filter(x => x.from !== key);
+  if (rest.length === list.length) throw Object.assign(new Error('There is no change from that date'), { status: 404 });
+  store(rest, user);
   return get();
 }
 
-module.exports = { isAdmin, clean, get, put };
+module.exports = { isAdmin, clean, get, latest, put, remove };

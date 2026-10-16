@@ -28,7 +28,8 @@ or Google.
   yours by name; sets you already have are skipped, so importing a newer export later is safe.
 - **Admin** (admins only) – the baseline every new day starts from: upload a meal plan (CSV or
   JSON) or edit it in place, download it, choose which weekdays are training or rest, set day
-  targets, and edit or add foods. Days already saved keep their own amounts. Admins are the
+  targets, and edit or add foods. Each save takes effect from a date you pick (today by default, or
+  a later date to schedule it): days before it keep the plan they had. Days already saved keep their own amounts. Admins are the
   emails in `ADMIN_EMAILS`; if that's empty, the first account created is the admin.
   **Read a PDF with AI** sends your coach's plan PDF (or a photo) to a model on OpenRouter and
   loads the meals, amounts, new foods and targets into the page for you to check and save. Add

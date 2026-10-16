@@ -5,6 +5,7 @@
 const AD_TYPES=[['T','Training'],['R','Rest'],['S','Saturday training']];
 const AD_BOXES=[['p','Protein'],['c','Carbs'],['x','Additional fats']];
 let AD=null, adSaved='', adType='T', adMsg='', adErrs=[], adBusy=false;
+let adVer=null, adFrom='';                   /* the version being edited (null = none saved yet), and the date the save takes effect from ('' = from the start) */
 let adAi=null, adAiBusy=false, adNotes=[];
 const adOpen=new Set();                      /* food editors left open */
 
@@ -13,11 +14,16 @@ function builtinRecord(id){const F=BUILTIN.foods[id];const r={group:builtinGroup
   FOOD_FIELDS.forEach(k=>{if(k!=='group')r[k]=F[k]!=null?F[k]:(k==='unit'?'g':null);});return r;}
 function builtinPlanData(){const keep=CUSTOM_PLAN;CUSTOM_PLAN=null;try{return planData();}finally{CUSTOM_PLAN=keep;}}
 function adEditable(id){return id!=='pudding';}       /* pudding values come from the batch on the Day page */
-function adLoad(){
+/* load a version into the draft: the one in effect today unless one is named */
+function adLoad(v){
+  if(v===undefined)v=defsOn(todayStr());
+  applyVersion(v);adVer=v;
+  const td=todayStr();adFrom=v&&v!==defsOn(td)?v.from||'':td;   /* a change to today's plan starts today; another version keeps its own date */
   const foods={};Object.keys(FOODS).filter(adEditable).forEach(id=>{foods[id]=foodRecord(id);});
   AD={foods,schedule:[...TYPE],targets:clone(COACH),plan:planData(),custom:!!CUSTOM_PLAN};
-  adSaved=JSON.stringify(adPayload());
+  adSaved=adState();
 }
+function adState(){return JSON.stringify({...adPayload(),from:adFrom});}
 /* only what differs from the built-in values is stored */
 function adPayload(){
   const foods={};
@@ -26,7 +32,7 @@ function adPayload(){
   }
   return {foods,schedule:AD.schedule,targets:AD.targets,plan:AD.custom?AD.plan:null};
 }
-function adDirty(){return !!AD&&JSON.stringify(adPayload())!==adSaved;}
+function adDirty(){return !!AD&&adState()!==adSaved;}
 const adFoodName=id=>(AD.foods[id]||FOODS[id]||{n:id}).n;
 function adMac(f,g){const F=f==='pudding'?FOODS.pudding:AD.foods[f];if(!F)return {k:0,p:0,c:0,f:0};
   return {k:F.k*g/100,p:F.p*g/100,c:F.c*g/100,f:F.f*g/100};}
@@ -42,6 +48,7 @@ function renderAdmin(){
     ?'<span class="chip info">Your plan</span> New days start from the plan below.'
     :'<span class="chip">Built-in plan</span> Edit an amount or upload a file to make your own.';
   $('#ad-restore').hidden=!AD.custom;
+  adVersions();
   $('#ad-upmsg').innerHTML=(adMsg?`<p class="admsg">${esc(adMsg)}</p>`:'')+(adErrs.length?`<ul class="aderr">${adErrs.slice(0,12).map(e=>`<li>${esc(e)}</li>`).join('')}${adErrs.length>12?`<li>…and ${adErrs.length-12} more</li>`:''}</ul>`:'')
     +(adNotes.length?`<details class="adnotes" open><summary>What the AI estimated or left out (${adNotes.length})</summary><ul>${adNotes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></details>`:'');
   $('#ad-types').innerHTML=AD_TYPES.map(([t,n])=>`<button type="button" data-ad="type" data-t="${t}" aria-pressed="${t===adType}">${n}</button>`).join('');
@@ -89,6 +96,18 @@ function renderAdmin(){
     </details>`;}).join('');
   adStatus();adTotals();
 }
+/* the saved plan changes, each with the date it takes effect from */
+const adWhen=f=>f?fmtLong(f):'the start';
+function adVersions(){
+  const el=$('#ad-versions');el.hidden=!DEFS.length;
+  const now=defsOn(todayStr());
+  el.innerHTML=DEFS.length?`<h3 class="lbl">Plan changes</h3><ul class="advers">${DEFS.slice().reverse().map(v=>{
+    const k=v.from||'',state=v===now?'<span class="chip ok">In use today</span>':v.from&&v.from>todayStr()?'<span class="chip info">Scheduled</span>':'<span class="chip">Earlier</span>';
+    return `<li class="adver${v===adVer?' on':''}"><span class="advw"><b>From ${esc(adWhen(v.from))}</b> ${state}${v===adVer?' <span class="chip info">Editing</span>':''}</span>
+      <span class="sub">${v.updatedBy?`by ${esc(v.updatedBy)}`:''}</span>
+      <span class="sb">${v===adVer?'':`<button type="button" class="ghost" data-ad="vedit" data-from="${esc(k)}">Edit</button>`}
+        <button type="button" class="ghost" data-ad="vdel" data-from="${esc(k)}">Delete</button></span></li>`;}).join('')}</ul>`:'';
+}
 function adFoodLine(r){return `${r0(+r.k||0)} kcal · P ${r1(+r.p||0)} · C ${r1(+r.c||0)} · F ${r1(+r.f||0)} per 100${r.unit}`;}
 function adTotals(){
   const meals=AD.plan[adType]||[];const tg=AD.targets[adType];
@@ -98,10 +117,14 @@ function adTotals(){
   if(el)el.innerHTML=`<b>Plan as written:</b> ${r0(t.k)} kcal · P ${r1(t.p)} · C ${r1(t.c)} · F ${r1(t.f)} – target ${r0(+tg.k)} kcal · P ${r0(+tg.p)} · C ${r0(+tg.c)} · F ${r0(+tg.f)}. Each new day balances these amounts to its targets.`;
 }
 function adStatus(){
-  const d=adDirty();
+  const d=adDirty(), fe=$('#ad-from');
+  if(document.activeElement!==fe)fe.value=adFrom;
+  const later=DEFS.filter(v=>v.from&&v.from>(adFrom||'')&&v!==adVer).map(v=>fmtShort(v.from));
+  $('#ad-fromhint').textContent=(adFrom?`Days from ${fmtShort(adFrom)} start from this plan; earlier days keep the plan they had.`:'Every day starts from this plan, back to the start.')
+    +(later.length?` Later changes still apply from ${later.join(', ')}.`:'');
   $('#ad-status').innerHTML=adBusy?'<span class="chip info">Saving…</span>'
     :d?'<span class="chip bad">Unsaved changes</span> Nothing changes for your days until you save.'
-    :'<span class="chip ok">✓ Saved</span> New days start from these defaults. Days already in your history keep their own amounts.';
+    :`<span class="chip ok">✓ Saved</span> ${adVer&&adVer.from?`Days from ${esc(fmtShort(adVer.from))} start from these defaults.`:'New days start from these defaults.'} Days already in your history keep their own amounts.`;
   $('#ad-save').disabled=!d||adBusy;$('#ad-discard').hidden=!d;
 }
 
@@ -133,6 +156,7 @@ document.addEventListener('change',e=>{
   else if(a==='iadd'){if(!el.value)return;const f=el.value,F=AD.foods[f]||FOODS[f];
     adPlanEdit(()=>{const m=adMeal(el);(m[el.dataset.b]=m[el.dataset.b]||[]).push({f,g:F.min||(F.step>=5?50:10),lock:false});});renderAdmin();}
   else if(a==='wday'){AD.schedule[+el.dataset.i]=el.value;}
+  else if(a==='from'){adFrom=isDate(el.value)?el.value:'';}
   else if(a==='food'&&el.tagName==='SELECT'){AD.foods[el.dataset.id][el.dataset.k]=el.value;const s=$('#ad-fs-'+el.dataset.id);if(s)s.innerHTML=adFoodLine(AD.foods[el.dataset.id]);}
   else return;
   adStatus();
@@ -155,7 +179,11 @@ document.addEventListener('click',e=>{
     AD.plan=builtinPlanData();AD.custom=false;adMsg='Built-in plan restored – save to use it.';adErrs=[];}
   else if(a==='csv'){adDownload(`logbook-monster-plan-${todayStr()}.csv`,planCsv(AD.plan),'text/csv');return;}
   else if(a==='json'){adDownload(`logbook-monster-defaults-${todayStr()}.json`,JSON.stringify({...adPayload(),plan:AD.plan},null,2),'application/json');return;}
-  else if(a==='discard'){adLoad();adMsg='';adErrs=[];adNotes=[];}
+  else if(a==='discard'){adLoad(adVer);adMsg='';adErrs=[];adNotes=[];}
+  else if(a==='vedit'){const v=DEFS.find(x=>(x.from||'')===b.dataset.from);if(!v)return;
+    if(adDirty()&&!confirm('Drop your unsaved changes and edit this plan instead?'))return;
+    adLoad(v);adMsg='';adErrs=[];adNotes=[];}
+  else if(a==='vdel'){adDelete(b.dataset.from||null);return;}
   else if(a==='save'){adSave();return;}
   else return;
   renderAdmin();
@@ -176,13 +204,29 @@ window.addEventListener('beforeunload',e=>{if(adDirty()){e.preventDefault();e.re
 async function adSave(){
   adBusy=true;adStatus();
   try{
-    const r=await api('PUT','/api/admin/defaults',adPayload());
-    applyDefaults(r);
-    /* days you haven't saved yet start again from the new plan */
-    for(const d of Object.keys(S.days)) if(!LOGGED.has(d)&&!pending.has(d)){delete S.days[d];delete SAVED.days[d];}
-    adLoad();adMsg='';adErrs=[];
+    const from=adFrom||null;
+    const r=await api('PUT','/api/admin/defaults',{...adPayload(),from});
+    adNewDefs(r,from);
+    adLoad(DEFS.find(v=>v.from===from)||undefined);adMsg='';adErrs=[];
   }catch(err){if(!err.signedOut){adErrs=[err.message];adMsg='Couldn’t save:';}}
   adBusy=false;renderAdmin();
+}
+/* new versions from the server: days from that date you haven't saved yet start again from the plan */
+function adNewDefs(r,from){
+  DEFS=r.versions||[];DEFS_ON=undefined;
+  for(const d of Object.keys(S.days)) if((!from||d>=from)&&!LOGGED.has(d)&&!pending.has(d)){delete S.days[d];delete SAVED.days[d];}
+}
+async function adDelete(from){
+  const v=DEFS.find(x=>x.from===from);if(!v)return;
+  const prev=DEFS[DEFS.indexOf(v)-1];
+  if(!confirm(`Delete the plan change from ${adWhen(from)}? ${prev?`Those days go back to the plan from ${adWhen(prev.from)}.`:'Those days go back to the built-in plan.'}`))return;
+  if(v===adVer&&adDirty()&&!confirm('You have unsaved changes to this plan. Drop them?'))return;
+  try{const r=await api('DELETE','/api/admin/defaults/'+(from||'start'));
+    const was=v===adVer, keep=adVer&&adVer.from;
+    adNewDefs(r,from);
+    if(was)adLoad();else adVer=DEFS.find(x=>x.from===keep)||null;   /* the draft you're editing stays as it is */
+  }catch(err){if(!err.signedOut)alert(err.message);return;}
+  renderAdmin();
 }
 function adDownload(name,text,type){
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;

@@ -133,6 +133,11 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await pg.waitForFunction(() => /^Using /.test(document.querySelector('#ad-aistate').textContent), null, { timeout: 5000 });
         expect(!(await pg.isDisabled('#ad-aifile')), 'PDF upload should be on once a key is saved');
         await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
+        /* a change that takes effect later: days before it keep the plan in use now */
+        await pg.click('#ad-types [data-t=R]'); await pg.fill('#ad-mn-0', 'Future bowl');
+        await pg.fill('#ad-from', '2030-01-01'); await pg.click('#ad-save');
+        await pg.waitForFunction(() => /Scheduled/.test(document.querySelector('#ad-versions').textContent) && /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
+        await pg.click('#ad-versions .adver:not(.on) [data-ad=vedit]');
         /* invite someone: email isn't set up, so the link is shown to pass on; accept it in a fresh phone-sized browser */
         await pg.waitForSelector('#ad-users .aduser');
         expect(/Not set up/.test(await pg.textContent('#ad-mailstate')), 'email should start not set up');
@@ -156,6 +161,9 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.click('a[data-view=day]'); await pg.click('[data-act=next]'); await pg.waitForTimeout(200);
       await pg.evaluate(() => { location.hash = '#day/2030-01-07'; }); /* a Monday nobody has saved */
       await pg.waitForFunction(() => /Rest day/.test(document.querySelector('#dsub').textContent), null, { timeout: 5000 });
+      expect(/Future bowl/.test(await pg.textContent('#meals')), 'days from 2030 should start from the plan change that takes effect then');
+      await pg.evaluate(() => { location.hash = '#day/2029-12-31'; }); /* the Monday before it */
+      await pg.waitForFunction(() => document.querySelector('#datepick').value === '2029-12-31' && /Rest day/.test(document.querySelector('#dsub').textContent), null, { timeout: 5000 });
       expect(/Smoke bowl/.test(await pg.textContent('#meals')), 'new rest days should start from the uploaded plan');
       expect(errs.length === 0, `page errors at ${w}px: ${errs.join(' | ')}`);
       const scroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
