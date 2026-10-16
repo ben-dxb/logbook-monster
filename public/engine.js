@@ -273,7 +273,10 @@ function warnings(day){
   if(lv>175) w.push(`Livers: ${lv}g – keep to 175g raw (vitamin A)`);
   return w;
 }
+/* Health Road packs hold the meat in the plan plus sauce that isn't: weigh the whole pack and eat the
+   same share of it as your share of the meat. g = meat you're having, pack = pack weight, meat = meat in the pack. */
+function packPortion(g,pack,meat){return g>0&&pack>0&&meat>0?g/meat*pack:null;}
 function fmtG(i){const u=FOODS[i.f].unit||'g';return Math.round(i.g)+u;}
 
 /* lets the server check food ids against the same data */
-if(typeof module!=='undefined') module.exports={FOODS,TYPE,COACH};
+if(typeof module!=='undefined') module.exports={FOODS,TYPE,COACH,packPortion};

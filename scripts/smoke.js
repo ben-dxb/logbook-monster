@@ -1,5 +1,5 @@
 'use strict';
-/* Browser smoke test: starts a throwaway server, signs in, edits and saves a day, logs a weight,
+/* Browser smoke test: starts a throwaway server, signs in, weighs a meal-prep pack, edits and saves a day, logs a weight,
    opens History and Weight, logs gym sets, adds a shared food to the library and to a day, uploads a plan and invites someone on the Admin page, at desktop and phone widths. Fails on any page error.
    Needs Playwright (npm i -g playwright, or available in the environment); skips if missing. */
 const { spawn, execSync } = require('node:child_process');
@@ -41,11 +41,17 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.fill('#email', 'smoke@example.com'); await pg.fill('#password', 'smoke-password-1'); await pg.click('#submit');
       await pg.waitForSelector('#v-day:not([hidden]) #meals .meal', { timeout: 5000 });
       if (first) expect(/Plan only/.test(await pg.textContent('#status')), 'fresh day should be "Plan only"');
+      if (first) { /* weigh a Health Road pack: the portion follows the plan's share of the meat */
+        const pw = pg.locator('#meals input[data-act=pack][data-k=w]').first();
+        await pw.fill('320');
+        await pg.waitForFunction(() => /Weigh out \d+g/.test(document.querySelector('#meals .pout').textContent));
+      }
       await pg.selectOption('#sn', 'reese'); await pg.fill('#sq', '2'); await pg.click('#snackform button');
       await pg.waitForFunction(() => /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
       await pg.fill('#wt', '80.5'); await pg.press('#wt', 'Tab'); await pg.waitForTimeout(300);
       await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
       expect(/Reese/.test(await pg.textContent('#offlist')), 'snack should survive reload');
+      expect(await pg.inputValue('#meals input[data-act=pack][data-k=w] >> nth=0') === '320', 'pack weight should survive reload');
       expect(await pg.inputValue('#wt') === '80.5', 'weight should survive reload');
       await pg.click('a[data-view=history]'); await pg.waitForSelector('#v-history:not([hidden]) .cell.logged');
       await pg.click('a[data-view=weight]'); await pg.waitForSelector('#v-weight:not([hidden]) #chart svg');
