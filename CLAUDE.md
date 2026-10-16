@@ -55,8 +55,8 @@
   after it; bulk uploads (up to 5 GB picked at once, 3 at a time) date each photo from its own EXIF/XMP data (`public/exifdate.js`, global `ExifDate`), the form's date only for those without one; `POST /api/photos/:id/ai-pose` asks the AI for the pose (front/side/back/other) from the thumbnail – only when the person asks
   ("Let AI tell" on upload, "Tag poses with AI" over the photos shown, "Ask AI" on one photo); Account admin can delete all of one's own photos between two dates (`DELETE /api/photos?from=…&to=…`, both dates required); files live on disk in `PHOTO_DIR` (default `photos/` next to the database), only their details in SQLite.
 - `server/timeline.js` / `public/timeline.js` – the Timeline tab of History (`#history` is the Calendar tab; `#history/timeline`, `#history/timeline/<date>` opens a day's card in a `<dialog>`): one day's food,
-  weight, latest photo of each pose, supplements (that day + the 14-day regime) and gym sets; trend series (macros, weight, volume, Epley e1RM per
-  exercise and a strength index, plus supplements with "Trend" ticked – `supplement_trends`, by name) toggled on the chart; `POST /api/timeline/summary`
+  weight, latest photo of each pose, supplements (that day + the 14-day regime) and gym sets; trend series (macros, weight, volume, a strength index, Epley e1RM of the exercises
+  you follow – `exercises.trend`, set by "Trend" on the exercise in the Gym or the Timeline's exercise picker, `PUT /api/gym/trends` –, plus supplements with "Trend" ticked – `supplement_trends`, by name) toggled on the chart; `POST /api/timeline/summary`
   sends weekly averages and correlations of the shown metrics to the AI.
 - `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by tests.
 - Secrets live only in `.env` on the server; never send them to the client or commit them.
