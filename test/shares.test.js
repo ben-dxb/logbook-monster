@@ -97,12 +97,15 @@ test('a coach link shows the account’s data read only, with no sign-in', async
   const days = (await open(api + '/days?from=2026-09-01&to=2026-09-30')).body;
   assert.deepStrictEqual(days.map(d => [d.date, d.k]), [['2026-09-10', 2400]]);
   assert.deepStrictEqual((await open(api + '/weights')).body, [{ date: '2026-09-10', kg: 81.5 }]);
-  assert.ok((await open(api + '/defaults')).body.myVersions);
+  const defs = (await open(api + '/defaults')).body;
+  assert.ok(defs.myVersions && !('updatedBy' in defs) && !('updatedAt' in defs), 'the coach sees no admin details');
   const card = (await open(api + '/timeline/day/2026-09-10')).body;
   assert.strictEqual(card.food.summary.k, 2400);
   assert.strictEqual(card.photos[0].id, photo.id);
   assert.ok((await open(api + '/timeline/trends?from=2026-09-01&to=2026-09-30')).body.series.some(s => s.key === 'kg'));
-  assert.strictEqual((await open(`${api}/photos/${photo.id}/thumb`)).status, 200);
+  const thumb = await open(`${api}/photos/${photo.id}/thumb`);
+  assert.strictEqual(thumb.status, 200);
+  assert.strictEqual(thumb.headers.get('cache-control'), 'no-store', 'a coach’s browser keeps no pictures');
   assert.strictEqual((await open(`${api}/photos/${bobPhoto.id}/file`)).status, 404, 'only the owner’s photos');
 
   /* nothing can be changed through it, and nothing beyond what it shows can be read */

@@ -164,7 +164,8 @@ function serve(which) {
     const row = q.files.get(req.user.id, idOf(req.params.id));
     if (!row) return res.status(404).json({ error: 'No such photo' });
     const thumb = which === 'thumb' && row.thumb;
-    res.set({ 'Cache-Control': 'private, max-age=31536000, immutable', 'Content-Type': thumb ? 'image/jpeg' : row.type });
+    /* through a coach link (req.share, server/shares.js) nothing is kept, so a switched-off link leaves no pictures behind */
+    res.set({ 'Cache-Control': req.share ? 'no-store' : 'private, max-age=31536000, immutable', 'Content-Type': thumb ? 'image/jpeg' : row.type });
     res.sendFile(fileAt(thumb || row.file), { cacheControl: false }, err => {
       if (err && !res.headersSent) res.status(404).json({ error: 'That photo’s file is missing' });
     });
