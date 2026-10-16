@@ -1,7 +1,7 @@
 'use strict';
 /* Foods view: the food library. Whole meals and single ingredients you enter yourself (per 100 g, per 100 ml
    or per item) with an optional recipe, and foods other people have shared. Search, filters and sorting
-   find one; "Add to plan" puts it in a day's off-plan list. AI can fill in values left blank – those are
+   find one; "Add to plan" puts it in a meal or a day's off-plan list. AI can fill in values left blank – those are
    flagged (⚑) and tapping a flag shows the source the AI gave.
    #foods, #foods/new, #foods/12 (edit one of yours). Uses helpers and LIB from app.js. */
 
@@ -20,7 +20,7 @@ function fMacros(f,flags){
     ?`<button type="button" class="aiv" data-fa="src" data-id="${f.id}" aria-expanded="${fOpen.has(f.id)}" title="AI estimate – tap to see the source">⚑ ${txt}</button>`:txt;
   return `${v('k',`<b>${r0(f.k)}</b> kcal`)} · ${v('p','P '+r1(f.p))} · ${v('c','C '+r1(f.c))} · ${v('f','F '+r1(f.f))}`;
 }
-function fSort(){LIB.sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})||a.id-b.id);LIBV++;}
+function fSort(){LIB.sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})||a.id-b.id);libRegister();}
 const fList=list=>list.join(', ').replace(/, ([^,]*)$/,' and $1');
 
 /* What the AI said, for a card or the edit form. */
@@ -76,8 +76,8 @@ function fListPage(){
   const who=[['all','Everyone’s'],['mine','Mine'],['shared','Shared with me']].map(([v,l])=>`<option value="${v}"${fF.who===v?' selected':''}>${l}</option>`).join('');
   const ord=ORDERS.map(([v,l])=>`<option value="${v}"${fF.order===v?' selected':''}>${l}</option>`).join('');
   const tags=TAGS.map(([v,l])=>`<button type="button" data-fa="tag" data-v="${v}" aria-pressed="${fF.tags.includes(v)}">${l}</button>`).join('');
-  return `<div class="gbar"><h2>Meal Planner</h2><a class="btn" href="#foods/new">New food</a></div>
-    <p class="fintro">Whole meals and single ingredients you enter yourself, with a recipe if you like. Share one and everyone can add it to their plan. “Add to plan” puts it in a day’s off-plan list and the rest of the day rebalances around it. Values marked ⚑ were estimated by AI – tap one to see where it came from.</p>
+  return `<div class="gbar"><h2>Food Library</h2><a class="btn" href="#foods/new">New food</a></div>
+    <p class="fintro">Whole meals and single ingredients you enter yourself, with a recipe if you like. Share one and everyone can add it to their plan. “Add to plan” puts it in a meal or the off-plan list of any day, and the rest of the day rebalances around it. In the Food Tracker you’ll also find them under “+ Add a food…” in every meal. Values marked ⚑ were estimated by AI – tap one to see where it came from.</p>
     <div class="seg fkinds" id="f-kinds" role="group" aria-label="Type"></div>
     <div class="ftools"><input id="f-q" type="search" placeholder="Search names, recipes and people" aria-label="Search foods" value="${esc(fQuery)}">
       <label class="fsel"><span class="lbl">Show</span><select id="f-who">${who}</select></label>
@@ -132,9 +132,17 @@ function fAddForm(f){
   return `<form class="fadd" id="f-addform" data-id="${f.id}">
     <label class="f"><span class="lbl">Day</span><input id="f-adate" type="date" value="${esc(a.date)}" required></label>
     <label class="f"><span class="lbl">${ul}</span><input id="f-aqty" type="number" inputmode="decimal" min="0" step="${f.unit==='each'?'0.5':'1'}" value="${esc(a.qty)}" required></label>
+    <label class="f fwhere"><span class="lbl">Where</span><select id="f-awhere">${fWhereOpts(a.date,a.where)}</select></label>
     <span class="ml fprev" id="f-aprev">${fMacros(m)}</span>
     <div class="factions"><button class="btn" type="submit">Add to plan</button><button class="ghost" type="button" data-fa="cancel">Cancel</button></div>
   </form>`;
+}
+
+/* the meals of that day (as saved, or as the plan would start it), plus the off-plan list */
+function fWhereOpts(date,sel){
+  let meals=[];
+  if(isDate(date)){try{meals=S.days[date]?S.days[date].meals:planFor(wdOf(date),'omelette',false);}catch{meals=[];}}
+  return `<option value="off">Off plan</option>`+meals.map((m,mi)=>`<option value="${mi}"${String(mi)===String(sel)?' selected':''}>Meal ${esc(m.id)} – ${esc(m.name)}</option>`).join('');
 }
 
 /* ---------- add / edit ---------- */
@@ -198,7 +206,7 @@ async function fDelete(id){
   const f=fById(id);if(!f)return;
   if(!confirm(f.mine?`Delete “${f.name}” from your library? Days you've already added it to keep it.`:`Delete “${f.name}”${f.by?' (shared by '+f.by+')':''} from the library for everyone?`))return;
   try{await api('DELETE','/api/foods/'+id);}catch(e){if(!e.signedOut)alert(e.message);return;}
-  LIB=LIB.filter(x=>x.id!==id);LIBV++;fMsg=`Deleted “${f.name}”.`;
+  LIB=LIB.filter(x=>x.id!==id);libRegister();fMsg=`Deleted “${f.name}”.`;
   if(location.hash==='#foods')renderFoodList();else go('foods');
 }
 
@@ -220,7 +228,7 @@ document.addEventListener('click',e=>{
   else if(a==='tag'){const t=b.dataset.v;fF.tags=fF.tags.includes(t)?fF.tags.filter(x=>x!==t):[...fF.tags,t];fKeep();b.setAttribute('aria-pressed',String(fF.tags.includes(t)));renderFoodList();}
   else if(a==='clear'){Object.assign(fF,{kind:'all',who:'all',tags:[]});fQuery='';fKeep();$('#f-q').value='';$('#f-who').value='all';
     document.querySelectorAll('[data-fa=tag]').forEach(x=>x.setAttribute('aria-pressed','false'));renderFoodList();}
-  else if(a==='add'){const f=fById(+b.dataset.id);fAdding={id:f.id,date:S.cur,qty:libDefault(f.unit)};renderFoodList();const q=$('#f-aqty');if(q)q.focus();}
+  else if(a==='add'){const f=fById(+b.dataset.id);fAdding={id:f.id,date:S.cur,qty:libDefault(f.unit),where:'off'};renderFoodList();const q=$('#f-aqty');if(q)q.focus();}
   else if(a==='cancel'){fAdding=null;renderFoodList();}
   else if(a==='del'){fDelete(+b.dataset.id);}
 });
@@ -237,8 +245,10 @@ document.addEventListener('input',e=>{
   else if(fEdit&&fEdit.ai&&/^f-[kpcf]$/.test(id)){   /* your own number replaces the AI's */
     const m=id.slice(2);fEdit.ai.fields=fEdit.ai.fields.filter(x=>x!==m);if(!fEdit.ai.fields.length)fEdit.ai=null;fPaintAi();
   }
+  else if(fAdding&&id==='f-awhere'){fAdding.where=e.target.value;}
   else if(fAdding&&(id==='f-aqty'||id==='f-adate')){
     fAdding[id==='f-aqty'?'qty':'date']=e.target.value;
+    if(id==='f-adate'){fAdding.where='off';$('#f-awhere').innerHTML=fWhereOpts(fAdding.date,'off');}
     const f=fById(fAdding.id);if(f&&id==='f-aqty')$('#f-aprev').innerHTML=fMacros(libMac({u:f.unit,per:f},+e.target.value||0));
   }
 });
@@ -248,6 +258,7 @@ document.addEventListener('submit',async e=>{
     e.preventDefault();const f=fById(+e.target.dataset.id),date=$('#f-adate').value,qty=+$('#f-aqty').value||0;
     if(!f)return;
     if(!isDate(date)||!(qty>0)){alert('Pick a day and an amount above 0.');return;}
-    fAdding=null;await addFoodToDay(f,date,qty);
+    const w=$('#f-awhere').value;
+    fAdding=null;await addFoodToDay(f,date,qty,w==='off'?null:+w);
   }
 });

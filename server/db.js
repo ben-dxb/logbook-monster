@@ -107,6 +107,12 @@ CREATE TABLE IF NOT EXISTS foods (
 );
 CREATE INDEX IF NOT EXISTS foods_user ON foods(user_id);
 CREATE INDEX IF NOT EXISTS foods_public ON foods(public);
+/* An account's own plan, week, targets and food values, layered over the app defaults (app_config 'defaults'). */
+CREATE TABLE IF NOT EXISTS user_defaults (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  data       TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 
 /* Added after the first release: accounts an admin invited may sign in even when ALLOWED_EMAILS doesn't list them. */

@@ -14,6 +14,8 @@
 - New features should come with a test in `test/` or a step in `scripts/smoke.js`.
   Test servers set `AUTH_RATE_LIMIT=1000` so the many sign-ins in the suite don't hit the
   20-per-15-minutes sign-in limit; `test/ratelimit.test.js` checks the real default still applies.
+  Test files run in parallel: get ports for test servers (and fakes) from `require('./_ports').freePorts(n)`,
+  never a fixed or random range, or they collide now and then.
 - Keep PRs focused on one change so they merge cleanly. If the merge master reports a conflict,
   merge `main` into your branch (no rebase/force-push), resolve, re-run tests, push, and tell it again.
 
@@ -27,15 +29,19 @@
 ## Layout
 
 - `server/` – Express app: `config.js` (.env), `auth.js` (password + Google OIDC, CSRF),
-  `api.js` (days, weights, settings, admin routes), `gym.js` (exercises, workouts, sets, AI workout import), `db.js` (SQLite schema),
+  `api.js` (days, weights, settings, `/my/defaults` account admin and `/admin/*` super admin routes), `gym.js` (exercises, workouts, sets, AI workout import), `db.js` (SQLite schema), `defaults.js` (app defaults + each account's own layer),
   `users.js` (invites, account list), `mail.js` (SMTP sending – use `mail.notify()` for fire-and-forget notifications).
 - `public/engine.js` – the original calculator data and balancing maths. Change food data and plan
   here; keep the solver behaviour unless asked.
 - `public/app.js` – views (Day, History calendar, Weight), saving, routing.
+- `public/admin.js` – Account admin (`#account`, anyone: own plan/week/targets/foods) and Super admin
+  (`#admin`: app defaults, AI key, people, email) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope.
 - `public/gym.js` – the Gym view (workouts, exercise sets, sessions, AI import preview).
 - `server/foods.js` / `public/foods.js` – the food library: meals and ingredients (`kind`) people enter (per 100 g/ml
   or per item) with an optional recipe, private or shared with everyone. `POST /api/foods/ai-fill` estimates blank
-  values; `food.ai` records which values are AI estimates and the source shown behind the ⚑ flag. "Add to plan" puts one in a day's off-plan list (`libAdd` in `app.js`).
+  values; `food.ai` records which values are AI estimates and the source shown behind the ⚑ flag. "Add to plan" puts
+  one in a meal or a day's off-plan list. Inside meals a library food is a calculator food with id `L:<id>:<hash of its
+  values>`; each day keeps a copy in `D.lib` so old days still load after the food changes (`libRegister`/`libSync` in `app.js`).
 - `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by tests.
 - Secrets live only in `.env` on the server; never send them to the client or commit them.
 - Strict CSP: no inline scripts or `style=` attributes in HTML.

@@ -26,22 +26,25 @@ or Google.
   browser, shows what it found (sets, exercises, date range, rows it couldn't read, and asks
   day/month order or kg/lb when the file doesn't say), then imports it. Exercises are matched to
   yours by name; sets you already have are skipped, so importing a newer export later is safe.
-- **Meal Planner** – the food library: whole meals and single ingredients you enter (per 100 g,
+- **Food Library** – the food library: whole meals and single ingredients you enter (per 100 g,
   per 100 ml or per item), with a recipe or notes, private or shared with everyone. Tabs split
   meals from ingredients; search, Show (mine / shared), Sort (A–Z, calories, protein, protein per
   calorie) and quick filters (high protein, low calorie, has recipe, AI estimates) find one, and
   your filters are remembered. **Fill blanks with AI** estimates the values you left empty from
-  the name, type and recipe (OpenRouter, the admin's key, 40 an hour per account); those values
+  the name, type and recipe (OpenRouter, the super admin's key, 40 an hour per account); those values
   are flagged ⚑ and tapping a flag shows the source, workings, confidence and model. Typing your
   own number removes its flag.
-- **Admin** (admins only) – the baseline every new day starts from: upload a meal plan (CSV or
-  JSON) or edit it in place, download it, choose which weekdays are training or rest, set day
-  targets, and edit or add foods. Days already saved keep their own amounts. Admins are the
-  emails in `ADMIN_EMAILS`; if that's empty, the first account created is the admin.
+- **Account admin** (everyone) – your own baseline: upload a meal plan (CSV or JSON) or edit it
+  in place, download it, choose which weekdays are training or rest, set day targets, and edit or
+  add foods. Only what you change is stored; everything else follows the app defaults, and
+  **Go back to the app defaults** drops your changes. Days already saved keep their own amounts.
   **Read a PDF with AI** sends your coach's plan PDF (or a photo) to a model on OpenRouter and
-  loads the meals, amounts, new foods and targets into the page for you to check and save. Add
-  your OpenRouter API key on the Admin page (kept on the server, never shown again) or set
-  `OPENROUTER_API_KEY` in `.env`.
+  loads the meals, amounts, new foods and targets into the page for you to check and save
+  (12 reads an hour per account, using the super admin's key).
+- **Super admin** (`ADMIN_EMAILS` only; if that's empty, the first account created) – changes
+  that affect how the app works for everyone: the same editor for the **app defaults** every
+  account starts from, the OpenRouter API key (kept on the server, never shown again; or set
+  `OPENROUTER_API_KEY` in `.env`), **People** and **Email**.
 - **Account menu** – download all your data as JSON, set/change password, sign out.
 
 ## Run it locally
@@ -72,9 +75,9 @@ All secrets live only in `.env` on the server – nothing secret is ever sent to
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Turn on "Continue with Google". Leave empty to hide it. |
 | `ALLOWED_EMAILS` | Comma-separated. If set, **only** these emails can sign in, and they can create their own account the first time. |
 | `ALLOW_REGISTRATION` | `true` lets anyone sign up. Default `false`. |
-| `ADMIN_EMAILS` | Comma-separated. Who can open the Admin page. Empty = the first account created. |
-| `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | Optional. AI import of plan PDFs. A key saved on the Admin page wins over this one. |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` | Optional. The email account invites and notifications are sent from. Easier to fill in on the Admin page (Email); settings saved there win. |
+| `ADMIN_EMAILS` | Comma-separated. Who can open the Super admin page. Empty = the first account created. |
+| `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | Optional. AI import of plan PDFs. A key saved on the Super admin page wins over this one. |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` | Optional. The email account invites and notifications are sent from. Easier to fill in on the Super admin page (Email); settings saved there win. |
 | `DB_PATH` | SQLite file. Default `./data/logbook-monster.db` (an existing `./data/mealswap.db` from before the rename is used if present). |
 | `TRUST_PROXY` | Set to `1` when running behind nginx/Caddy (default in production). |
 
@@ -94,7 +97,7 @@ are only created for emails allowed by `ALLOWED_EMAILS` / `ALLOW_REGISTRATION`.
 
 ## Inviting people and sending email
 
-On the Admin page:
+On the Super admin page:
 
 1. **Email** – the account the app sends from. For Gmail: turn on 2-Step Verification on the
    Google account, create an app password at <https://myaccount.google.com/apppasswords>, then

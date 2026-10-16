@@ -10,8 +10,7 @@ const { DatabaseSync } = require('node:sqlite');
 
 const http = require('node:http');
 
-const PORT = 4000 + Math.floor(Math.random() * 90);
-const AI_PORT = PORT + 100;
+const [PORT, AI_PORT] = require('./_ports').freePorts(2);
 /* Stands in for OpenRouter: records what it was asked and answers with an estimate (or junk for "Mystery"). */
 const aiSeen = [];
 const fakeAi = http.createServer((req, res) => {
