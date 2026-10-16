@@ -17,7 +17,7 @@ const todayStr=()=>ymd(new Date());
 const isDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||'')&&!isNaN(parse(s));
 const fmtLong=s=>parse(s).toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 const fmtShort=s=>parse(s).toLocaleDateString(undefined,{day:'numeric',month:'short'});
-const TYPE_NAME={T:'Training day',R:'Rest day',S:'Saturday training'};
+const OLD_TYPES={T:'Training',R:'Rest',S:'Saturday training'};   /* day types before templates had names */
 const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const r0=x=>Math.round(x), r1=x=>(Math.round(x*10)/10).toFixed(1);
@@ -32,7 +32,10 @@ const sDose=(n,u)=>`${sNum(n)} ${sUnitTxt(u,n)}`;
 let view='timeline', DEFS={mine:null,myVersions:[]};
 /* the person's own plan changes each apply from a date (as in admin.js) */
 function mineOn(date){let v=null;for(const x of DEFS.myVersions||[])if(!x.from||x.from<=date)v=x;return v;}
-function typeOn(date){const v=mineOn(date),s=(v&&v.schedule)||DEFS.schedule;return (Array.isArray(s)&&s.length===7?s:BUILTIN.type)[wdOf(date)];}
+/* the day template a date's weekday uses, and a template's name, from the plan in effect on that date */
+function typeOn(date){const v=mineOn(date),ids=((v&&v.templates)||[]).map(t=>t.id),s=v&&v.schedule,t=Array.isArray(s)?s[wdOf(date)]:null;
+  return ids.includes(t)?t:ids[0]||null;}
+function tnameOn(date,id){const v=mineOn(date),t=((v&&v.templates)||[]).find(x=>x.id===id);return t?t.name:OLD_TYPES[id]||'';}
 
 /* Reads only, from the link's own API. A link that has run out shows the "doesn't work" panel. */
 async function api(method,url){
@@ -74,7 +77,7 @@ function cRenderDays(){
     const kcal=s?`<b>${r0(s.k)}</b>${t.k?` / ${r0(t.k)}`:''} kcal`:'<span class="sub">Not logged</span>';
     const off=s&&t.k?s.k-t.k:null, dot=off==null?'':Math.abs(off)<=100?'<i class="dot on" title="On target">✓</i>':off>0?'<i class="dot over" title="Over">▲</i>':'<i class="dot under" title="Under">▼</i>';
     const mac=s?`P ${r0(s.p)} · C ${r0(s.c)} · F ${r0(s.f)}`:'';
-    html+=`<a class="cday" href="#history/timeline/${d}"><span class="cdd"><b>${esc(parse(d).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'}))}</b><small>${esc(TYPE_NAME[(s&&s.type)||typeOn(d)]||'')}</small></span>
+    html+=`<a class="cday" href="#history/timeline/${d}"><span class="cdd"><b>${esc(parse(d).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'}))}</b><small>${esc((s&&s.tname)||tnameOn(d,(s&&s.type)||typeOn(d)))}</small></span>
       <span class="cdk">${dot}${kcal}</span><span class="cdm sub">${mac}</span><span class="cdw">${kg!=null?`${kg.toFixed(1)} kg`:''}</span></a>`;
   }
   $('#c-days').innerHTML=html;
@@ -84,7 +87,7 @@ async function start(){
   let info;
   try{info=await api('GET','/api/info');}catch(e){if(!e.signedOut){$('#c-loading').textContent='Couldn’t load this logbook: '+e.message;}return;}
   try{DEFS=(await api('GET','/api/defaults'))||DEFS;}catch{}
-  applyDefaults(layerDefaults(DEFS,mineOn(todayStr())));   /* food names and the week as the person has them now */
+  applyDefaults(mineOn(todayStr()));   /* food names and the week as the person has them now */
   document.title=`${info.name} – Logbook Monster`;
   $('#c-who').textContent=`${info.name}’s logbook`;
   $('#c-until').textContent=`${info.label?info.label+' · ':''}Shared with you read only. This link works until ${cUntil(info.expires)}.`;

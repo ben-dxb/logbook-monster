@@ -205,10 +205,10 @@ function tOpen(d){
 }
 function tCloseCard(quiet){const dlg=$('#t-card');tCardDate=null;tCardTok++;if(dlg&&dlg.open){if(quiet)dlg.dataset.quiet='1';dlg.close();}}
 function tCardHead(d,r){
-  const s=r&&r.food&&r.food.summary, type=(s&&s.type)||typeOn(d);
+  const s=r&&r.food&&r.food.summary, type=(s&&s.type)||typeOn(d), tn=(s&&s.tname)||tnameOn(d,type);
   const t=todayStr(), rel=d===t?'Today':d===addDays(t,-1)?'Yesterday':'';
   return `<header class="tchead"><button class="nav" type="button" data-ta="cmove" data-n="-1" aria-label="Previous day">‹</button>
-    <div class="dt"><h2 id="t-ctitle">${esc(fmtLong(d))}</h2><span class="sub">${rel?esc(rel)+' · ':''}${esc(TYPE_NAME[type]||'')}</span></div>
+    <div class="dt"><h2 id="t-ctitle">${esc(fmtLong(d))}</h2><span class="sub">${esc([rel,tn].filter(Boolean).join(' · '))}</span></div>
     <button class="nav" type="button" data-ta="cmove" data-n="1" aria-label="Next day">›</button>
     <button class="x tclose" type="button" data-ta="close" aria-label="Close">×</button></header>`;
 }
