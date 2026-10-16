@@ -374,6 +374,23 @@ footer{font-size:12px;color:var(--muted)}
 .fform .tog{align-items:flex-start}
 .fform .tog input{margin-top:3px}
 .fdel{margin-left:auto}
+.fkinds button{font-weight:700;font-size:14px;padding:5px 14px}
+.fkinds small{font-weight:600;opacity:.75}
+.fsel{display:flex;align-items:center;gap:6px}
+.fsel select{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:5px 10px;max-width:100%}
+.ftags button{font-size:12px;padding:3px 10px}
+.fcount{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted);min-height:28px}
+.fletter{margin:6px 0 -4px;font-size:13px;font-weight:800;color:var(--muted);letter-spacing:.08em;border-bottom:1px solid var(--line);padding-bottom:2px}
+.chip.kind{background:transparent;border:1px solid var(--line);color:var(--muted)}
+.muted{color:var(--muted)}
+.aiv{border:0;background:var(--warnbg);color:var(--warnink);border-radius:6px;padding:0 5px;font:inherit;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
+.aiv[aria-expanded="true"]{outline:1px solid var(--warnink)}
+.aimark{color:var(--warnink);background:var(--warnbg);border-radius:4px;padding:0 4px;text-transform:none;letter-spacing:0}
+.fform input.aifill{background:var(--warnbg);color:var(--warnink)}
+.aisrc{background:var(--warnbg);color:var(--warnink);border-radius:8px;padding:8px 10px;font-size:13px;display:flex;flex-direction:column;gap:4px;overflow-wrap:anywhere}
+.aisrc p{margin:0} .aisrc ul{margin:0;padding-left:18px} .aisrc .muted{color:inherit;opacity:.8}
+.aisrc a{color:inherit}
+.faifill{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:13px}
 /* ---------- supplements ---------- */
 .sform{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-items:end;max-width:560px}
 .sform .swide{grid-column:1/-1}

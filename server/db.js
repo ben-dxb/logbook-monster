@@ -100,6 +100,8 @@ CREATE TABLE IF NOT EXISTS foods (
   f          REAL NOT NULL,
   recipe     TEXT NOT NULL DEFAULT '',
   public     INTEGER NOT NULL DEFAULT 0,
+  kind       TEXT NOT NULL DEFAULT 'ingredient',
+  ai         TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -143,6 +145,17 @@ CREATE INDEX IF NOT EXISTS supplement_log_day ON supplement_log(user_id, date);
 /* Added after the first release: accounts an admin invited may sign in even when ALLOWED_EMAILS doesn't list them. */
 if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'invited_by')) {
   db.exec('ALTER TABLE users ADD COLUMN invited_by TEXT');
+}
+
+/* Added later: foods are a whole meal or a single ingredient, and ai holds which values AI estimated
+   and where it got them from (JSON), so the app can flag them. Older foods with a recipe or per item are meals. */
+{
+  const cols = db.prepare('PRAGMA table_info(foods)').all().map(c => c.name);
+  if (!cols.includes('kind')) {
+    db.exec("ALTER TABLE foods ADD COLUMN kind TEXT NOT NULL DEFAULT 'ingredient'");
+    db.exec("UPDATE foods SET kind = 'meal' WHERE recipe <> '' OR unit = 'each'");
+  }
+  if (!cols.includes('ai')) db.exec('ALTER TABLE foods ADD COLUMN ai TEXT');
 }
 
 module.exports = db;

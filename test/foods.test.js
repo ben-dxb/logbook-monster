@@ -8,16 +8,33 @@ const os = require('node:os');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 
-const [PORT] = require('./_ports').freePorts(1);
+const http = require('node:http');
+
+const [PORT, AI_PORT] = require('./_ports').freePorts(2);
+/* Stands in for OpenRouter: records what it was asked and answers with an estimate (or junk for "Mystery"). */
+const aiSeen = [];
+const fakeAi = http.createServer((req, res) => {
+  let body = '';
+  req.on('data', c => { body += c; });
+  req.on('end', () => {
+    const j = JSON.parse(body); aiSeen.push(j);
+    const est = /Mystery/.test(j.messages[1].content) ? { k: 'lots' }
+      : { k: 165, p: 31, c: 0, f: 3.6, source: 'USDA FoodData Central – Chicken breast, raw', basis: ['100 g raw breast'],
+        url: 'javascript:alert(1)', confidence: 'high', fields: ['k', 'p', 'c', 'f'] };
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ model: 'test/model', choices: [{ message: { content: JSON.stringify(est) } }] }));
+  });
+});
 const BASE = `http://127.0.0.1:${PORT}`;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'logbook-monster-foods-'));
 const root = path.join(__dirname, '..');
 const env = { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', BASE_URL: BASE, DB_PATH: path.join(dir, 't.db'),
   SESSION_SECRET: 'x'.repeat(40), AUTH_RATE_LIMIT: '1000', ALLOWED_EMAILS: '', ADMIN_EMAILS: 'admin@example.com', ALLOW_REGISTRATION: 'false',
-  GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: '' };
+  GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: 'sk-test-key-1234', OPENROUTER_BASE_URL: `http://127.0.0.1:${AI_PORT}` };
 let srv;
 
 before(async () => {
+  await new Promise(r => fakeAi.listen(AI_PORT, '127.0.0.1', r));
   for (const who of ['admin', 'ann', 'bob']) {
     execFileSync(process.execPath, ['--disable-warning=ExperimentalWarning', 'scripts/create-user.js', `${who}@example.com`],
       { cwd: root, env: { ...env, NEW_PASSWORD: 'long-password-1' }, stdio: 'ignore' });
@@ -32,7 +49,7 @@ before(async () => {
   }
   throw new Error('server did not start');
 });
-after(() => { srv.kill(); fs.rmSync(dir, { recursive: true, force: true }); });
+after(() => { srv.kill(); fakeAi.close(); fs.rmSync(dir, { recursive: true, force: true }); });
 
 async function signIn(email) {
   let cookie = '', csrf = '';
@@ -108,4 +125,54 @@ test('food values are checked', async () => {
   assert.strictEqual(r.status, 200);
   assert.strictEqual(r.body.unit, 'each');
   assert.strictEqual((await ann('PUT', '/api/foods/abc', { name: 'x', k: 1 })).status, 404);
+});
+
+test('foods are a meal or an ingredient', async () => {
+  const bob = await signIn('bob@example.com');
+  let r = await bob('POST', '/api/foods', { name: 'Chilli', unit: 'g', k: 120, p: 9, c: 10, f: 4, recipe: '500g mince\n1 tin beans' });
+  assert.strictEqual(r.body.kind, 'meal');                                 /* a recipe makes it a meal */
+  r = await bob('POST', '/api/foods', { name: 'Cereal bar', unit: 'each', k: 190, p: 3, c: 30, f: 6 });
+  assert.strictEqual(r.body.kind, 'meal');                                 /* so does a whole portion */
+  r = await bob('POST', '/api/foods', { name: 'Rice (dry)', unit: 'g', k: 360, p: 7, c: 79, f: 1 });
+  assert.strictEqual(r.body.kind, 'ingredient');
+  r = await bob('PUT', `/api/foods/${r.body.id}`, { ...r.body, kind: 'meal' });
+  assert.strictEqual(r.body.kind, 'meal');
+  r = await bob('POST', '/api/foods', { name: 'Odd', k: 1, kind: 'snack' });
+  assert.strictEqual(r.body.kind, 'ingredient');
+});
+
+test('AI fills in only the blank values, and saved foods keep the flag and source', async () => {
+  const ann = await signIn('ann@example.com'), bob = await signIn('bob@example.com');
+  assert.strictEqual((await ann('GET', '/api/foods')).body.ai, true);
+  let r = await ann('POST', '/api/foods/ai-fill', { name: 'Chicken breast', unit: 'g', kind: 'ingredient', k: '', p: 30, c: '', f: '', recipe: 'raw, skinless' });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(r.body.values, { k: 165, c: 0, f: 3.6 });         /* protein was given, so it isn't touched */
+  assert.deepStrictEqual(r.body.ai.fields, ['k', 'c', 'f']);
+  assert.strictEqual(r.body.ai.source, 'USDA FoodData Central – Chicken breast, raw');
+  assert.strictEqual(r.body.ai.url, '');                                   /* only https links get through */
+  assert.strictEqual(r.body.ai.model, 'test/model');
+  const asked = aiSeen.at(-1).messages[1].content;
+  assert.match(asked, /Protein 30 g/); assert.match(asked, /Missing: Calories, Carbs, Fat/); assert.match(asked, /raw, skinless/);
+
+  r = await ann('POST', '/api/foods', { name: 'Chicken breast', unit: 'g', kind: 'ingredient', p: 30, ...r.body.values, public: true,
+    ai: { ...r.body.ai, fields: ['k', 'c', 'f', 'nope'], url: 'https://fdc.nal.usda.gov/food-details/171077' } });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(r.body.ai.fields, ['k', 'c', 'f']);
+  assert.strictEqual(r.body.ai.url, 'https://fdc.nal.usda.gov/food-details/171077');
+  const id = r.body.id;
+  /* other people see the flag too */
+  const seen = (await bob('GET', '/api/foods')).body.foods.find(f => f.id === id);
+  assert.deepStrictEqual(seen.ai.fields, ['k', 'c', 'f']);
+  /* typing over every estimate drops the flag */
+  r = await ann('PUT', `/api/foods/${id}`, { name: 'Chicken breast', unit: 'g', k: 160, p: 30, c: 0, f: 3, ai: { fields: [] } });
+  assert.strictEqual(r.body.ai, null);
+  assert.strictEqual((await ann('GET', '/api/export')).body.foods.find(f => f.id === id).ai, null);
+
+  /* nothing blank, no name, or an unusable reply */
+  r = await ann('POST', '/api/foods/ai-fill', { name: 'Egg', k: 70, p: 6, c: 0, f: 5 });
+  assert.strictEqual(r.status, 400); assert.match(r.body.error, /Every value/);
+  r = await ann('POST', '/api/foods/ai-fill', { name: ' ', k: '' });
+  assert.strictEqual(r.status, 400); assert.match(r.body.error, /name/);
+  r = await ann('POST', '/api/foods/ai-fill', { name: 'Mystery stew', kind: 'meal', unit: 'each' });
+  assert.strictEqual(r.status, 502); assert.match(r.body.error, /usable number/);
 });

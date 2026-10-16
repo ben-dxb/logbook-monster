@@ -287,8 +287,9 @@ const libDefault=u=>u==='each'?1:100;
 const isLib=f=>typeof f==='string'&&f.startsWith('L:');
 function libHash(food){let h=5381;for(const ch of [food.unit,food.k,food.p,food.c,food.f].join('|'))h=(h*33+ch.charCodeAt(0))>>>0;return h.toString(36);}
 const libFid=food=>`L:${food.id}:${libHash(food)}`;
+/* An AI-estimated food keeps its ⚑ in meals, and the day's copy remembers its type and which values were estimates. */
 function libFoodRec(food){const m=food.unit==='each'?100:1;
-  const F={n:food.name,k:food.k*m,p:food.p*m,c:food.c*m,f:food.f*m,d:0,step:food.unit==='each'?1:food.unit==='ml'?10:5,cat:'c'};
+  const F={n:food.name+(food.ai?' ⚑':''),kind:food.kind,ai:food.ai?food.ai.fields:undefined,k:food.k*m,p:food.p*m,c:food.c*m,f:food.f*m,d:0,step:food.unit==='each'?1:food.unit==='ml'?10:5,cat:'c'};
   if(food.unit!=='g')F.unit=food.unit==='each'?'×':'ml';return F;}
 function libLoad(D){for(const [fid,F] of Object.entries(D.lib||{}))if(isLib(fid)&&!FOODS[fid])FOODS[fid]={...F};}
 /* After the library changes or the admin defaults are applied (which drop foods the calculator didn't ship with). */
@@ -296,7 +297,9 @@ function libRegister(){LIB.forEach(f=>{FOODS[libFid(f)]=libFoodRec(f);});Object.
 function libSync(D){let lib=null;
   allItems(D).forEach(i=>{if(isLib(i.f)&&FOODS[i.f]){lib=lib||{};lib[i.f]=(D.lib&&D.lib[i.f])||{...FOODS[i.f]};}});
   if(lib)D.lib=lib;else delete D.lib;}
-const libOptions=()=>LIB.length?`<optgroup label="Food library">${LIB.map(f=>`<option value="${libFid(f)}">${esc(f.name)}</option>`).join('')}</optgroup>`:'';
+const libOptions=()=>[['meal','Library meals'],['ingredient','Library ingredients']].map(([k,l])=>{
+  const list=LIB.filter(f=>(f.kind==='meal')===(k==='meal'));
+  return list.length?`<optgroup label="${l}">${list.map(f=>`<option value="${libFid(f)}">${esc(f.name)}${f.ai?' ⚑':''}</option>`).join('')}</optgroup>`:'';}).join('');
 /* which box a library food goes in when added to a meal from the Foods page: where most of its calories come from */
 function libBox(f){const p=f.p*4,c=f.c*4,x=f.f*9;return p>=c&&p>=x?'p':x>c?'x':'c';}
 /* Add a library food to any day (from the Foods page): off plan, or into a meal (saved, so the rest of the day rebalances). */
@@ -315,7 +318,7 @@ function renderLibForm(){
   const sel=$('#ln');$('#libform').hidden=!LIB.length;$('#libnone').hidden=!!LIB.length;
   if(sel.dataset.v===String(LIBV))return;
   const keep=sel.value;sel.dataset.v=String(LIBV);
-  const opt=f=>`<option value="${f.id}">${esc(f.name)} (${libPer(f.unit)})</option>`;
+  const opt=f=>`<option value="${f.id}">${esc(f.name)} (${libPer(f.unit)})${f.ai?' ⚑':''}</option>`;
   const mine=LIB.filter(f=>f.mine), shared=LIB.filter(f=>!f.mine);
   sel.innerHTML=(mine.length?`<optgroup label="Your foods">${mine.map(opt).join('')}</optgroup>`:'')+
     (shared.length?`<optgroup label="Shared by others">${shared.map(opt).join('')}</optgroup>`:'');
@@ -587,7 +590,7 @@ document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(
     if(!me.hasPassword){$('#pwcur').hidden=true;$('#pwbox').querySelector('summary').textContent='Set a password';}
     isAdmin=!!me.admin;aiOn=!!me.ai;$('#adminlink').hidden=!isAdmin;
     const [settings,sums,weights,defs,lib]=await Promise.all([api('GET','/api/settings'),api('GET','/api/days'),api('GET','/api/weights'),api('GET','/api/defaults'),api('GET','/api/foods')]);
-    LIB=(lib&&lib.foods)||[];
+    LIB=(lib&&lib.foods)||[];fAiOn=!!(lib&&lib.ai);
     setDefaults(defs);
     S.pud={...PUD_DEFAULT,...((settings||{}).pud||{})};S.snackOv=(settings||{}).snackOv||{};
     S.pBasis=(settings||{}).pBasis==='direct'?'direct':'total';
