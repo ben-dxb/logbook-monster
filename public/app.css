@@ -376,6 +376,9 @@ footer{font-size:12px;color:var(--muted)}
 .fform select{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px}
 .fform .tog{align-items:flex-start}
 .fform .tog input{margin-top:3px}
+.adfree{display:grid;gap:8px}
+.adfree .tog{align-items:flex-start}
+.adfree .tog input{margin-top:3px}
 .fdel{margin-left:auto}
 .fkinds button{font-weight:700;font-size:14px;padding:5px 14px}
 .fkinds small{font-weight:600;opacity:.75}
