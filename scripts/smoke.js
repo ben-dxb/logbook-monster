@@ -1,6 +1,6 @@
 'use strict';
 /* Browser smoke test: starts a throwaway server, signs in, weighs a meal-prep pack, edits and saves a day, logs a weight,
-   opens History and Weight, logs gym sets, adds a shared food to the library and to a day, logs supplements, uploads, filters and compares progress photos, uploads a plan and invites someone on the Admin page, at desktop and phone widths. Fails on any page error.
+   opens History and Weight, logs gym sets, adds a shared food to the library and to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, uploads a plan and invites someone on the Admin page, at desktop and phone widths. Fails on any page error.
    Needs Playwright (npm i -g playwright, or available in the environment); skips if missing. */
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -228,6 +228,9 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         expect(await pg.inputValue('#s-amt') === '5' && await pg.inputValue('#s-unit') === 'g', '"Log it" should fill in the usual amount');
         await pg.fill('#s-amt', '3'); await pg.click('#s-form button[type=submit]');
         await pg.waitForFunction(() => /Smoke creatine\s*3 g/.test(document.querySelector('#s-log').textContent), null, { timeout: 5000 });
+        /* follow it on the Timeline's trend chart */
+        await pg.check('#s-log .orow:has-text("Smoke creatine") input[data-st]');
+        await pg.waitForFunction(() => STREND.has('smoke creatine'), null, { timeout: 5000 });
       }
       await pg.selectOption('#s-pick', ''); await pg.fill('#s-desc', 'Smoke vitamin D3'); await pg.fill('#s-amt', '2000'); await pg.selectOption('#s-unit', 'IU');
       await pg.click('#s-form button[type=submit]');
@@ -236,6 +239,7 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       const sRows = await pg.locator('#s-log .orow').count();
       await pg.reload(); await pg.waitForSelector('#s-log .orow');
       expect(await pg.locator('#s-log .orow').count() === sRows, 'supplement log should survive reload');
+      expect(await pg.isChecked('#s-log .orow:has-text("Smoke creatine") input[data-st] >> nth=0'), 'Trend should stay ticked');
       const sscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(sscroll <= 1, `horizontal overflow of ${sscroll}px on the supplements page at ${w}px wide`);
       await pg.click('#s-log .orow:last-child [data-sa=del]'); await pg.waitForFunction(n => document.querySelectorAll('#s-log .orow').length === n, sRows - 1, { timeout: 5000 });
@@ -299,6 +303,31 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       const other = await pg.evaluate(() => [...document.querySelectorAll('#p-ca option')].find(o => !o.selected && !/Oct/.test(o.textContent)).value);
       await pg.selectOption('#p-ca', other); await pg.waitForFunction(u => location.href !== u, cmpUrl);
       await pg.waitForFunction(() => document.querySelectorAll('#p-cmp .pside img').length === 2);
+      /* timeline: the trend chart, switching metrics on and off, a followed supplement, a day's card from the chart and from a date */
+      await pg.click('a[data-view=timeline]'); await pg.waitForSelector('#v-timeline:not([hidden]) #t-chart svg', { timeout: 5000 });
+      const marks = () => pg.locator('#t-chart .tl, #t-chart .td').count();
+      const sup = '#t-metrics [data-k="sup:smoke creatine"]';
+      expect(await pg.locator(sup).count() === 1, 'a supplement with Trend ticked should be a metric');
+      const m0 = await marks();
+      await pg.click(sup); await pg.waitForFunction(n => document.querySelectorAll('#t-chart .tl, #t-chart .td').length > n, m0);
+      expect(await pg.getAttribute(sup, 'aria-pressed') === 'true', 'the metric should show as on');
+      await pg.click('#t-metrics [data-k=vol]'); await pg.uncheck('#t-smooth'); await pg.waitForSelector('#t-chart svg');
+      expect(await pg.isDisabled('#t-aibtn') === first, 'AI summary needs an API key (saved on the Admin page in the first run)');
+      const tscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(tscroll <= 1, `horizontal overflow of ${tscroll}px on the timeline at ${w}px wide`);
+      await pg.hover('#t-hit'); await pg.waitForSelector('#t-tip:not([hidden])');
+      await pg.click('#t-hit'); await pg.waitForSelector('#t-card[open] .tcgrid', { timeout: 5000 });
+      expect(/^#timeline\/\d{4}-\d\d-\d\d$/.test(await pg.evaluate(() => location.hash)), 'a point on the chart should open its day');
+      await pg.click('#t-card [data-ta=close]'); await pg.waitForFunction(() => !document.querySelector('#t-card').open && location.hash === '#timeline');
+      await pg.click('#t-pick [data-ta=go] >> nth=0'); await pg.waitForSelector('#t-card[open] .tcfood .stat', { timeout: 5000 });
+      const card = await pg.textContent('#t-card');
+      expect(/Smoke creatine/.test(card) && /Atlantis hack squat/.test(card) && /e1RM/.test(card) && /80\.5/.test(card), 'today’s card should show supplements, gym sets and weight');
+      expect(await pg.locator('#t-card .tcphotos .ptile').count() >= 1, 'the card should show the latest photos');
+      const dscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(dscroll <= 1, `horizontal overflow of ${dscroll}px with the day card open at ${w}px wide`);
+      const t0 = await pg.textContent('#t-ctitle');
+      await pg.click('#t-card [data-ta=cmove][data-n="-1"]'); await pg.waitForFunction(t => document.querySelector('#t-ctitle').textContent !== t, t0);
+      await pg.keyboard.press('Escape'); await pg.waitForFunction(() => !document.querySelector('#t-card').open && location.hash === '#timeline');
       /* admin (the only account is the first one, so it is the admin) */
       await pg.click('#acct>summary'); await pg.click('#adminlink'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-meals .admeal');
       if (first) {

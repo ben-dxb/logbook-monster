@@ -3,10 +3,12 @@
    free text, with an amount and a unit (g, mg, mcg, IU, capsules…), and the library itself – your own
    supplements plus ones other people have shared.
    #supps, #supps/2026-10-15 (a day's log), #supps/lib, #supps/lib/new, #supps/lib/12 (edit one of yours).
+   "Trend" on a supplement follows it (by name) on the Timeline's trend chart.
    Uses helpers from app.js and gym.js (gHead, gEmpty). */
 
 let SUPPS=null, SUNITS=['g','mg','mcg','IU','ml','drops','capsules','tablets','softgels','scoops','servings'];
 const SLOG={};                    /* date -> that day's entries */
+let STREND=new Set();             /* names followed on the Timeline chart, lower case */
 let sDate=todayStr(), sPick='', sUnit='mg', sQuery='', sFilter='all', sMsg='', sTok=0;
 
 const sById=id=>SUPPS&&SUPPS.find(s=>s.id===id);
@@ -15,7 +17,16 @@ const sNum=n=>String(Math.round(n*1000)/1000);
 const sUnitTxt=(u,n)=>/s$/.test(u)&&+n===1?u.slice(0,-1):u;
 const sDose=(n,u)=>`${sNum(n)} ${sUnitTxt(u,n)}`;
 function sSort(){SUPPS.sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})||a.id-b.id);}
-async function sLoad(){const r=await api('GET','/api/supps');SUPPS=(r&&r.supplements)||[];if(r&&r.units)SUNITS=r.units;sSort();}
+async function sLoad(){const r=await api('GET','/api/supps');SUPPS=(r&&r.supplements)||[];if(r&&r.units)SUNITS=r.units;sTrends(r&&r.trends);sSort();}
+function sTrends(list){STREND=new Set((list||[]).map(n=>n.toLowerCase()));}
+const sTrendBox=name=>`<label class="tog strend" title="Follow it on the Timeline’s trend chart"><input type="checkbox" data-st="${esc(name)}"${STREND.has(name.toLowerCase())?' checked':''}> Trend</label>`;
+async function sSetTrend(el){
+  const name=el.dataset.st, on=el.checked;
+  const sync=v=>document.querySelectorAll('input[data-st]').forEach(x=>{if(x.dataset.st.toLowerCase()===name.toLowerCase())x.checked=v;});
+  sync(on);
+  try{const r=await api('PUT','/api/supps/trend',{name,on});sTrends(r.trends);}
+  catch(e){sync(!on);if(!e.signedOut)alert(e.message);}
+}
 async function sLogOn(d){if(!SLOG[d])SLOG[d]=((await api('GET','/api/supps/log?date='+d))||{}).entries||[];return SLOG[d];}
 
 async function renderSupps(args){
@@ -68,7 +79,7 @@ function renderSuppLog(){
   const el=$('#s-log');if(!el)return;
   const list=SLOG[sDate]||[];
   el.innerHTML=(sMsg?`<p class="note fmsg" role="status">${esc(sMsg)}</p>`:'')+(list.length
-    ?list.map(e=>`<div class="orow"><span>${esc(e.name)}</span><b class="sdose">${esc(sDose(e.amount,e.unit))}</b>${e.note?`<span class="ml">${esc(e.note)}</span>`:''}<button class="x" type="button" data-sa="del" data-id="${e.id}" aria-label="Remove ${esc(e.name)}">×</button></div>`).join('')
+    ?list.map(e=>`<div class="orow"><span>${esc(e.name)}</span><b class="sdose">${esc(sDose(e.amount,e.unit))}</b>${e.note?`<span class="ml">${esc(e.note)}</span>`:''}${sTrendBox(e.name)}<button class="x" type="button" data-sa="del" data-id="${e.id}" aria-label="Remove ${esc(e.name)}">×</button></div>`).join('')
     :gEmpty('Nothing logged for this day.'));
 }
 async function sAdd(body){
@@ -129,7 +140,7 @@ function sCard(s){
     <div class="fhead"><h3>${esc(s.name)}</h3>${tag}</div>
     <span class="ml">${s.amount!=null?`Usual amount <b>${esc(sDose(s.amount,s.unit))}</b>`:`Measured in ${esc(s.unit)}`}</span>
     ${s.notes?`<details class="frecipe"><summary>Notes</summary><p>${esc(s.notes)}</p></details>`:''}
-    <div class="factions"><button class="btn" type="button" data-sa="log" data-id="${s.id}">Log it</button>
+    <div class="factions"><button class="btn" type="button" data-sa="log" data-id="${s.id}">Log it</button>${sTrendBox(s.name)}
       ${s.mine?`<a class="ghost" href="#supps/lib/${s.id}">Edit</a>`:''}
       ${s.mine||isAdmin?`<button class="ghost" type="button" data-sa="sdel" data-id="${s.id}">${s.mine?'Delete':'Delete (admin)'}</button>`:''}</div>
   </article>`;
@@ -185,7 +196,8 @@ document.addEventListener('click',async e=>{
 });
 document.addEventListener('change',e=>{
   if(view!=='supps')return;
-  if(e.target.id==='s-pick')sPickChanged();
+  if(e.target.dataset.st!=null)sSetTrend(e.target);
+  else if(e.target.id==='s-pick')sPickChanged();
   else if(e.target.id==='s-date'&&isDate(e.target.value))go('supps/'+e.target.value);
 });
 document.addEventListener('input',e=>{if(view==='supps'&&e.target.id==='s-q'){sQuery=e.target.value;renderSuppList();}});
