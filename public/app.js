@@ -164,11 +164,22 @@ function itemRow(D,mi,box,ii,i){
     <button class="x" data-act="del" data-m="${mi}" data-b="${box}" data-i="${ii}" aria-label="Remove">×</button>
   </div>`;
 }
+/* Delivered meat (foods with a daily order) comes in sauce: weigh the pack, get the amount to put on your plate */
+function packOut(i,pk,F){const m=pk.m!=null?pk.m:F.order, g=packPortion(i.g,+pk.w,+m);
+  return g==null?'Weigh the pack to get your portion':`Weigh out <b>${r0(g)}g</b> of the pack${i.g>m?' – more than one pack':''}`;}
+function packHtml(D,mi,i){
+  const F=FOODS[i.f], pk=(D.packs||{})[i.f]||{}, id=`pk-${S.cur}-${mi}-${i.f}`;
+  const name=esc(F.n.replace(/^Health Road /,''));
+  return `<div class="pack"><label class="pf"><span class="lbl">Pack with sauce</span><span class="amt"><input id="${id}-w" type="number" inputmode="decimal" min="0" step="1" value="${pk.w!=null?pk.w:''}" placeholder="weigh" data-act="pack" data-f="${i.f}" data-k="w"><em>g</em></span></label>
+    <label class="pf"><span class="lbl">${name} in it</span><span class="amt"><input id="${id}-m" type="number" inputmode="decimal" min="0" step="1" value="${pk.m!=null?pk.m:F.order}" data-act="pack" data-f="${i.f}" data-k="m"><em>g</em></span></label>
+    <span class="pout" data-packout="${i.f}" data-g="${i.g}" aria-live="polite">${packOut(i,pk,F)}</span></div>`;
+}
 function macLine(t){return `<span class="ml"><b>${r0(t.k)}</b> kcal · P ${r1(t.p)} · C ${r1(t.c)} · F ${r1(t.f)}</span>`;}
 function boxHtml(D,mi,box,label){
   const items=D.meals[mi][box]||(D.meals[mi][box]=[]);const t=sum(items.map(i=>macOf(i.f,i.g)));
   return `<div class="box"><div class="bh"><span class="lbl">${label}</span>${items.length?macLine(t):''}</div>
     ${items.map((i,ii)=>itemRow(D,mi,box,ii,i)).join('')||'<p class="empty">Nothing here</p>'}
+    ${box==='p'?items.filter(i=>i.g>0&&FOODS[i.f].order!=null).map(i=>packHtml(D,mi,i)).join(''):''}
     <div class="add"><select id="a-${S.cur}-${mi}-${box}" data-add="${box}" data-m="${mi}" aria-label="Add a food"><option value="">+ Add a food…</option>${(box==='x'?FAT_SWAPS:Object.keys(FOODS).filter(f=>!FAT_SWAPS.includes(f)&&!isLib(f))).map(f=>`<option value="${f}">${esc(FOODS[f].n)}</option>`).join('')}${libOptions()}</select></div>
   </div>`;
 }
@@ -380,7 +391,7 @@ function renderWeight(){
     return `<div class="wrow"><a href="#day/${d}">${esc(parse(d).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short',year:'numeric'}))}</a>
       <span class="kg">${kg.toFixed(1)} kg</span><span class="ch">${c==null?'':(c>=0?'+':'−')+Math.abs(c).toFixed(1)}</span>
       <button class="x" data-act="wdel" data-d="${d}" aria-label="Delete weight for ${esc(fmtLong(d))}">×</button></div>`;}).join('')
-    :'<p class="empty">Log your first weigh-in above, or on any day in the Day view.</p>';
+    :'<p class="empty">Log your first weigh-in above, or on any day in the Food Tracker.</p>';
 }
 function drawChart(pts,avg){
   const box=$('#chart');
@@ -478,8 +489,18 @@ document.addEventListener('click',e=>{
   else if(a==='odel'){act(D=>{D.off.splice(+b.dataset.i,1);});}
   else if(a==='reset'){if(!resetArmed){resetArmed=true;render();return;}resetArmed=false;S.days[S.cur]=freshDay(wd());render();}
 });
+/* pack weights: update the portion as you type, without re-rendering under your fingers */
+function setPack(el){const D=day(),f=el.dataset.f;D.packs=D.packs||{};const p=D.packs[f]=D.packs[f]||{};
+  const v=el.value.trim();if(v===''||!(+v>=0))delete p[el.dataset.k];else p[el.dataset.k]=+v;
+  if(!Object.keys(p).length)delete D.packs[f];if(!Object.keys(D.packs).length)delete D.packs;
+  return {f,pk:p};}
+document.addEventListener('input',e=>{const el=e.target;if(el.dataset.act!=='pack')return;
+  const {f,pk}=setPack(el);
+  document.querySelectorAll(`[data-packout="${f}"]`).forEach(o=>{o.innerHTML=packOut({g:+o.dataset.g},pk,FOODS[f]);});
+  persist();});
 document.addEventListener('change',e=>{
   const el=e.target, a=el.dataset.act;
+  if(a==='pack'){setPack(el);render();return;}
   const get=D=>D.meals[+el.dataset.m][el.dataset.b][+el.dataset.i];
   if(a==='lock'){const D=day();get(D).lock=el.checked;render();}
   else if(a==='amt'){editMeal(+el.dataset.m,el.dataset.b,D=>{const i=get(D);i.g=Math.max(0,+el.value||0);i.a=i.g;});}

@@ -25,8 +25,8 @@ async function renderFoods(args){
 /* ---------- the list ---------- */
 function fListPage(){
   const seg=[['all','All'],['mine','Mine'],['shared','Shared']].map(([v,l])=>`<button type="button" data-fa="filter" data-v="${v}" aria-pressed="${fFilter===v}">${l}</button>`).join('');
-  return `<div class="gbar"><h2>Food library</h2><a class="btn" href="#foods/new">New food</a></div>
-    <p class="fintro">Foods you enter yourself, with their recipe if you like. Share one and everyone can add it to their plan. “Add to plan” puts it in a meal or the off-plan list of any day, and the rest of the day rebalances around it. On the Day page you’ll also find them under “+ Add a food…” in every meal.</p>
+  return `<div class="gbar"><h2>Meal Planner</h2><a class="btn" href="#foods/new">New food</a></div>
+    <p class="fintro">Foods you enter yourself, with their recipe if you like. Share one and everyone can add it to their plan. “Add to plan” puts it in a meal or the off-plan list of any day, and the rest of the day rebalances around it. In the Food Tracker you’ll also find them under “+ Add a food…” in every meal.</p>
     <div class="ftools"><input id="f-q" type="search" placeholder="Search foods and recipes" aria-label="Search foods" value="${esc(fQuery)}">
       <div class="seg" role="group" aria-label="Show">${seg}</div></div>
     <div id="f-list" class="flist"></div>`;
@@ -36,7 +36,7 @@ function renderFoodList(){
   const q=fQuery.trim().toLowerCase();
   const list=LIB.filter(f=>(fFilter==='all'||(fFilter==='mine')===f.mine)&&(!q||f.name.toLowerCase().includes(q)||f.recipe.toLowerCase().includes(q)));
   let h=fMsg?`<p class="note fmsg" role="status">${esc(fMsg)}</p>`:'';
-  if(!LIB.length)h+=gEmpty('Nothing here yet. Tap “New food” to add one, or tick “Save to my food library” when you add something off plan on the Day page.');
+  if(!LIB.length)h+=gEmpty('Nothing here yet. Tap “New food” to add one, or tick “Save to my food library” when you add something off plan in the Food Tracker.');
   else if(!list.length)h+=gEmpty(fFilter==='shared'&&!q?'Nobody has shared a food yet.':fFilter==='mine'&&!q?'You haven’t added any foods yet.':'No foods match.');
   h+=list.map(fCard).join('');
   el.innerHTML=h;
