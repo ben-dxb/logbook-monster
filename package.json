@@ -8,7 +8,7 @@
     "dev": "node --disable-warning=ExperimentalWarning --watch server/index.js",
     "create-user": "node --disable-warning=ExperimentalWarning scripts/create-user.js",
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
-    "lint": "node --check server/index.js && node --check server/auth.js && node --check server/api.js && node --check server/defaults.js && node --check server/ai.js && node --check server/db.js && node --check server/config.js && node --check server/passwords.js && node --check server/sessionStore.js && node --check public/engine.js && node --check public/app.js && node --check public/admin.js && node --check public/login.js && node --check scripts/create-user.js",
+    "lint": "node --check server/index.js && node --check server/auth.js && node --check server/api.js && node --check server/defaults.js && node --check server/ai.js && node --check server/db.js && node --check server/config.js && node --check server/passwords.js && node --check server/sessionStore.js && node --check server/mail.js && node --check server/users.js && node --check public/invite.js && node --check public/engine.js && node --check public/app.js && node --check public/admin.js && node --check public/login.js && node --check scripts/create-user.js",
     "smoke": "node --disable-warning=ExperimentalWarning scripts/smoke.js",
     "check": "npm run -s lint && npm test && npm run -s smoke"
   },
@@ -27,7 +27,8 @@
     "express": "^5.3.0",
     "express-rate-limit": "^8.7.1",
     "express-session": "^1.19.0",
-    "helmet": "^8.3.0"
+    "helmet": "^8.3.0",
+    "nodemailer": "^10.1.1"
   },
   "private": true,
   "engines": {

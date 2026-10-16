@@ -35,7 +35,7 @@ function adPlanUses(id){return Object.values(AD.plan).some(ms=>ms.some(m=>['p','
 /* ---------- rendering ---------- */
 function renderAdmin(){
   if(view!=='admin')return;
-  if(!AD){adLoad();adAiLoad();}
+  if(!AD){adLoad();adAiLoad();auLoad();amLoad();}
   const numIn=(id,val,attrs,label)=>`<input id="${id}" type="number" inputmode="decimal" min="0" value="${val==null?'':val}" ${attrs} aria-label="${esc(label)}">`;
   /* plan */
   $('#ad-planstate').innerHTML=AD.custom
@@ -320,4 +320,85 @@ $('#ad-aifile').addEventListener('change',async e=>{
     adNotes=j.notes||[];
   }catch(err){adMsg='The AI import didn’t work:';adErrs=[err.message];}
   adAiBusy=false;adAiRender();renderAdmin();
+});
+
+
+/* ---------- People: invites and accounts ---------- */
+let AU=null, auLink=null;
+const AU_STATUS={active:['ok','Active'],invited:['info','Invite sent'],expired:['bad','Invite expired']};
+const auDate=s=>s?new Date(s.replace(' ','T')+'Z').toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}):'';
+async function auLoad(){try{AU=await api('GET','/api/admin/users');}catch(e){AU=null;}auRender();}
+function auRender(){
+  const m=$('#ad-ivmsg');
+  m.innerHTML=auLink?`<p class="admsg">${esc(auLink.msg)}</p>${auLink.error?`<p class="aderr">${esc(auLink.error)} Send them this link yourself:</p>`:''}
+    <div class="adlink"><input id="ad-iv-link" readonly value="${esc(auLink.link)}" aria-label="Invite link"><button type="button" class="ghost" data-au="copy">Copy link</button></div>`:'';
+  if(!AU){$('#ad-users').innerHTML='';return;}
+  if(!AU.email&&!auLink)m.innerHTML='<p class="sub">Email isn’t set up yet (see Email below), so you’ll get a link to send yourself.</p>';
+  $('#ad-users').innerHTML=AU.users.map(u=>{const [c,t]=AU_STATUS[u.status]||['',''];
+    const how=[u.password&&'password',u.google&&'Google'].filter(Boolean).join(' + ');
+    const sub=u.status==='active'?(u.lastLogin?`Last signed in ${auDate(u.lastLogin)}`:'Not signed in yet')+(how?` · ${how}`:'')
+      :`Invited ${u.invitedBy?'by '+u.invitedBy+' ':''}on ${auDate(u.created)}`;
+    return `<div class="aduser" data-id="${u.id}"><span class="who"><b>${esc(u.name||u.email)}${u.you?' (you)':''}</b>${u.name?`<span class="sub">${esc(u.email)}</span>`:''}<span class="sub">${esc(sub)}</span></span>
+      <span class="chip ${c}">${t}</span>${u.admin?'<span class="chip">Admin</span>':''}
+      <span class="acts">${u.status!=='active'?`<button type="button" class="ghost" data-au="resend" data-id="${u.id}">${u.status==='expired'?'New invite':'Resend'}</button>`:''}
+        ${u.you?'':`<button type="button" class="ghost" data-au="remove" data-id="${u.id}">Remove</button>`}</span></div>`;}).join('');
+}
+function auResult(r){auLink={link:r.link,error:r.emailed?'':r.emailError,msg:r.emailed?`Invite emailed to ${r.email}.`:`Invite ready for ${r.email}.`};}
+$('#ad-invite').addEventListener('submit',async e=>{
+  e.preventDefault();const email=$('#ad-iv-email').value.trim();if(!email){$('#ad-iv-email').focus();return;}
+  $('#ad-iv-btn').disabled=true;
+  try{auResult(await api('POST','/api/admin/users',{email,name:$('#ad-iv-name').value.trim()}));$('#ad-iv-email').value=$('#ad-iv-name').value='';await auLoad();}
+  catch(err){if(!err.signedOut){auLink=null;$('#ad-ivmsg').innerHTML=`<p class="aderr">${esc(err.message)}</p>`;}}
+  $('#ad-iv-btn').disabled=false;
+});
+document.addEventListener('click',async e=>{
+  const b=e.target.closest('[data-au]');if(!b)return;const a=b.dataset.au;
+  const u=AU&&AU.users.find(x=>String(x.id)===b.dataset.id);
+  if(a==='copy'){const i=$('#ad-iv-link');i.select();try{await navigator.clipboard.writeText(i.value);b.textContent='Copied';}catch{document.execCommand&&document.execCommand('copy');}return;}
+  if(!u)return;
+  b.disabled=true;
+  try{
+    if(a==='resend'){auResult(await api('POST',`/api/admin/users/${u.id}/invite`));}
+    else if(a==='remove'){if(!confirm(`Remove ${u.email}? Their days, history and weights are deleted too. This can’t be undone.`)){b.disabled=false;return;}
+      await api('DELETE',`/api/admin/users/${u.id}`);auLink=null;}
+    await auLoad();
+  }catch(err){b.disabled=false;if(!err.signedOut)alert(err.message);}
+});
+
+/* ---------- Email: the account invites and notifications are sent from ---------- */
+let AM=null;
+const AM_PROV={gmail:['smtp.gmail.com',465],outlook:['smtp.office365.com',587]};
+async function amLoad(){try{AM=await api('GET','/api/admin/email');}catch(e){AM=null;}amFill();}
+function amFill(){
+  if(!AM)return;
+  $('#ad-mailstate').innerHTML=AM.configured?`<span class="chip ok">✓ Set up</span> Sending from ${esc(AM.from)} via ${esc(AM.host)}${AM.source==='env'?' (from .env)':''}.`
+    :'<span class="chip bad">Not set up</span> Invites give you a link to send yourself until this is filled in.';
+  const host=AM.host||AM_PROV.gmail[0];
+  $('#ad-m-from').value=AM.from||'';$('#ad-m-name').value=AM.fromName==='Meal Swap'?'':AM.fromName||'';
+  $('#ad-m-host').value=host;$('#ad-m-port').value=AM.host?AM.port:AM_PROV.gmail[1];$('#ad-m-user').value=AM.user||'';$('#ad-m-pass').value='';
+  $('#ad-m-prov').value=Object.keys(AM_PROV).find(k=>AM_PROV[k][0]===host)||'other';
+  $('#ad-m-pass').placeholder=AM.hasPassword?`Saved${AM.passwordSource==='env'?' in .env':''} – type a new one to replace it`:'';
+  $('#ad-m-del').hidden=AM.source!=='admin';
+  if(!AM.configured)$('#ad-m-help').open=true;
+  if(!$('#ad-m-to').value)$('#ad-m-to').value=ME||'';
+}
+$('#ad-m-prov').addEventListener('change',e=>{const p=AM_PROV[e.target.value];if(p){$('#ad-m-host').value=p[0];$('#ad-m-port').value=p[1];}});
+$('#ad-mailform').addEventListener('submit',async e=>{
+  e.preventDefault();const v=id=>$('#'+id).value.trim();
+  const port=+v('ad-m-port')||'';
+  const body={from:v('ad-m-from'),fromName:v('ad-m-name'),host:v('ad-m-host'),port,secure:port?port===465:null,user:v('ad-m-user')};
+  if($('#ad-m-pass').value)body.pass=$('#ad-m-pass').value;
+  try{AM=await api('PUT','/api/admin/email',body);$('#ad-mailmsg').textContent='Email settings saved. Send a test to check them.';amFill();auRender();if(AU)AU.email=AM.configured;}
+  catch(err){if(!err.signedOut)$('#ad-mailmsg').textContent=err.message;}
+});
+$('#ad-m-del').addEventListener('click',async()=>{
+  if(!confirm('Remove the saved email settings? Invites will stop being emailed.'))return;
+  try{AM=await api('PUT','/api/admin/email',{from:'',fromName:'',host:'',port:'',secure:null,user:'',pass:''});$('#ad-mailmsg').textContent='Email settings removed.';amFill();if(AU){AU.email=AM.configured;auRender();}}
+  catch(err){if(!err.signedOut)$('#ad-mailmsg').textContent=err.message;}
+});
+$('#ad-mailtest').addEventListener('submit',async e=>{
+  e.preventDefault();$('#ad-m-testbtn').disabled=true;$('#ad-mailmsg').textContent='Sending…';
+  try{const r=await api('POST','/api/admin/email/test',{to:$('#ad-m-to').value.trim()});$('#ad-mailmsg').textContent=`Test email sent to ${r.to}. Check the inbox (and spam).`;}
+  catch(err){if(!err.signedOut)$('#ad-mailmsg').textContent=err.message;}
+  $('#ad-m-testbtn').disabled=false;
 });

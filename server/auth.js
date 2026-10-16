@@ -5,14 +5,17 @@ const rateLimit = require('express-rate-limit');
 const config = require('./config');
 const db = require('./db');
 const { hashPassword, verifyPassword, dummyVerify, passwordProblem } = require('./passwords');
+const users = require('./users');
+const mail = require('./mail');
 
 const q = {
-  byId: db.prepare('SELECT id, email, name, password_hash, google_sub FROM users WHERE id = ?'),
-  byEmail: db.prepare('SELECT id, email, name, password_hash, google_sub FROM users WHERE email = ?'),
-  bySub: db.prepare('SELECT id, email, name, password_hash, google_sub FROM users WHERE google_sub = ?'),
+  byId: db.prepare('SELECT id, email, name, password_hash, google_sub, invited_by FROM users WHERE id = ?'),
+  byEmail: db.prepare('SELECT id, email, name, password_hash, google_sub, invited_by FROM users WHERE email = ?'),
+  bySub: db.prepare('SELECT id, email, name, password_hash, google_sub, invited_by FROM users WHERE google_sub = ?'),
   create: db.prepare('INSERT INTO users (email, name, password_hash, google_sub) VALUES (?, ?, ?, ?)'),
   linkGoogle: db.prepare('UPDATE users SET google_sub = ?, name = COALESCE(name, ?) WHERE id = ?'),
   setPassword: db.prepare('UPDATE users SET password_hash = ? WHERE id = ?'),
+  setName: db.prepare('UPDATE users SET name = ? WHERE id = ?'),
   touchLogin: db.prepare("UPDATE users SET last_login_at = datetime('now') WHERE id = ?"),
 };
 
@@ -38,10 +41,13 @@ function csrfProtect(req, res, next) {
   next();
 }
 
+/* ALLOWED_EMAILS limits who may sign in, but an account an admin invited is always let in. */
+const accountAllowed = user => !!user && (!!user.invited_by || config.emailAllowed(user.email));
+
 function requireAuth(req, res, next) {
   if (req.session && req.session.userId) {
     const user = q.byId.get(req.session.userId);
-    if (user && config.emailAllowed(user.email)) { req.user = user; return next(); }
+    if (accountAllowed(user)) { req.user = user; return next(); }
   }
   res.status(401).json({ error: 'Not signed in' });
 }
@@ -54,6 +60,7 @@ function logIn(req, user) {
       req.session.userId = user.id;
       req.session.csrf = randomToken();
       q.touchLogin.run(user.id);
+      users.clearInvites(user.id);
       req.session.save(e => (e ? reject(e) : resolve()));
     });
   });
@@ -84,7 +91,7 @@ router.post('/login', limiter, csrfProtect, async (req, res) => {
   const password = String(req.body.password || '');
   const user = EMAIL_RE.test(email) ? q.byEmail.get(email) : null;
   const ok = user && user.password_hash ? await verifyPassword(password, user.password_hash) : await dummyVerify(password);
-  if (!ok || !config.emailAllowed(user.email)) {
+  if (!ok || !accountAllowed(user)) {
     return res.status(401).json({ error: 'That email and password don’t match an account.' });
   }
   await logIn(req, user);
@@ -102,6 +109,30 @@ router.post('/register', limiter, csrfProtect, async (req, res) => {
   if (q.byEmail.get(email)) return res.status(409).json({ error: 'An account with this email already exists. Sign in instead.' });
   const info = q.create.run(email, name, await hashPassword(password), null);
   await logIn(req, q.byId.get(info.lastInsertRowid));
+  res.json({ ok: true });
+});
+
+/* ---------- accepting an invite: the link is /invite#<token> ---------- */
+router.post('/invite/check', limiter, csrfProtect, (req, res) => {
+  const inv = users.findInvite(String(req.body.token || ''));
+  if (!inv) return res.status(404).json({ error: 'This invite link has expired or was already used. Ask for a new one.' });
+  res.json({ email: inv.email, name: inv.name, google: config.google.enabled });
+});
+
+router.post('/invite/accept', limiter, csrfProtect, async (req, res) => {
+  const inv = users.findInvite(String(req.body.token || ''));
+  if (!inv) return res.status(404).json({ error: 'This invite link has expired or was already used. Ask for a new one.' });
+  const password = String(req.body.password || '');
+  const problem = passwordProblem(password);
+  if (problem) return res.status(400).json({ error: problem });
+  const name = String(req.body.name || '').trim().slice(0, 100);
+  q.setPassword.run(await hashPassword(password), inv.user_id);
+  if (name) q.setName.run(name, inv.user_id);
+  await logIn(req, q.byId.get(inv.user_id));
+  if (inv.created_by) {
+    mail.notify({ to: inv.created_by, subject: `${inv.email} joined Meal Swap`,
+      text: `${name || inv.email} accepted your invite and has signed in to Meal Swap.\n\n${config.baseUrl}/#admin\n` });
+  }
   res.json({ ok: true });
 });
 
@@ -185,11 +216,11 @@ router.get('/google/callback', limiter, async (req, res) => {
   }
   const email = String(claims.email || '').toLowerCase();
   if (!email || claims.email_verified !== true) return fail(res, 'google_unverified');
-  if (!config.emailAllowed(email)) return fail(res, 'not_allowed');
 
   let user = q.bySub.get(claims.sub);
+  const existing = user ? null : q.byEmail.get(email);
+  if (!config.emailAllowed(email) && !accountAllowed(user || existing)) return fail(res, 'not_allowed');
   if (!user) {
-    const existing = q.byEmail.get(email);
     if (existing) {
       if (existing.google_sub && existing.google_sub !== claims.sub) return fail(res, 'google_failed');
       q.linkGoogle.run(claims.sub, claims.name || null, existing.id);
@@ -204,4 +235,4 @@ router.get('/google/callback', limiter, async (req, res) => {
   res.redirect('/');
 });
 
-module.exports = { router, requireAuth, csrfProtect, csrfToken, q };
+module.exports = { router, requireAuth, csrfProtect, csrfToken, q, accountAllowed };

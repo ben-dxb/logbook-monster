@@ -25,7 +25,8 @@
 ## Layout
 
 - `server/` – Express app: `config.js` (.env), `auth.js` (password + Google OIDC, CSRF),
-  `api.js` (days, weights, settings), `db.js` (SQLite schema).
+  `api.js` (days, weights, settings, admin routes), `db.js` (SQLite schema), `users.js` (invites, account list),
+  `mail.js` (SMTP sending – use `mail.notify()` for fire-and-forget notifications).
 - `public/engine.js` – the original calculator data and balancing maths. Change food data and plan
   here; keep the solver behaviour unless asked.
 - `public/app.js` – views (Day, History calendar, Weight), saving, routing.

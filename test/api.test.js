@@ -25,16 +25,47 @@ const fakeAi = http.createServer((req, res) => {
     res.end(JSON.stringify({ model: 'test/model', choices: [{ message: { content: '```json\n' + JSON.stringify(plan) + '\n```' } }] }));
   });
 });
+/* Stands in for the SMTP server (e.g. Gmail): accepts AUTH PLAIN and keeps each message. */
+const net = require('node:net');
+const SMTP_PORT = PORT + 200;
+const mails = [];
+const fakeSmtp = net.createServer(sock => {
+  let data = null, msg = {};
+  sock.write('220 fake ESMTP\r\n');
+  let buf = '';
+  sock.on('data', chunk => {
+    buf += chunk;
+    let i;
+    while ((i = buf.indexOf('\r\n')) >= 0) {
+      const line = buf.slice(0, i); buf = buf.slice(i + 2);
+      if (data !== null) {
+        if (line === '.') { msg.data = data.join('\n'); mails.push(msg); msg = {}; data = null; sock.write('250 queued\r\n'); }
+        else data.push(line.replace(/^\./, ''));
+        continue;
+      }
+      const cmd = line.slice(0, 4).toUpperCase();
+      if (cmd === 'EHLO') sock.write('250-fake\r\n250 AUTH PLAIN\r\n');
+      else if (cmd === 'AUTH') { msg.auth = Buffer.from(line.split(' ')[2] || '', 'base64').toString().split('\0'); sock.write(msg.auth[2] === 'apppassword123' ? '235 ok\r\n' : '535 bad credentials\r\n'); }
+      else if (cmd === 'MAIL') { msg.from = line; sock.write('250 ok\r\n'); }
+      else if (cmd === 'RCPT') { msg.to = line; sock.write('250 ok\r\n'); }
+      else if (cmd === 'DATA') { data = []; sock.write('354 go\r\n'); }
+      else if (cmd === 'QUIT') { sock.end('221 bye\r\n'); }
+      else sock.write('250 ok\r\n');
+    }
+  });
+  sock.on('error', () => {});
+});
 const BASE = `http://127.0.0.1:${PORT}`;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mealswap-test-'));
 let srv;
 
 before(async () => {
   await new Promise(r => fakeAi.listen(AI_PORT, '127.0.0.1', r));
+  await new Promise(r => fakeSmtp.listen(SMTP_PORT, '127.0.0.1', r));
   srv = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', path.join(__dirname, '..', 'server', 'index.js')], {
     env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', BASE_URL: BASE, DB_PATH: path.join(dir, 't.db'),
       SESSION_SECRET: 'x'.repeat(40), ALLOWED_EMAILS: 'me@example.com,friend@example.com', ADMIN_EMAILS: 'me@example.com', ALLOW_REGISTRATION: 'false',
-      GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: '', OPENROUTER_BASE_URL: `http://127.0.0.1:${AI_PORT}` },
+      GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: '', SMTP_HOST: '', SMTP_PASS: '', MAIL_FROM: '', OPENROUTER_BASE_URL: `http://127.0.0.1:${AI_PORT}` },
     stdio: 'ignore',
   });
   for (let i = 0; i < 50; i++) {
@@ -43,7 +74,7 @@ before(async () => {
   }
   throw new Error('server did not start');
 });
-after(() => { fakeAi.close(); srv.kill(); fs.rmSync(dir, { recursive: true, force: true }); });
+after(() => { fakeAi.close(); fakeSmtp.close(); srv.kill(); fs.rmSync(dir, { recursive: true, force: true }); });
 
 /* Minimal cookie-keeping client */
 function client() {
@@ -192,6 +223,94 @@ test('AI import: admin-only key that is never shown, and the reply is tidied', a
   assert.strictEqual(aiSeen.length, 1);
 
   assert.strictEqual((await admin.req('PUT', '/api/admin/ai', { key: '' })).body.configured, false);
+});
+
+test('email settings: admin-only, password never shown, test email goes out', async () => {
+  const admin = client();
+  await admin.req('GET', '/auth/config');
+  await admin.req('POST', '/auth/login', { email: 'me@example.com', password: 'longenough1' });
+  await admin.req('GET', '/api/me');
+  assert.strictEqual((await admin.req('GET', '/api/admin/email')).body.configured, false);
+  assert.strictEqual((await admin.req('POST', '/api/admin/email/test', {})).status, 409);
+  assert.strictEqual((await admin.req('PUT', '/api/admin/email', { from: 'not-an-email' })).status, 400);
+  assert.strictEqual((await admin.req('PUT', '/api/admin/email', { host: 'bad host!' })).status, 400);
+  const st = await admin.req('PUT', '/api/admin/email', { from: 'sender@gmail.example', host: '127.0.0.1', port: SMTP_PORT, secure: false, pass: 'apppassword123' });
+  assert.strictEqual(st.status, 200);
+  assert.deepStrictEqual([st.body.configured, st.body.hasPassword, st.body.from], [true, true, 'sender@gmail.example']);
+  assert.ok(!JSON.stringify((await admin.req('GET', '/api/admin/email')).body).includes('apppassword'));
+
+  const t = await admin.req('POST', '/api/admin/email/test', { to: 'me@example.com' });
+  assert.strictEqual(t.status, 200, JSON.stringify(t.body));
+  const m = mails.at(-1);
+  assert.deepStrictEqual(m.auth.slice(1), ['sender@gmail.example', 'apppassword123']);   /* blank username signs in as the from address */
+  assert.match(m.to, /me@example\.com/);
+  assert.match(m.data, /Subject: Meal Swap test email/);
+
+  const friend = client();
+  await friend.req('GET', '/auth/config');
+  await friend.req('POST', '/auth/login', { email: 'friend@example.com', password: 'longenough2' });
+  assert.strictEqual((await friend.req('GET', '/api/admin/email')).status, 403);
+  assert.strictEqual((await friend.req('PUT', '/api/admin/email', { host: 'evil.example' })).status, 403);
+  assert.strictEqual((await friend.req('GET', '/api/admin/users')).status, 403);
+  assert.strictEqual((await friend.req('POST', '/api/admin/users', { email: 'x@example.com' })).status, 403);
+});
+
+test('invites: admin invites someone not in ALLOWED_EMAILS, they set a password and sign in', async () => {
+  const admin = client();
+  await admin.req('GET', '/auth/config');
+  await admin.req('POST', '/auth/login', { email: 'me@example.com', password: 'longenough1' });
+  await admin.req('GET', '/api/me');
+  assert.strictEqual((await admin.req('POST', '/api/admin/users', { email: 'nope' })).status, 400);
+  assert.strictEqual((await admin.req('POST', '/api/admin/users', { email: 'friend@example.com' })).status, 409);
+
+  const before = mails.length;
+  const inv = await admin.req('POST', '/api/admin/users', { email: 'New.Person@example.com', name: 'Newbie' });
+  assert.strictEqual(inv.status, 200, JSON.stringify(inv.body));
+  assert.strictEqual(inv.body.emailed, true);
+  assert.match(inv.body.link, new RegExp(`^${BASE}/invite#[\\w-]{40,}$`));
+  const sent = mails.at(-1);
+  assert.strictEqual(mails.length, before + 1);
+  assert.match(sent.to, /new\.person@example\.com/);
+  assert.ok(sent.data.replace(/=\n/g, '').includes(inv.body.link.split('#')[1]), 'email should carry the link');
+
+  /* a second invite replaces the first link */
+  const again = await admin.req('POST', `/api/admin/users/${inv.body.id}/invite`, {});
+  assert.strictEqual(again.status, 200);
+  const oldToken = inv.body.link.split('#')[1], token = again.body.link.split('#')[1];
+  let list = (await admin.req('GET', '/api/admin/users')).body;
+  assert.strictEqual(list.users.find(u => u.email === 'new.person@example.com').status, 'invited');
+
+  const guest = client();
+  await guest.req('GET', '/auth/config');
+  assert.strictEqual((await guest.req('POST', '/auth/login', { email: 'new.person@example.com', password: 'whatever-123' })).status, 401);
+  assert.strictEqual((await guest.req('POST', '/auth/invite/check', { token: oldToken })).status, 404);
+  const chk = await guest.req('POST', '/auth/invite/check', { token });
+  assert.deepStrictEqual([chk.status, chk.body.email, chk.body.name], [200, 'new.person@example.com', 'Newbie']);
+  assert.strictEqual((await guest.req('POST', '/auth/invite/accept', { token, password: 'short' })).status, 400);
+  assert.strictEqual((await guest.req('POST', '/auth/invite/accept', { token, password: 'invited-pass-1' })).status, 200);
+  assert.strictEqual((await guest.req('GET', '/api/me')).body.email, 'new.person@example.com');
+  assert.strictEqual((await guest.req('GET', '/api/admin/users')).status, 403);
+  assert.strictEqual((await guest.req('POST', '/auth/invite/check', { token })).status, 404);   /* used up */
+
+  for (let i = 0; i < 20 && !mails.slice(before).some(x => /joined Meal Swap/.test(x.data)); i++) await new Promise(r => setTimeout(r, 50));
+  assert.ok(mails.slice(before).some(x => /me@example\.com/.test(x.to) && /joined Meal Swap/.test(x.data)), 'inviter is notified');
+
+  list = (await admin.req('GET', '/api/admin/users')).body;
+  const np = list.users.find(u => u.email === 'new.person@example.com');
+  assert.deepStrictEqual([np.status, np.password, np.invitedBy], ['active', true, 'me@example.com']);
+  assert.strictEqual((await admin.req('POST', `/api/admin/users/${np.id}/invite`, {})).status, 409);
+  assert.strictEqual((await admin.req('DELETE', `/api/admin/users/${list.users.find(u => u.you).id}`)).status, 400);
+
+  /* removing an account signs it out and deletes its data */
+  assert.strictEqual((await admin.req('DELETE', `/api/admin/users/${np.id}`)).status, 200);
+  assert.strictEqual((await guest.req('GET', '/api/me')).status, 401);
+  assert.ok(!(await admin.req('GET', '/api/admin/users')).body.users.some(u => u.email === 'new.person@example.com'));
+
+  /* without email set up, the admin still gets a link to pass on */
+  await admin.req('PUT', '/api/admin/email', { host: '', from: '', pass: '', port: '', secure: null });
+  const nomail = await admin.req('POST', '/api/admin/users', { email: 'later@example.com' });
+  assert.deepStrictEqual([nomail.status, nomail.body.emailed], [200, false]);
+  assert.match(nomail.body.emailError, /isn’t set up/);
 });
 
 test('security headers are set', async () => {

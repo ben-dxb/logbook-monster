@@ -1,6 +1,6 @@
 'use strict';
 /* Browser smoke test: starts a throwaway server, signs in, edits and saves a day, logs a weight,
-   opens History and Weight, uploads a plan on the Admin page, at desktop and phone widths. Fails on any page error.
+   opens History and Weight, uploads a plan and invites someone on the Admin page, at desktop and phone widths. Fails on any page error.
    Needs Playwright (npm i -g playwright, or available in the environment); skips if missing. */
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -64,6 +64,22 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await pg.waitForFunction(() => /^Using /.test(document.querySelector('#ad-aistate').textContent), null, { timeout: 5000 });
         expect(!(await pg.isDisabled('#ad-aifile')), 'PDF upload should be on once a key is saved');
         await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
+        /* invite someone: email isn't set up, so the link is shown to pass on; accept it in a fresh phone-sized browser */
+        await pg.waitForSelector('#ad-users .aduser');
+        expect(/Not set up/.test(await pg.textContent('#ad-mailstate')), 'email should start not set up');
+        expect(await pg.inputValue('#ad-m-host') === 'smtp.gmail.com', 'Gmail should be the default email server');
+        await pg.fill('#ad-iv-email', 'guest@example.com'); await pg.click('#ad-iv-btn');
+        await pg.waitForSelector('#ad-iv-link', { timeout: 5000 });
+        const link = await pg.inputValue('#ad-iv-link');
+        expect(/Invite sent/.test(await pg.textContent('#ad-users')), 'invited person should be listed as invited');
+        const gctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+        const gp = await gctx.newPage();
+        gp.on('pageerror', e => errs.push('invite page: ' + e.message));
+        await gp.goto(link); await gp.waitForSelector('#form:not([hidden])', { timeout: 5000 });
+        expect(/guest@example\.com/.test(await gp.textContent('#intro')), 'invite page should name the invited email');
+        await gp.fill('#password', 'guest-password-1'); await gp.click('#submit');
+        await gp.waitForSelector('#v-day:not([hidden]) #meals .meal', { timeout: 5000 });
+        await gctx.close();
       }
       await pg.click('#ad-types [data-t=R]');
       expect(await pg.inputValue('#ad-mn-0') === 'Smoke bowl', 'uploaded plan should be shown');
