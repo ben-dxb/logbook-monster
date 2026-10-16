@@ -41,6 +41,8 @@
   optional recipe, private or shared with everyone. "Add to plan" puts one in a meal or a day's off-plan list. Inside meals
   a library food is a calculator food with id `L:<id>:<hash of its values>`; each day keeps a copy in `D.lib` so old
   days still load after the food changes (`libRegister`/`libSync` in `app.js`).
+- `server/supps.js` / `public/supps.js` – supplements: a library (usual amount + unit, private or shared, like foods) and a
+  per-day log (`#supps`), each entry picked from the library or typed as free text, with an amount and a unit (g, mg, mcg, IU…).
 - `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by tests.
 - Secrets live only in `.env` on the server; never send them to the client or commit them.
 - Strict CSP: no inline scripts or `style=` attributes in HTML.
