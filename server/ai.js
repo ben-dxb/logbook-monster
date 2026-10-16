@@ -45,9 +45,9 @@ function save(body, user) {
   return status();
 }
 
-/* The foods the model can pick from: built-in plus the admin's own. */
-function foodList() {
-  const saved = defaults.get().foods || {};
+/* The foods the model can pick from: built-in plus the app's, plus the account's own when reading for one. */
+function foodList(user) {
+  const saved = (user ? defaults.effective(user) : defaults.get()).foods || {};
   const out = {};
   for (const [id, F] of Object.entries(FOODS)) if (id !== 'pudding') out[id] = { n: F.n, k: F.k, p: F.p, c: F.c, f: F.f, unit: F.unit || 'g' };
   for (const [id, r] of Object.entries(saved)) out[id] = { n: r.n, k: r.k, p: r.p, c: r.c, f: r.f, unit: r.unit || 'g' };
@@ -162,8 +162,8 @@ async function ask(system, buf, type, what) {
   return { reply: parseReply(Array.isArray(text) ? text.map(x => x.text || '').join('') : text), model: j.model || c.model };
 }
 
-async function importPlan(buf, type) {
-  const foods = foodList();
+async function importPlan(buf, type, user) {
+  const foods = foodList(user);
   const { reply, model } = await ask(prompt(foods), buf, type, 'meal plan');
   return { ...tidy(reply, foods), model };
 }

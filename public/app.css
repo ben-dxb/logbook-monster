@@ -177,7 +177,9 @@ footer{font-size:12px;color:var(--muted)}
   .wform{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
   .wform .btn{grid-column:1/-1}
 }
-/* ---------- admin ---------- */
+/* ---------- admin: account admin (.mine) and super admin share one page ---------- */
+#v-admin.mine .adapp,#v-admin.mine .adsuper,#v-admin:not(.mine) .admine{display:none}
+.adintro h2{margin-bottom:4px}
 .adbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;
   background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 12px}
 .adbar .sb{display:flex;gap:8px;margin-left:auto}

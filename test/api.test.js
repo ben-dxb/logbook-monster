@@ -188,6 +188,40 @@ test('only the admin can change the defaults, everyone reads them', async () => 
   assert.strictEqual(seen.body.plan.R[0].name, 'Skyr bowl');
 });
 
+test('account admin: anyone keeps their own plan over the app defaults, only for themselves', async () => {
+  const friend = client();
+  await friend.req('GET', '/auth/config');
+  assert.strictEqual((await friend.req('POST', '/auth/login', { email: 'friend@example.com', password: 'longenough2' })).status, 200);
+  assert.strictEqual((await friend.req('GET', '/api/me')).body.ai, false);
+  assert.strictEqual((await friend.req('GET', '/api/defaults')).body.mine, null);
+  const mine = {
+    schedule: ['R', 'R', 'R', 'R', 'R', 'R', 'T'],
+    targets: { R: { k: 2000, p: 180, c: 200, f: 55 } },
+    foods: { oats: { n: 'Oats', k: 380, p: 13, c: 60, f: 7, d: 0, step: 5, group: 'c' } },
+    /* skyr is one of the app's foods, oats the account's own */
+    plan: { R: [{ id: '1', name: 'Oat bowl', p: [{ f: 'skyr', g: 200 }], c: [{ f: 'oats', g: 60 }], x: [] }] },
+  };
+  const saved = await friend.req('PUT', '/api/my/defaults', mine);
+  assert.strictEqual(saved.status, 200);
+  assert.deepStrictEqual(saved.body.mine.schedule, mine.schedule);
+  assert.strictEqual(saved.body.mine.plan.R[0].name, 'Oat bowl');
+  assert.strictEqual(saved.body.plan.R[0].name, 'Skyr bowl');       /* the app's own is unchanged */
+  assert.strictEqual((await friend.req('PUT', '/api/my/defaults', { plan: { R: [{ id: '1', name: 'x', p: [{ f: 'unicorn', g: 1 }] }] } })).status, 400);
+  assert.strictEqual((await friend.req('PUT', '/api/admin/defaults', mine)).status, 403);
+  assert.strictEqual((await friend.req('POST', '/api/my/ai-import', {})).status, 400);   /* no key yet: open to accounts, but nothing to read with */
+  assert.deepStrictEqual((await friend.req('GET', '/api/export')).body.defaults.foods.oats.n, 'Oats');
+
+  const admin = client();
+  await admin.req('GET', '/auth/config');
+  await admin.req('POST', '/auth/login', { email: 'me@example.com', password: 'longenough1' });
+  await admin.req('GET', '/api/me');
+  assert.strictEqual((await admin.req('GET', '/api/defaults')).body.mine, null);   /* someone else's layer stays theirs */
+
+  assert.strictEqual((await friend.req('DELETE', '/api/my/defaults')).body.mine, null);
+  await friend.req('PUT', '/api/my/defaults', mine);
+  assert.strictEqual((await friend.req('PUT', '/api/my/defaults', {})).body.mine, null);   /* nothing different = no layer */
+});
+
 test('AI import: admin-only key that is never shown, and the reply is tidied', async () => {
   const admin = client();
   await admin.req('GET', '/auth/config');

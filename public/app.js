@@ -22,7 +22,7 @@ const WEIGHTS={};                           /* date -> kg */
 const SAVED={days:{},settings:null};        /* last JSON stored on the server, to spot what changed */
 const LOGGED=new Set();                     /* dates stored on the server */
 let view='day', month=todayStr().slice(0,7)+'-01', wRange=90, csrf='', ME='';
-let resetArmed=false, isAdmin=false;
+let resetArmed=false, isAdmin=false, aiOn=false;
 let LIB=[], LIBV=0;                         /* the food library (yours and shared), and a version to spot changes */
 
 /* ---------- server ---------- */
@@ -439,17 +439,19 @@ async function setWeight(date,kg){
   else{await api('PUT','/api/weights/'+date,{kg});WEIGHTS[date]=Math.round(kg*100)/100;}
 }
 
-/* ---------- routing: #day/2026-10-15, #history/2026-10, #weight, #gym/…, #foods/…, #admin ---------- */
-const VIEWS=['day','history','weight','gym','foods','admin'];
+/* ---------- routing: #day/2026-10-15, #history/2026-10, #weight, #gym/…, #foods/…, #account, #admin ----------
+   #account (account admin, anyone) and #admin (super admin) share the #v-admin page. */
+const VIEWS=['day','history','weight','gym','foods','account','admin'];
+const viewEl=n=>$('#v-'+(n==='account'?'admin':n));
 function route(){
   const [v,arg,...more]=location.hash.replace(/^#/,'').split('/');
   view=VIEWS.includes(v)&&(v!=='admin'||isAdmin)?v:'day';
   document.querySelectorAll('.views a').forEach(a=>{if(a.dataset.view===view)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
-  VIEWS.forEach(n=>{$('#v-'+n).hidden=n!==view;});
+  VIEWS.forEach(n=>{viewEl(n).hidden=true;});viewEl(view).hidden=false;
   $('#acct').open=false;
   if(view==='day'){openDay(isDate(arg)?arg:S.cur);}
   else if(view==='history'){if(/^\d{4}-\d{2}$/.test(arg||''))month=arg+'-01';renderHistory();}
-  else if(view==='admin'){renderAdmin();}
+  else if(view==='account'||view==='admin'){renderAdmin();}
   else if(view==='gym'){renderGym(arg?[arg,...more]:[]);}
   else if(view==='foods'){renderFoods(arg?[arg]:[]);}
   else renderWeight();
@@ -582,10 +584,10 @@ document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(
     const me=await api('GET','/api/me');csrf=me.csrf;ME=me.email;
     $('#who').textContent=me.name||me.email;$('#who').title=me.email;
     if(!me.hasPassword){$('#pwcur').hidden=true;$('#pwbox').querySelector('summary').textContent='Set a password';}
-    isAdmin=!!me.admin;$('#adminlink').hidden=!isAdmin;
+    isAdmin=!!me.admin;aiOn=!!me.ai;$('#adminlink').hidden=!isAdmin;
     const [settings,sums,weights,defs,lib]=await Promise.all([api('GET','/api/settings'),api('GET','/api/days'),api('GET','/api/weights'),api('GET','/api/defaults'),api('GET','/api/foods')]);
     LIB=(lib&&lib.foods)||[];
-    applyDefaults(defs);libRegister();
+    setDefaults(defs);
     S.pud={...PUD_DEFAULT,...((settings||{}).pud||{})};S.snackOv=(settings||{}).snackOv||{};
     S.pBasis=(settings||{}).pBasis==='direct'?'direct':'total';
     SAVED.settings=settingsJson();

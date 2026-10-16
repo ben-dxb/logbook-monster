@@ -27,11 +27,13 @@
 ## Layout
 
 - `server/` – Express app: `config.js` (.env), `auth.js` (password + Google OIDC, CSRF),
-  `api.js` (days, weights, settings, admin routes), `gym.js` (exercises, workouts, sets, AI workout import), `db.js` (SQLite schema),
+  `api.js` (days, weights, settings, `/my/defaults` account admin and `/admin/*` super admin routes), `gym.js` (exercises, workouts, sets, AI workout import), `db.js` (SQLite schema), `defaults.js` (app defaults + each account's own layer),
   `users.js` (invites, account list), `mail.js` (SMTP sending – use `mail.notify()` for fire-and-forget notifications).
 - `public/engine.js` – the original calculator data and balancing maths. Change food data and plan
   here; keep the solver behaviour unless asked.
 - `public/app.js` – views (Day, History calendar, Weight), saving, routing.
+- `public/admin.js` – Account admin (`#account`, anyone: own plan/week/targets/foods) and Super admin
+  (`#admin`: app defaults, AI key, people, email) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope.
 - `public/gym.js` – the Gym view (workouts, exercise sets, sessions, AI import preview).
 - `server/foods.js` / `public/foods.js` – the food library: foods people enter (per 100 g/ml or per item) with an
   optional recipe, private or shared with everyone. "Add to plan" puts one in a meal or a day's off-plan list. Inside meals
