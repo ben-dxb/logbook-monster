@@ -46,3 +46,18 @@ const STARTER=[
   {id:'peanut-butter',n:'Peanut butter',k:588,p:25,c:20,f:50,s:'',g:'Fats'},
   {id:'almonds',n:'Almonds',k:579,p:21.2,c:21.6,f:49.9,s:'',g:'Fats'},
 ];
+
+/* Food groups, in the order the library's group filter lists them. Starter foods carry theirs (g); for
+   other ingredients – your plan's foods and the ones people add – guessGroup guesses one from the name.
+   First match wins; sweets and spreads get no group rather than a wrong one. */
+const FOOD_GROUPS=['Meat and fish','Eggs and dairy','Plant protein','Grains and potatoes','Fruit and veg','Fats'];
+const FOOD_GROUP_WORDS=[
+  ['Eggs and dairy',/\b(eggs?|egg whites?|milk|yogh?urt|cheese|quark|skyr|kefir|whey|casein|alpro)\b/i],
+  ['Plant protein',/\b(tofu|tempeh|seitan|edamame|lentils?|chickpeas?|beans?|houmous|hummus)\b/i],
+  ['Meat and fish',/\b(chicken|turkey|beef|steak|lamb|pork|ham|bacon|mince|livers?|salmon|tuna|cod|haddock|mackerel|sardines?|fish|prawns?|shrimp)\b/i],
+  ['',/\b(jam|syrup|biscuits?|cookies?|chocolate|sweets|skittles|scroll|shortbread|cake)\b/i],
+  ['Fats',/\b(oil|avocados?|butter|lurpak|ghee|mayo(nnaise)?|nuts?|almonds?|walnuts?|cashews?|peanuts?|pecans?|seeds|tahini)\b/i],
+  ['Grains and potatoes',/\b(rice|pasta|spaghetti|noodles?|oats?|porridge|granola|cereal|pops|bread|sourdough|bagels?|wraps?|tortillas?|pitta|potato(es)?|quinoa|couscous|flour)\b/i],
+  ['Fruit and veg',/\b(fruit|veg|vegetables?|bananas?|apples?|pears?|berries|\w+berr(y|ies)|grapes?|oranges?|mango|pineapple|melon|kiwi|peach(es)?|dates?|tomato(es)?|passata|spinach|broccoli|peppers?|carrots?|onions?|lettuce|salad|cucumber|courgettes?|mushrooms?|kale|cabbage|peas)\b/i],
+];
+function guessGroup(name){const hit=FOOD_GROUP_WORDS.find(([,re])=>re.test(name||''));return hit?hit[0]:'';}
