@@ -33,7 +33,7 @@
   `users.js` (invites, account list), `mail.js` (SMTP sending – use `mail.notify()` for fire-and-forget notifications).
 - `public/engine.js` – the original calculator data and balancing maths. Change food data and plan
   here; keep the solver behaviour unless asked.
-- `public/app.js` – views (Day, History calendar, Weight), saving, routing. A meal marked eaten (`m.eaten`) is locked whole – the solver never moves it, its controls
+- `public/app.js` – views (Daily Tracker, History calendar), saving, routing. A meal marked eaten (`m.eaten`) is locked whole – the solver never moves it, its controls
   are disabled – and undoing it asks for confirmation.
 - `public/admin.js` – Account admin (`#account`, anyone: own plan/week/targets/foods) and Super admin
   (`#admin`: app defaults, AI key, people, email) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope.

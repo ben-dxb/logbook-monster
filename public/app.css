@@ -138,8 +138,7 @@ footer{font-size:12px;color:var(--muted)}
 .cell:not(.logged) .dn{color:var(--muted)}
 .msum{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px}
 
-/* ---------- weight ---------- */
-.wform{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:6px;align-items:end}
+/* ---------- charts (gym, timeline) ---------- */
 .wstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px}
 .charthead{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px}
 .clegend{display:flex;gap:14px;font-size:12px;color:var(--muted)}
@@ -157,11 +156,6 @@ footer{font-size:12px;color:var(--muted)}
 .chart .hi{fill:var(--info);stroke:var(--surface);stroke-width:2}
 .chart .tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--bg);border-radius:6px;padding:5px 8px;font-size:12px;white-space:nowrap;transform:translate(-50%,-100%);margin-top:-10px}
 .chart .emptyc{color:var(--muted);font-size:14px;padding:40px 0;text-align:center}
-.wlist{display:flex;flex-direction:column}
-.wrow{display:grid;grid-template-columns:minmax(0,1fr) auto auto 24px;gap:10px;align-items:center;border-top:1px solid var(--line);padding:6px 0;font-size:14px}
-.wrow .kg{font-weight:800}
-.wrow .ch{font-size:12px;font-weight:700;min-width:54px;text-align:right}
-.wrow a{color:var(--info);text-decoration:none}
 
 @media (max-width:700px){
   .boxes{grid-template-columns:minmax(0,1fr)}
@@ -177,8 +171,6 @@ footer{font-size:12px;color:var(--muted)}
   .grid4 .btn{grid-column:1/-1}
   .cell{min-height:58px;padding:4px;font-size:10.5px}
   .cell .dn small,.cell .pr{display:none}
-  .wform{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
-  .wform .btn{grid-column:1/-1}
 }
 /* ---------- admin: account admin (.mine) and super admin share one page ---------- */
 #v-admin.mine .adapp,#v-admin.mine .adsuper,#v-admin:not(.mine) .admine{display:none}
