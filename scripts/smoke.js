@@ -50,7 +50,7 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.click('a[data-view=history]'); await pg.waitForSelector('#v-history:not([hidden]) .cell.logged');
       await pg.click('a[data-view=weight]'); await pg.waitForSelector('#v-weight:not([hidden]) #chart svg');
       /* admin (the only account is the first one, so it is the admin) */
-      await pg.click('a[data-view=admin]'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-meals .admeal');
+      await pg.click('#acct>summary'); await pg.click('#adminlink'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-meals .admeal');
       if (first) {
         await pg.setInputFiles('#ad-file', { name: 'plan.csv', mimeType: 'text/csv', buffer: Buffer.from(
           'day_type,meal,meal_name,box,food,grams,locked\nrest,1,Smoke bowl,protein,whey,40,yes\nrest,1,Smoke bowl,carbs,Banana (peeled),150,\n') });

@@ -366,6 +366,7 @@ function route(){
   view=VIEWS.includes(v)&&(v!=='admin'||isAdmin)?v:'day';
   document.querySelectorAll('.views a').forEach(a=>{if(a.dataset.view===view)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
   VIEWS.forEach(n=>{$('#v-'+n).hidden=n!==view;});
+  $('#acct').open=false;
   if(view==='day'){openDay(isDate(arg)?arg:S.cur);}
   else if(view==='history'){if(/^\d{4}-\d{2}$/.test(arg||''))month=arg+'-01';renderHistory();}
   else if(view==='admin'){renderAdmin();}
