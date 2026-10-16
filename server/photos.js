@@ -149,7 +149,7 @@ router.post('/:id/ai-pose', poseLimit, async (req, res) => {
     if (!row) throw fail('No such photo', 404);
     let buf;
     try { buf = await fs.promises.readFile(fileAt(row.thumb || row.file)); } catch { throw fail('That photo’s file is missing', 404); }
-    const { reply, model } = await ai.ask(POSE_PROMPT, buf, sniff(buf) || row.type, 'progress photo', { maxTokens: 200, timeout: 60000 });
+    const { reply, model } = await ai.ask(POSE_PROMPT, buf, sniff(buf) || row.type, 'progress photo', { maxTokens: 200, timeout: 60000, task: 'pose' });
     const pose = POSES.includes(reply && reply.pose) ? reply.pose : 'other';
     const now = q.get.get(req.user.id, id);
     if (!now) throw fail('No such photo', 404);                  /* deleted while the AI was looking */

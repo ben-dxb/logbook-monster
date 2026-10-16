@@ -145,7 +145,7 @@ async function fill(b) {
     r.recipe ? `${r.kind === 'meal' ? 'Recipe' : 'Notes'}:\n${r.recipe}` : '',
     `Known values: ${Object.keys(r.known).length ? Object.entries(r.known).map(([m, v]) => `${LABEL[m]} ${v}${m === 'k' ? ' kcal' : ' g'}`).join(', ') : 'none'}`,
     `Missing: ${r.blank.map(m => LABEL[m]).join(', ')}`].filter(Boolean).join('\n');
-  const { reply, model } = await ai.askText(PROMPT, text);
+  const { reply, model } = await ai.askText(PROMPT, text, { task: 'food' });
   const values = {};
   for (const m of r.blank) {
     const n = Number(reply[m]);

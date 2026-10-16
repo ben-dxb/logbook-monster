@@ -196,7 +196,12 @@ footer{font-size:12px;color:var(--muted)}
 .adai a{color:var(--info)}
 .adfile.off{opacity:.5;cursor:default}
 .adfile.off input{cursor:default}
-.adkey{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) auto auto;gap:6px;align-items:end;margin-top:6px}
+.adkey{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px;align-items:end;margin-top:6px}
+.adtabs{margin-top:8px}
+#ad-aipanel a{color:var(--info)}
+.admodels{display:flex;flex-direction:column;gap:8px}
+.admrow{display:grid;grid-template-columns:minmax(0,12em) minmax(0,1fr);gap:2px 10px;align-items:center}
+.admrow .sub{grid-column:2;margin:0}
 .adnotes{font-size:13px;margin-top:6px}
 .adnotes ul{margin:4px 0 0;padding-left:20px;color:var(--muted)}
 .adhelp code{font-size:12px;background:var(--soft);padding:1px 4px;border-radius:4px;overflow-wrap:anywhere}
@@ -242,6 +247,8 @@ footer{font-size:12px;color:var(--muted)}
   .adweek{grid-template-columns:repeat(4,minmax(0,1fr))}
   .adkey{grid-template-columns:minmax(0,1fr) auto}
   .adkey .f{grid-column:1/-1}
+  .admrow{grid-template-columns:minmax(0,1fr)}
+  .admrow .sub{grid-column:1}
   .adinvite,#ad-mailtest{grid-template-columns:minmax(0,1fr)}
   .adpdel{grid-template-columns:repeat(2,minmax(0,1fr))}
   .adpdel .btn{grid-column:1/-1}

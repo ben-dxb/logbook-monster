@@ -2,8 +2,9 @@
 /* Admin view, in two scopes on one page:
    - account admin (#account, anyone): your own meal plan, week, targets and food values, stored as
      what differs from the app defaults;
-   - super admin (#admin, ADMIN_EMAILS): the app defaults every account starts from, stored as what
-     differs from the built-in values, plus the AI key, people and email.
+   - super admin (#admin, ADMIN_EMAILS): app-wide settings in tabs – App defaults (#admin: what every account
+     starts from, stored as what differs from the built-in values), AI (#admin/ai: OpenRouter key and a model per
+     task), People (#admin/people) and Email (#admin/email).
    The editor (meal plan upload/edit/download, week, targets, foods) is the same for both. Uses helpers from app.js. */
 
 const AD_TYPES=[['T','Training'],['R','Rest'],['S','Saturday training']];
@@ -14,6 +15,8 @@ let AD=null, AD_BASE=null, adSaved='', adType='T', adMsg='', adErrs=[], adBusy=f
 let DEFS={mine:null,myVersions:[]}, adScope='mine';   /* the server's defaults (app + mine); which layer the page edits */
 let DEFS_ON, adVer=null, adFrom='';          /* own-plan change applied now; the one being edited; the date a save takes effect from ('' = from the start) */
 let adAi=null, adAiBusy=false, adNotes=[];
+const AD_TABS=['defaults','ai','people','email'];
+let adTab='defaults';                        /* the super admin tab shown */
 const adOpen=new Set();                      /* food editors left open */
 
 /* ---------- defaults from the server: the app's, with this account's own layer on top ---------- */
@@ -70,6 +73,12 @@ function adMac(f,g){const F=f==='pudding'?FOODS.pudding:AD.foods[f];if(!F||F.fre
 function adPlanUses(id){return Object.values(AD.plan).some(ms=>ms.some(m=>['p','c','x'].some(b=>(m[b]||[]).some(i=>i.f===id))));}
 
 /* ---------- rendering ---------- */
+/* from the route: #admin/ai, #admin/people, #admin/email; anything else is the App defaults tab */
+function adRoute(arg){adTab=view==='admin'&&AD_TABS.includes(arg)?arg:'defaults';renderAdmin();}
+function adTabs(){
+  document.querySelectorAll('#v-admin [data-adtab]').forEach(el=>{el.hidden=el.dataset.adtab!==adTab;});
+  document.querySelectorAll('#ad-tabs a').forEach(a=>{if(a.dataset.adt===adTab)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
+}
 function renderAdmin(){
   if(view!=='admin'&&view!=='account')return;
   const want=view==='admin'?'app':'mine';
@@ -78,6 +87,8 @@ function renderAdmin(){
     AD=null;adMsg='';adErrs=[];adNotes=[];
   }
   adScope=want;$('#v-admin').classList.toggle('mine',want==='mine');
+  if(want==='mine')adTab='defaults';
+  adTabs();
   if(!AD){if(want==='mine')adPick();adLoad();adAiLoad();if(want==='app'){auLoad();amLoad();}}
   $('#ad-reset').hidden=!(want==='mine'&&!adEmpty(adVer));
   adVersions();
@@ -384,32 +395,49 @@ async function adUpload(file){
   renderAdmin();
 }
 
-/* ---------- AI import (OpenRouter) ---------- */
-/* only the super admin sees the key; an account just needs to know whether reading is on */
+/* ---------- AI (OpenRouter) ---------- */
+/* Only the super admin sees the AI settings (key, default model, a model per task); an account just needs to know whether reading is on. */
 async function adAiLoad(){
   if(adScope!=='app'){adAi={configured:aiOn,model:''};adAiRender();return;}
   try{adAi=await api('GET','/api/admin/ai');aiOn=adAi.configured;}catch(e){adAi=null;}adAiRender();
 }
 function adAiRender(){
   if(!adAi)return;
+  const plan=(adAi.tasks||[]).find(t=>t.id==='plan');
   $('#ad-aistate').textContent=adAiBusy?'Reading the plan – this can take a minute or two…'
-    :adAi.configured?(adAi.model?`Using ${adAi.model}`:'')
-    :adScope==='app'?'Add an OpenRouter API key below to turn this on.':isAdmin?'Add an OpenRouter API key on the Super admin page to turn this on.':'The super admin needs to add an OpenRouter key first.';
+    :adAi.configured?(plan?`Using ${plan.uses}`:'')
+    :isAdmin?'Add an OpenRouter API key on the Super admin page (AI tab) to turn this on.':'The super admin needs to add an OpenRouter key first.';
   $('#ad-aibtn').classList.toggle('off',!adAi.configured||adAiBusy);
   $('#ad-aifile').disabled=!adAi.configured||adAiBusy;
-  $('#ad-key').placeholder=adAi.configured?`Saved (${adAi.hint})${adAi.source==='env'?' – from .env':''}. Paste a new one to replace it`:'sk-or-…';
-  if(document.activeElement!==$('#ad-model'))$('#ad-model').value=adAi.model;
+  if(adScope!=='app')return;
+  $('#ad-aikeystate').innerHTML=adAi.configured?`<span class="chip ok">✓ Set up</span> Key ${esc(adAi.hint)}${adAi.source==='env'?' (from .env)':''}.`
+    :'<span class="chip bad">Not set up</span> AI features are off for everyone until a key is saved.';
+  $('#ad-key').placeholder=adAi.configured?'Paste a new key to replace it':'sk-or-…';
   $('#ad-keydel').hidden=adAi.source!=='admin';
-  if(adScope==='app'&&!adAi.configured&&!$('#ad-keybox').open)$('#ad-keybox').open=true;
+  const md=$('#ad-model');
+  if(document.activeElement!==md)md.value=adAi.model===adAi.defaultModel?'':adAi.model;
+  md.placeholder=adAi.defaultModel;
+  $('#ad-model-hint').textContent='Used for every task without its own model below.';
+  const el=$('#ad-aitasks');
+  if(!el.contains(document.activeElement))el.innerHTML=(adAi.tasks||[]).map(t=>`<label class="f admrow"><span class="lbl">${esc(t.name)}</span>
+      <input id="ad-tm-${t.id}" data-task="${t.id}" autocomplete="off" spellcheck="false" value="${esc(t.model)}" placeholder="${esc(adAi.model)} (default)">
+      <span class="sub">${esc(t.hint)}</span></label>`).join('');
 }
 $('#ad-keyform').addEventListener('submit',async e=>{
-  e.preventDefault();const body={model:$('#ad-model').value.trim()};const k=$('#ad-key').value.trim();if(k)body.key=k;
-  try{adAi=await api('PUT','/api/admin/ai',body);aiOn=adAi.configured;$('#ad-key').value='';$('#ad-keymsg').textContent=k?'Key saved.':'Saved.';}
+  e.preventDefault();const k=$('#ad-key').value.trim();if(!k){$('#ad-key').focus();return;}
+  try{adAi=await api('PUT','/api/admin/ai',{key:k});aiOn=adAi.configured;$('#ad-key').value='';$('#ad-keymsg').textContent='Key saved.';}
+  catch(err){if(!err.signedOut)$('#ad-keymsg').textContent=err.message;}
+  adAiRender();
+});
+$('#ad-modelform').addEventListener('submit',async e=>{
+  e.preventDefault();const models={};
+  document.querySelectorAll('#ad-aitasks [data-task]').forEach(i=>{models[i.dataset.task]=i.value.trim();});
+  try{adAi=await api('PUT','/api/admin/ai',{model:$('#ad-model').value.trim(),models});aiOn=adAi.configured;$('#ad-keymsg').textContent='Models saved.';document.activeElement.blur();}
   catch(err){if(!err.signedOut)$('#ad-keymsg').textContent=err.message;}
   adAiRender();
 });
 $('#ad-keydel').addEventListener('click',async()=>{
-  if(!confirm('Remove the saved OpenRouter key?'))return;
+  if(!confirm('Remove the saved OpenRouter key? AI features stop working for everyone.'))return;
   try{adAi=await api('PUT','/api/admin/ai',{key:''});aiOn=adAi.configured;$('#ad-keymsg').textContent='Key removed.';}catch(err){if(!err.signedOut)$('#ad-keymsg').textContent=err.message;}
   adAiRender();
 });

@@ -268,7 +268,7 @@ router.post('/summary', aiLimit, async (req, res) => {
     const keys = Array.isArray(b.metrics) ? b.metrics.filter(k => typeof k === 'string').slice(0, 40) : [];
     if (!keys.length) throw fail('Pick at least one metric');
     const text = summaryText(series(req.user, from, to), keys, from, to);
-    const { reply, model } = await ai.askText(PROMPT, text);
+    const { reply, model } = await ai.askText(PROMPT, text, { task: 'summary' });
     res.json({ ...tidyReply(reply), model });
   } catch (e) { send(res, e); }
 });
