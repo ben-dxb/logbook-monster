@@ -33,8 +33,9 @@
   here; keep the solver behaviour unless asked.
 - `public/app.js` – views (Day, History calendar, Weight), saving, routing.
 - `public/gym.js` – the Gym view (workouts, exercise sets, sessions, AI import preview).
-- `server/foods.js` / `public/foods.js` – the food library: foods people enter (per 100 g/ml or per item) with an
-  optional recipe, private or shared with everyone. "Add to plan" puts one in a day's off-plan list (`libAdd` in `app.js`).
+- `server/foods.js` / `public/foods.js` – the food library: meals and ingredients (`kind`) people enter (per 100 g/ml
+  or per item) with an optional recipe, private or shared with everyone. `POST /api/foods/ai-fill` estimates blank
+  values; `food.ai` records which values are AI estimates and the source shown behind the ⚑ flag. "Add to plan" puts one in a day's off-plan list (`libAdd` in `app.js`).
 - `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by tests.
 - Secrets live only in `.env` on the server; never send them to the client or commit them.
 - Strict CSP: no inline scripts or `style=` attributes in HTML.

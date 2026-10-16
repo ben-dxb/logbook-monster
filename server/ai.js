@@ -130,29 +130,38 @@ function tidy(raw, foods) {
 
 /* One file plus instructions to the model; returns the JSON object in its reply. */
 async function ask(system, buf, type, what) {
-  const c = current();
-  if (!c.key) throw Object.assign(new Error('Add an OpenRouter API key first'), { status: 400 });
+  if (!current().key) throw Object.assign(new Error('Add an OpenRouter API key first'), { status: 400 });
   if (!TYPES_IN.includes(type)) throw Object.assign(new Error('Upload a PDF or a PNG, JPEG or WebP image'), { status: 400 });
   if (!buf || !buf.length) throw Object.assign(new Error('The file is empty'), { status: 400 });
   const data = `data:${type};base64,${buf.toString('base64')}`;
   const part = type === 'application/pdf'
     ? { type: 'file', file: { filename: `${what.replace(/\W+/g, '-')}.pdf`, file_data: data } }
     : { type: 'image_url', image_url: { url: data } };
+  return call(system, [{ type: 'text', text: `Here is the ${what}. Reply with the JSON only.` }, part], 16000, 240000);
+}
+
+/* Instructions plus text only (no file). */
+function askText(system, text) {
+  if (!current().key) throw Object.assign(new Error('AI isn’t set up – an admin can add an OpenRouter API key on the Admin page'), { status: 400 });
+  return call(system, String(text), 2000, 60000);
+}
+
+async function call(system, content, maxTokens, timeout) {
+  const c = current();
   let r, j;
   try {
     r = await fetch(`${BASE}/chat/completions`, {
       method: 'POST',
-      signal: AbortSignal.timeout(240000),
+      signal: AbortSignal.timeout(timeout),
       headers: { authorization: `Bearer ${c.key}`, 'content-type': 'application/json', 'HTTP-Referer': config.baseUrl, 'X-Title': 'Logbook Monster' },
       body: JSON.stringify({
-        model: c.model, temperature: 0, max_tokens: 16000,
-        messages: [{ role: 'system', content: system },
-          { role: 'user', content: [{ type: 'text', text: `Here is the ${what}. Reply with the JSON only.` }, part] }],
+        model: c.model, temperature: 0, max_tokens: maxTokens,
+        messages: [{ role: 'system', content: system }, { role: 'user', content }],
       }),
     });
     j = await r.json().catch(() => ({}));
   } catch (e) {
-    throw Object.assign(new Error(e.name === 'TimeoutError' ? 'The AI took too long – try a smaller file' : 'Couldn’t reach OpenRouter'), { status: 502 });
+    throw Object.assign(new Error(e.name === 'TimeoutError' ? 'The AI took too long – try again' : 'Couldn’t reach OpenRouter'), { status: 502 });
   }
   if (!r.ok || j.error) {
     const msg = (j.error && j.error.message) || `HTTP ${r.status}`;
@@ -168,4 +177,4 @@ async function importPlan(buf, type) {
   return { ...tidy(reply, foods), model };
 }
 
-module.exports = { status, save, importPlan, ask, TYPES_IN };
+module.exports = { status, save, importPlan, ask, askText, TYPES_IN };

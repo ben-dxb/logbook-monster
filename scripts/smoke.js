@@ -90,16 +90,31 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       const cscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(cscroll <= 1, `horizontal overflow of ${cscroll}px on the exercises page at ${w}px wide`);
       await pg.click('[data-g=csvdrop]');
-      /* food library: add a shared food with a recipe, find it, add it to today's plan, then add it again from the Day page */
+      /* food library: add a shared meal with a recipe, filter meals and ingredients, open an AI flag's source,
+         find the meal, add it to today's plan, then add it again from the Day page */
+      if (first) await pg.evaluate(() => api('POST', '/api/foods', { name: 'Smoke chicken', unit: 'g', kind: 'ingredient', k: 165, p: 31, c: 0, f: 3.6,
+        ai: { fields: ['k', 'f'], source: 'Smoke source – USDA', basis: ['100 g raw breast'], confidence: 'high' } }));
       await pg.click('a[data-view=foods]'); await pg.waitForSelector('#v-foods:not([hidden]) #f-list');
       if (first) {
         await pg.click('#f-body a[href="#foods/new"]'); await pg.waitForSelector('#f-form');
-        await pg.fill('#f-name', 'Smoke pancakes'); await pg.selectOption('#f-unit', 'each');
+        await pg.fill('#f-name', 'Smoke pancakes'); await pg.click('[data-fa=fkind][data-v=meal]');
+        expect(await pg.inputValue('#f-unit') === 'each', 'a new meal should default to per item');
         await pg.fill('#f-k', '420'); await pg.fill('#f-p', '38'); await pg.fill('#f-c', '45'); await pg.fill('#f-f', '9');
         await pg.fill('#f-recipe', '60g oats\n30g whey\n2 eggs'); await pg.check('#f-public');
         await pg.click('#f-form button[type=submit]');
         await pg.waitForFunction(() => /Added “Smoke pancakes”/.test((document.querySelector('#f-list') || {}).textContent), null, { timeout: 5000 });
       }
+      await pg.click('[data-fa=kind][data-v=meal]'); await pg.waitForFunction(() => document.querySelectorAll('#f-list .fcard').length === 1);
+      expect(/Smoke pancakes/.test(await pg.textContent('#f-list')) && /Meals 1/.test(await pg.textContent('#f-kinds')), 'Meals should show only the meal');
+      await pg.click('[data-fa=kind][data-v=ingredient]'); await pg.waitForFunction(() => /Smoke chicken/.test(document.querySelector('#f-list').textContent));
+      await pg.click('[data-fa=tag][data-v=hp]'); await pg.click('[data-fa=tag][data-v=ai]');
+      expect(await pg.locator('#f-list .fcard').count() === 1, 'high-protein AI-estimated ingredient should stay listed');
+      expect(await pg.locator('#f-list .aiv').count() === 2, 'calories and fat should be flagged');
+      await pg.click('#f-list .aiv >> nth=0'); await pg.waitForSelector('#f-list .aisrc');
+      expect(/Smoke source/.test(await pg.textContent('#f-list .aisrc')) && /calories and fat/.test(await pg.textContent('#f-list .aisrc')), 'flag should show the AI source');
+      const ascroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(ascroll <= 1, `horizontal overflow of ${ascroll}px on the food filters at ${w}px wide`);
+      await pg.click('#f-clear'); await pg.waitForFunction(() => document.querySelectorAll('#f-list .fcard').length === 2);
       await pg.fill('#f-q', 'oats'); await pg.waitForFunction(() => document.querySelectorAll('#f-list .fcard').length === 1);
       expect(/Shared/.test(await pg.textContent('#f-list .fcard')), 'shared food should be marked Shared');
       await pg.click('#f-list .fcard details summary'); expect(/30g whey/.test(await pg.textContent('#f-list .frecipe')), 'recipe should show');

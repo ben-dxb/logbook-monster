@@ -531,7 +531,7 @@ document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(
     if(!me.hasPassword){$('#pwcur').hidden=true;$('#pwbox').querySelector('summary').textContent='Set a password';}
     isAdmin=!!me.admin;$('#adminlink').hidden=!isAdmin;
     const [settings,sums,weights,defs,lib]=await Promise.all([api('GET','/api/settings'),api('GET','/api/days'),api('GET','/api/weights'),api('GET','/api/defaults'),api('GET','/api/foods')]);
-    LIB=(lib&&lib.foods)||[];LIBV++;
+    LIB=(lib&&lib.foods)||[];LIBV++;fAiOn=!!(lib&&lib.ai);
     applyDefaults(defs);
     S.pud={...PUD_DEFAULT,...((settings||{}).pud||{})};S.snackOv=(settings||{}).snackOv||{};
     SAVED.settings=JSON.stringify({pud:S.pud,snackOv:S.snackOv});
