@@ -1,6 +1,6 @@
 'use strict';
-/* Progress photos: upload pictures, each with the date it was taken, a pose (front, side, back, other) and
-   an optional note, and look back through them by date or side by side.
+/* Progress photos: upload pictures, each with the date it was taken, a pose (front, left side, right side, back,
+   other – 'side' is kept for older photos), a pose type (relaxed, front double biceps… or none) and an optional note, and look back through them by date or side by side.
    #photos (the catalog, newest day first: filter by pose or by bodyweight, jump to a date, pick two to compare),
    #photos/12 (one photo: view, change, delete), #photos/compare/12/34 (two photos side by side, older on the left).
    Pictures are shrunk to a JPEG in the browser before upload (which also drops the EXIF data, location
@@ -8,7 +8,7 @@
    each dated from its own data (ExifDate, exifdate.js) unless the person turns that off; the date picked is used for
    any without one. Uses helpers from app.js and gym.js (gHead, gEmpty). */
 
-let PHOTOS=null, PPOSES=['front','side','back','other'], PWT={};
+let PHOTOS=null, PPOSES=['front','left','right','back','other'], PSTYLES=[], PWT={};
 let pPose='all', pDate=todayStr(), pUpPose='ai', pMsg='', pTok=0, pBusy=false;
 let pSel=false, pPick=[];                          /* picking photos to compare, and the ones picked (up to 2) */
 let pAi=false, pAiBusy=false;                     /* AI set up (an admin's OpenRouter key), and a "Tag with AI" run going */
@@ -17,17 +17,22 @@ let pNear=false, pNearKg='', pTol=1;              /* only days when you weighed 
 const P_MAX=2000, P_THUMB=480;                     /* longest side in pixels: the photo, the thumbnail */
 const P_MAX_TOTAL=5*1024**3, P_MAX_PHOTOS=3000;     /* most picked in one go (the originals; they're shrunk before upload), most an account keeps */
 const P_PARALLEL=3;                                /* photos shrunk and uploaded at a time */
-const P_NAME={front:'Front',side:'Side',back:'Back',other:'Other'}, P_TOLS=[0.5,1,2,3];
+const P_NAME={front:'Front',left:'Left side',right:'Right side',side:'Side',back:'Back',other:'Other'}, P_TOLS=[0.5,1,2,3];
+const P_STYLE={relaxed:'Relaxed',front_relaxed:'Front relaxed',back_relaxed:'Back relaxed',front_double_biceps:'Front double biceps',
+  back_double_biceps:'Back double biceps',most_muscular:'Most muscular'};
 const P_NEAR_DAYS=3;                               /* a day without a weigh-in takes the closest one this many days either side */
 
 const pById=id=>PHOTOS&&PHOTOS.find(p=>p.id===id);
 const pSrc=p=>`/api/photos/${p.id}/file?v=${encodeURIComponent(p.v)}`;
 const pThumb=p=>p.tv?`/api/photos/${p.id}/thumb?v=${encodeURIComponent(p.tv)}`:pSrc(p);
 const pPoseName=p=>P_NAME[p]||p;
+const pStyleName=s=>P_STYLE[s]||s;
+/* "Front · Most muscular", or just the pose when there's no pose type */
+const pLabel=p=>pPoseName(p.pose)+(p.style?' · '+pStyleName(p.style):'');
 function pSort(){PHOTOS.sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id);}
 async function pLoad(){
   const [r,w]=await Promise.all([api('GET','/api/photos'),api('GET','/api/weights')]);
-  PHOTOS=(r&&r.photos)||[];if(r&&r.poses)PPOSES=r.poses;pAi=!!(r&&r.ai);pSort();
+  PHOTOS=(r&&r.photos)||[];if(r&&r.poses)PPOSES=r.poses;if(r&&r.styles)PSTYLES=r.styles;pAi=!!(r&&r.ai);pSort();
   PWT={};(w||[]).forEach(x=>{PWT[x.date]=x.kg;});
 }
 const pYmd=d=>parse(d).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});
@@ -85,14 +90,18 @@ async function renderPhotos(args){
 
 /* ---------- the catalog: upload, then every day with photos, newest first ---------- */
 function pPoseOptions(sel,withAi){
+  const list=PPOSES.includes(sel)||!P_NAME[sel]?PPOSES:[...PPOSES,sel];   /* an older photo's "side" stays pickable on it */
   return (withAi&&pAi?`<option value="ai"${sel==='ai'?' selected':''}>Let AI tell</option>`:'')+
-    PPOSES.map(v=>`<option value="${v}"${v===sel?' selected':''}>${esc(pPoseName(v))}</option>`).join('');
+    list.map(v=>`<option value="${v}"${v===sel?' selected':''}>${esc(pPoseName(v))}</option>`).join('');
+}
+function pStyleOptions(sel){
+  return `<option value=""${sel?'':' selected'}>None</option>`+PSTYLES.map(v=>`<option value="${v}"${v===sel?' selected':''}>${esc(pStyleName(v))}</option>`).join('');
 }
 /* the AI's pose for a photo; save stores it too */
 const pAskAi=(id,save)=>api('POST',`/api/photos/${id}/ai-pose`,{save});
 const P_AI_NOTE='The AI looks at the small version of each photo, sent to the AI service set up for this app; nothing else about you goes with it.';
 function pCatalogPage(){
-  const seg=[['all','All'],...PPOSES.map(v=>[v,pPoseName(v)])].map(([v,l])=>`<button type="button" data-pa="filter" data-v="${v}" aria-pressed="${pPose===v}">${esc(l)}</button>`).join('');
+  const seg=[['all','All'],...[...PPOSES,...(PHOTOS.some(p=>p.pose==='side')?['side']:[])].map(v=>[v,pPoseName(v)])].map(([v,l])=>`<button type="button" data-pa="filter" data-v="${v}" aria-pressed="${pPose===v}">${esc(l)}</button>`).join('');
   const days=[...new Set(PHOTOS.map(p=>p.date))], latest=pLatest();
   const tols=P_TOLS.map(t=>`<option value="${t}"${t===pTol?' selected':''}>± ${t} kg</option>`).join('');
   return `<div class="gbar"><h2>Progress photos</h2></div>
@@ -140,8 +149,8 @@ function renderPhotoList(){
   renderSelBar();
 }
 function pTile(p){
-  const what=`${pPoseName(p.pose)}, ${fmtShort(p.date)}`, on=pSel&&pPick.includes(p.id);
-  return `<a class="ptile${on?' on':''}" href="#photos/${p.id}" data-pid="${p.id}" title="${esc(p.note||what)}"${pSel?` role="button" aria-pressed="${on}"`:''}><img src="${pThumb(p)}" alt="${esc(what)}" loading="lazy" decoding="async"><span>${esc(pPoseName(p.pose))}</span>${on?`<b class="pnum">${pPick.indexOf(p.id)+1}</b>`:''}</a>`;
+  const what=`${pLabel(p)}, ${fmtShort(p.date)}`, on=pSel&&pPick.includes(p.id);
+  return `<a class="ptile${on?' on':''}" href="#photos/${p.id}" data-pid="${p.id}" title="${esc(p.note||what)}"${pSel?` role="button" aria-pressed="${on}"`:''}><img src="${pThumb(p)}" alt="${esc(what)}" loading="lazy" decoding="async"><span>${esc(pLabel(p))}</span>${on?`<b class="pnum">${pPick.indexOf(p.id)+1}</b>`:''}</a>`;
 }
 function renderSelBar(){
   const el=$('#p-selbar');if(!el)return;
@@ -297,12 +306,13 @@ function pOnePage(p){
   const list=pShown(), i=list.indexOf(p);
   const newer=i>0?list[i-1]:null, older=i>=0&&i<list.length-1?list[i+1]:null;
   const nav=`<span class="pnav">${older?`<a class="nav" href="#photos/${older.id}" aria-label="Older photo">‹</a>`:''}${newer?`<a class="nav" href="#photos/${newer.id}" aria-label="Newer photo">›</a>`:''}</span>`;
-  return gHead('#photos',`${pPoseName(p.pose)} · ${fmtShort(p.date)}`,nav)+`
-    <figure class="pbig"><a href="${pSrc(p)}" target="_blank" rel="noopener"><img src="${pSrc(p)}" alt="${esc((pPoseName(p.pose))+' photo, '+fmtLong(p.date))}"></a>
+  return gHead('#photos',`${pLabel(p)} · ${fmtShort(p.date)}`,nav)+`
+    <figure class="pbig"><a href="${pSrc(p)}" target="_blank" rel="noopener"><img src="${pSrc(p)}" alt="${esc(pLabel(p)+' photo, '+fmtLong(p.date))}"></a>
       <figcaption>${esc(fmtLong(p.date))}${pKg(p.date)?' · '+esc(pKg(p.date)):''}${p.note?' · '+esc(p.note):''}</figcaption></figure>
     <form id="p-eform" class="panel sform" data-id="${p.id}">
       <label class="f"><span class="lbl">Date taken</span><input id="p-edate" type="date" required value="${p.date}"></label>
       <label class="f"><span class="lbl">Pose</span><select id="p-epose">${pPoseOptions(p.pose)}</select></label>
+      <label class="f"><span class="lbl">Pose type</span><select id="p-estyle">${pStyleOptions(p.style)}</select></label>
       ${pAi?`<div class="factions"><button class="ghost" type="button" data-pa="aione" data-id="${p.id}" title="${esc(P_AI_NOTE)}">Ask AI for the pose</button><span id="p-aisay" class="sub" role="status"></span></div>`:''}
       <label class="f swide"><span class="lbl">Note (optional)</span><input id="p-enote" maxlength="200" value="${esc(p.note)}"></label>
       <p id="p-eerr" class="aderr swide" role="alert" hidden></p>
@@ -316,7 +326,7 @@ async function pSave(form){
   const err=$('#p-eerr'), id=+form.dataset.id, btn=form.querySelector('button[type=submit]');
   btn.disabled=true;err.hidden=true;
   try{
-    const p=await api('PUT','/api/photos/'+id,{date:$('#p-edate').value,pose:$('#p-epose').value,note:$('#p-enote').value});
+    const p=await api('PUT','/api/photos/'+id,{date:$('#p-edate').value,pose:$('#p-epose').value,style:$('#p-estyle').value,note:$('#p-enote').value});
     PHOTOS=PHOTOS.filter(x=>x.id!==id);PHOTOS.push(p);pSort();
     pMsg='Saved.';go('photos');
   }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message;err.hidden=false;}}
@@ -339,7 +349,7 @@ async function pAiTagAll(){
     list=list.filter(p=>p.poseAi);
     if(!list.length){pMsg='Every photo shown has a pose you set yourself, so there’s nothing for the AI to tag.';renderPhotoList();return;}
   }
-  if(!confirm(`Let the AI look at ${list.length===1?'this photo':`these ${list.length} photos`} and set ${list.length===1?'its':'their'} pose (front, side, back or other)?\n\n${P_AI_NOTE}`))return;
+  if(!confirm(`Let the AI look at ${list.length===1?'this photo':`these ${list.length} photos`} and set ${list.length===1?'its':'their'} pose (front, left or right side, back or other) and pose type (relaxed, double biceps, most muscular…)?\n\n${P_AI_NOTE}`))return;
   pAiBusy=true;pMsg='';
   const btn=()=>$('#p-aibtn');
   let done=0, changed=0, miss=0, why='';
@@ -348,7 +358,7 @@ async function pAiTagAll(){
       const b=btn();if(b){b.disabled=true;b.textContent=`Tagging ${done+1} of ${list.length}…`;}
       try{
         const a=await pAskAi(p.id,true);
-        if(a.photo.pose!==p.pose)changed++;
+        if(a.photo.pose!==p.pose||a.photo.style!==p.style)changed++;
         const i=PHOTOS.findIndex(x=>x.id===p.id);if(i>=0)PHOTOS[i]=a.photo;
       }catch(e){if(e.signedOut)return;miss++;why=e.message;if(/OpenRouter|API key|wait a while|set up/.test(why))break;}   /* the same for the rest */
       done++;
@@ -361,9 +371,10 @@ async function pAiOne(b){
   const say=$('#p-aisay');b.disabled=true;say.textContent='Asking the AI…';
   try{
     const a=await pAskAi(+b.dataset.id,false);
-    const sel=$('#p-epose');if(!sel)return;
-    sel.value=a.pose;
-    say.textContent=a.pose===pById(+b.dataset.id).pose?`The AI agrees: ${pPoseName(a.pose)}.`:`The AI says ${pPoseName(a.pose)} – tap Save changes to keep it.`;
+    const sel=$('#p-epose'), st=$('#p-estyle');if(!sel||!st)return;
+    const p=pById(+b.dataset.id), said=pLabel(a);
+    sel.value=a.pose;st.value=a.style||'';
+    say.textContent=p&&a.pose===p.pose&&(a.style||'')===p.style?`The AI agrees: ${said}.`:`The AI says ${said} – tap Save changes to keep it.`;
   }catch(e){if(!e.signedOut)say.textContent=e.message;}
   finally{b.disabled=false;}
 }
@@ -383,11 +394,11 @@ function pCmpPage(x,y){
   if(!a||!b||a===b){[x,y]=pDefaultPair();a=pById(x);b=pById(y);}
   if(a.date>b.date||(a.date===b.date&&a.id>b.id))[a,b]=[b,a];      /* older on the left */
   const ws=pWeights(), wa=pWeightOn(a.date,ws), wb=pWeightOn(b.date,ws);
-  const opts=sel=>PHOTOS.map(p=>`<option value="${p.id}"${p===sel?' selected':''}>${esc(pYmd(p.date))} · ${esc(pPoseName(p.pose))}${pWeightOn(p.date,ws)?' · '+esc(pKgTxt(pWeightOn(p.date,ws))):''}</option>`).join('');
+  const opts=sel=>PHOTOS.map(p=>`<option value="${p.id}"${p===sel?' selected':''}>${esc(pYmd(p.date))} · ${esc(pLabel(p))}${pWeightOn(p.date,ws)?' · '+esc(pKgTxt(pWeightOn(p.date,ws))):''}</option>`).join('');
   const side=(p,w,k,other,ow)=>`<figure class="pside">
       <label class="f"><span class="lbl">${k==='a'?'Before':'After'}</span><select id="p-c${k}" data-other="${other.id}">${opts(p)}</select></label>
-      <a href="#photos/${p.id}"><img src="${pSrc(p)}" alt="${esc(pPoseName(p.pose)+' photo, '+fmtLong(p.date))}"></a>
-      <figcaption><b>${esc(pYmd(p.date))}</b> · ${esc(pPoseName(p.pose))}${w?' · '+esc(pKgTxt(w)):''}${p.note?`<br>${esc(p.note)}`:''}</figcaption>
+      <a href="#photos/${p.id}"><img src="${pSrc(p)}" alt="${esc(pLabel(p)+' photo, '+fmtLong(p.date))}"></a>
+      <figcaption><b>${esc(pYmd(p.date))}</b> · ${esc(pLabel(p))}${w?' · '+esc(pKgTxt(w)):''}${p.note?`<br>${esc(p.note)}`:''}</figcaption>
       <button class="ghost" type="button" data-pa="match" data-keep="${other.id}" data-drop="${p.id}"${ow?'':' disabled'} title="Swap this side for the ${esc(pPoseName(other.pose).toLowerCase())} photo from another day when you weighed closest to that">${ow?`Find one at ${esc(ow.kg)} kg`:'No weigh-in to match'}</button></figure>`;
   const gap=pDayGap(a.date,b.date), sum=[gap?`${gap} day${gap===1?'':'s'} apart`:'Same day'];
   if(wa&&wb){const d=Math.round((wb.kg-wa.kg)*10)/10;sum.push(d?`${d>0?'+':''}${d} kg`:'same weight');}

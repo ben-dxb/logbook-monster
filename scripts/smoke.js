@@ -326,14 +326,16 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.waitForFunction(() => { const i = document.querySelector('.pbig img'); return i && i.complete && i.naturalWidth > 0; }, null, { timeout: 5000 });
       if (!first) {
         /* AI is set up by now (the key saved on the Admin page in the first pass); the AI's answer is faked here */
-        await pg.route('**/api/photos/*/ai-pose', r => r.fulfill({ json: { pose: 'side', model: 'test/vision', photo: {} } }));
-        expect(await pg.locator('#p-epose').inputValue() !== 'side', 'the photo should not start as side');
+        await pg.route('**/api/photos/*/ai-pose', r => r.fulfill({ json: { pose: 'left', style: 'relaxed', model: 'test/vision', photo: {} } }));
+        expect(await pg.locator('#p-epose').inputValue() !== 'left', 'the photo should not start as left side');
         await pg.click('[data-pa=aione]');
-        await pg.waitForFunction(() => document.querySelector('#p-epose').value === 'side' && /AI says Side/.test(document.querySelector('#p-aisay').textContent), null, { timeout: 5000 });
-        await pg.selectOption('#p-epose', 'front');
+        await pg.waitForFunction(() => document.querySelector('#p-epose').value === 'left' && document.querySelector('#p-estyle').value === 'relaxed' &&
+          /AI says Left side · Relaxed/.test(document.querySelector('#p-aisay').textContent), null, { timeout: 5000 });
+        await pg.selectOption('#p-epose', 'front'); await pg.selectOption('#p-estyle', 'front_double_biceps');
       }
       await pg.fill('#p-enote', 'smoke edited ' + w); await pg.click('#p-eform button[type=submit]');
       await pg.waitForFunction(() => /Saved/.test((document.querySelector('#p-list') || {}).textContent || ''), null, { timeout: 5000 });
+      if (!first) expect(/Front · Front double biceps/.test(await pg.textContent('#p-list')), 'the catalog should show the pose type picked');
       /* bodyweight: the latest weigh-in is today's 80.5 kg, so only 1 October (80.4) is within 1 kg; then 85 kg finds 1 September */
       await pg.check('#p-near');
       await pg.waitForFunction(() => document.querySelectorAll('#p-list .pday').length === 1 && document.querySelector('#p-d-2026-10-01'));

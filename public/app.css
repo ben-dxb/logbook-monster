@@ -446,7 +446,7 @@ footer{font-size:12px;color:var(--muted)}
 .pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px}
 .ptile{position:relative;display:block;border-radius:10px;overflow:hidden;background:var(--soft);aspect-ratio:3/4;border:1px solid var(--line)}
 .ptile img{width:100%;height:100%;object-fit:cover;display:block}
-.ptile span{position:absolute;left:6px;bottom:6px;font-size:11px;font-weight:700;padding:1px 7px;border-radius:99px;background:var(--surface);color:var(--ink)}
+.ptile span{position:absolute;left:6px;bottom:6px;max-width:calc(100% - 12px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:700;padding:1px 7px;border-radius:99px;background:var(--surface);color:var(--ink)}
 .ptile:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .pnav{display:flex;gap:6px;flex:none}
 .pbig,.pside{margin:0;display:flex;flex-direction:column;gap:6px;min-width:0}
