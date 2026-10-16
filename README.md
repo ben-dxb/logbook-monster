@@ -1,15 +1,14 @@
 # Logbook Monster
 
 Logbook Monster (formerly Meal Swap) is a meal-swap calculator as a self-hosted web app. Each date is its own saved day, there's a
-calendar of past days, weight tracking with a trend chart, a gym log for workouts and sets, and sign-in with email + password
+calendar of past days, weight logged each day with a trend on the Timeline, a gym log for workouts and sets, and sign-in with email + password
 or Google.
 
-- **Food Tracker** – the calculator, for any date. Training/rest plan follows the weekday. Every change
+- **Daily Tracker** – the calculator, for any date. Training/rest plan follows the weekday. Every change
   saves to your account automatically; untouched days stay "plan only" until you change
   something or tap **Save day as is**. Log the day's weight at the top.
 - **History** – a month calendar of logged days (calories vs target, protein, weight) with a
   month summary. Tap a day to open it.
-- **Weight** – log weigh-ins, see a chart with a 7-day average, and the full list.
 - **Gym** – workout tracking in the style of Setgraph. **Workouts** are your training days, each
   a list of exercises with a target ("1 × 5–8 heavy, then 1 × 10–15 lighter"). Tap an exercise to
   see every set by day and log new ones from the bar at the bottom (reps and weight start from your

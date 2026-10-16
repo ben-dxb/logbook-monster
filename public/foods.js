@@ -27,7 +27,7 @@ function fPlanFoods(){
   const ing=(id)=>{const F=FOODS[id];if(!F||isLib(id)||used.has(id))return;used.add(id);
     out.push({id:'plan:f:'+id,fid:id,plan:true,mine:false,public:false,ai:null,by:null,kind:'ingredient',
       name:F.n,unit:F.unit==='ml'?'ml':'g',k:fRound(F.k),p:fRound(F.p),c:fRound(F.c),f:fRound(F.f),
-      recipe:id==='pudding'?'Values from your rice pudding batch on the Food Tracker page.':''});};
+      recipe:id==='pudding'?'Values from your rice pudding batch on the Daily Tracker page.':''});};
   /* every meal of every day of the week, with both built-in breakfasts and the Saturday pie */
   for(let d=0;d<7;d++){
     const t=TYPE[d], opts=CUSTOM_PLAN&&CUSTOM_PLAN[t]?[['omelette',false]]:[['omelette',false],['eggs',false],...(t==='S'?[['omelette',true]]:[])];
@@ -141,7 +141,7 @@ function fListPage(){
   const ord=ORDERS.map(([v,l])=>`<option value="${v}"${fF.order===v?' selected':''}>${l}</option>`).join('');
   const tags=TAGS.map(([v,l])=>`<button type="button" data-fa="tag" data-v="${v}" aria-pressed="${fF.tags.includes(v)}">${l}</button>`).join('');
   return `<div class="gbar"><h2>Food Library</h2><a class="btn" href="#foods/new">New food</a></div>
-    <p class="fintro">Your meal plan is already here – every meal in it and every food it uses, kept up to date with the plan – along with common fitness foods to start from. “Weights” shows foods per 100 g raw or cooked. Add your own meals and ingredients too, with a recipe if you like. Share one and everyone can add it to their plan. “Add to plan” puts it in a meal or the off-plan list of any day, and the rest of the day rebalances around it. In the Food Tracker you’ll also find them under “+ Add a food…” in every meal. Values marked ⚑ were estimated by AI – tap one to see where it came from.</p>
+    <p class="fintro">Your meal plan is already here – every meal in it and every food it uses, kept up to date with the plan – along with common fitness foods to start from. “Weights” shows foods per 100 g raw or cooked. Add your own meals and ingredients too, with a recipe if you like. Share one and everyone can add it to their plan. “Add to plan” puts it in a meal or the off-plan list of any day, and the rest of the day rebalances around it. In the Daily Tracker you’ll also find them under “+ Add a food…” in every meal. Values marked ⚑ were estimated by AI – tap one to see where it came from.</p>
     <div class="seg fkinds" id="f-kinds" role="group" aria-label="Type"></div>
     <div class="ftools"><input id="f-q" type="search" placeholder="Search names, recipes and people" aria-label="Search foods" value="${esc(fQuery)}">
       <label class="fsel"><span class="lbl">Show</span><select id="f-who">${who}</select></label>
@@ -162,7 +162,7 @@ function renderFoodList(){
   $('#f-count').textContent=all.length?`${list.length} of ${all.length} food${all.length===1?'':'s'}`:'';
   $('#f-clear').hidden=!fBusy();
   let h=fMsg?`<p class="note fmsg" role="status">${esc(fMsg)}</p>`:'';
-  if(!all.length)h+=gEmpty('Nothing here yet. Tap “New food” to add a meal or an ingredient, or tick “Save to my food library” when you add something off plan on the Food Tracker page.');
+  if(!all.length)h+=gEmpty('Nothing here yet. Tap “New food” to add a meal or an ingredient, or tick “Save to my food library” when you add something off plan on the Daily Tracker page.');
   else if(!list.length)h+=gEmpty(fF.who==='shared'&&!fQuery.trim()&&!fF.tags.length?'Nobody has shared a food like that yet.':'No foods match. Try fewer filters.');
   /* A–Z gets letter headings once the list is long enough to scroll */
   let last='';

@@ -204,7 +204,7 @@ function tCardBody(r){
     const off=(D.off||[]).map(o=>`<li><b>${esc(o.n||'Off-plan food')}</b><small>${r0(+o.k||0)} kcal · P ${r1(+o.p||0)} · C ${r1(+o.c||0)} · F ${r1(+o.f||0)}</small></li>`).join('');
     food=`<div class="tcstats">${stat('k','Calories','')}${stat('p','Protein','g')}${stat('c','Carbs','g')}${stat('f','Fat','g')}</div>
       <ul class="tclist">${meals}</ul>${off?`<span class="lbl">Off plan</span><ul class="tclist">${off}</ul>`:''}`;
-  }else food=gEmpty('Nothing saved in the Food Tracker for this day.');
+  }else food=gEmpty('Nothing saved in the Daily Tracker for this day.');
   /* weight */
   const w=r.weight;
   const weight=w?`<p class="tbig">${w.kg.toFixed(1)}<i>kg</i></p><p class="sub">${w.ago?`Last weigh-in, ${esc(fmtShort(w.date))} (${tAgo(w.ago)})`:'Weighed in that day'}${w.avg7!=null&&!w.ago?` · 7-day average ${w.avg7.toFixed(1)} kg`:''}</p>`
@@ -220,11 +220,11 @@ function tCardBody(r){
   const g=r.gym;
   const gym=g.exercises.length?`<p class="sub">${g.sets} set${g.sets===1?'':'s'} · ${g.volume.toLocaleString()} kg volume</p><ul class="tclist">${g.exercises.map(x=>`<li><b>${esc(x.name)}</b>${x.best?` <span class="chip info">e1RM ${tNum(x.best,'kg')}</span>`:''}<small>${x.sets.map(s=>`${s.reps}×${s.kg}kg`).join(' · ')}</small></li>`).join('')}</ul>`
     :gEmpty(g.last?`No gym sets that day. Last session: ${esc(fmtShort(g.last))}.`:'No gym sets up to this day.');
-  return `<div class="tcgrid">${sec('tcfood','Food',food,[`#day/${d}`,'Open in Food Tracker'])}
-    ${sec('','Weight',weight,['#weight','Weight'])}
+  return `<div class="tcgrid">${sec('tcfood','Food',food,[`#day/${d}`,'Open in Daily Tracker'])}
+    ${sec('','Weight',weight,[`#day/${d}`,'Log in Daily Tracker'])}
     ${sec('','Supplements',supps,[`#supps/${d}`,'Open supplements'])}
     ${sec('','Gym',gym,g.exercises.length?[`#gym/d/${d}`,'Open session']:g.last?[`#gym/d/${g.last}`,'Last session']:null)}
-    ${sec('tcwide','Photos',photos,['#photos','All photos'])}</div>`;
+    ${sec('tcwide','Progress photos',photos,['#photos','All progress photos'])}</div>`;
 }
 
 /* ---------- events ---------- */
