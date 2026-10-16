@@ -40,7 +40,8 @@
 - `server/foods.js` / `public/foods.js` – the food library: meals and ingredients (`kind`) people enter (per 100 g/ml
   or per item) with an optional recipe, private or shared with everyone. `POST /api/foods/ai-fill` estimates blank
   values; `food.ai` records which values are AI estimates and the source shown behind the ⚑ flag. The meal plan in use is
-  always listed too (`fPlanFoods` in `foods.js`, built in the browser, never stored): its meals (`plan:m:…`) and foods (`plan:f:<food id>`). "Add to plan" puts
+  always listed too (`fPlanFoods` in `foods.js`, built in the browser, never stored): its meals (`plan:m:…`) and foods (`plan:f:<food id>`). Starter foods (`public/starter.js`, `std:<id>`) are listed
+  for everyone the same way. `state` (raw/cooked) + `yield` (cooked weight as % of raw) let `fShown` show a food either way. "Add to plan" puts
   one in a meal or a day's off-plan list. Inside meals a library food is a calculator food with id `L:<id>:<hash of its
   values>`; each day keeps a copy in `D.lib` so old days still load after the food changes (`libRegister`/`libSync` in `app.js`).
 - `server/supps.js` / `public/supps.js` – supplements: a library (usual amount + unit, private or shared, like foods) and a
