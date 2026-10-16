@@ -8,6 +8,8 @@
 
 const AD_TYPES=[['T','Training'],['R','Rest'],['S','Saturday training']];
 const AD_BOXES=[['p','Protein'],['c','Carbs'],['x','Additional fats']];
+const AD_FREE=[['sauce','Sauces','passata, tomato paste and any food marked Sauce'],['veg','Green veg','broccoli, spinach and any food marked Green veg']];
+const AD_FREE_OPTS=[['','No'],['sauce','Sauce'],['veg','Green veg']];
 let AD=null, AD_BASE=null, adSaved='', adType='T', adMsg='', adErrs=[], adBusy=false;
 let DEFS={mine:null,myVersions:[]}, adScope='mine';   /* the server's defaults (app + mine); which layer the page edits */
 let DEFS_ON, adVer=null, adFrom='';          /* own-plan change applied now; the one being edited; the date a save takes effect from ('' = from the start) */
@@ -23,7 +25,7 @@ function typeOn(date){const v=mineOn(date),s=(v&&v.schedule)||DEFS.schedule;retu
 function freshOn(date){useDefs(date);return freshDay(wdOf(date));}
 function adApplyInUse(){useDefs(S.cur,true);}
 function setDefaults(d){DEFS=d||{mine:null,myVersions:[]};adApplyInUse();}
-const adEmpty=v=>!v||(!Object.keys(v.foods||{}).length&&!v.schedule&&!Object.keys(v.targets||{}).length&&!v.plan);
+const adEmpty=v=>!v||(!Object.keys(v.foods||{}).length&&!v.schedule&&!Object.keys(v.targets||{}).length&&!v.plan&&!Object.keys(v.free||{}).length);
 /* choose which of your plan changes to edit (the one in effect today unless one is named) */
 function adPick(v){
   const td=todayStr(), now=mineOn(td);
@@ -37,7 +39,7 @@ function adEditable(id){return id!=='pudding'&&!isLib(id);}   /* pudding values 
 function adSnap(cfg){
   applyDefaults(cfg);
   const foods={};Object.keys(FOODS).filter(adEditable).forEach(id=>{foods[id]=foodRecord(id);});
-  return {foods,schedule:[...TYPE],targets:clone(COACH),plan:planData()};
+  return {foods,schedule:[...TYPE],targets:clone(COACH),plan:planData(),free:{...FREE}};
 }
 /* AD_BASE is the layer below the one being edited: built-in values for the app, the app defaults for an account */
 function adLoad(){
@@ -56,13 +58,14 @@ function adPayload(){
   const foods={};
   for(const [id,r] of Object.entries(AD.foods)) if(!AD_BASE.foods[id]||!same(r,AD_BASE.foods[id])) foods[id]=r;
   const plan=AD.custom?AD.plan:null;
-  if(adScope==='app')return {foods,schedule:AD.schedule,targets:AD.targets,plan};
+  if(adScope==='app')return {foods,schedule:AD.schedule,targets:AD.targets,plan,free:AD.free};
   const targets={};for(const t in AD.targets) if(!same(AD.targets[t],AD_BASE.targets[t])) targets[t]=AD.targets[t];
-  return {foods,schedule:same(AD.schedule,AD_BASE.schedule)?null:AD.schedule,targets,plan};
+  const free={};for(const x of FREE_KINDS) if(AD.free[x]!==AD_BASE.free[x]) free[x]=AD.free[x];
+  return {foods,schedule:same(AD.schedule,AD_BASE.schedule)?null:AD.schedule,targets,plan,free};
 }
 function adDirty(){return !!AD&&adState()!==adSaved;}
 const adFoodName=id=>(AD.foods[id]||FOODS[id]||{n:id}).n;
-function adMac(f,g){const F=f==='pudding'?FOODS.pudding:AD.foods[f];if(!F)return {k:0,p:0,c:0,f:0};
+function adMac(f,g){const F=f==='pudding'?FOODS.pudding:AD.foods[f];if(!F||F.free&&AD.free[F.free])return {k:0,p:0,c:0,f:0};
   return {k:F.k*g/100,p:F.p*g/100,c:F.c*g/100,f:F.f*g/100};}
 function adPlanUses(id){return Object.values(AD.plan).some(ms=>ms.some(m=>['p','c','x'].some(b=>(m[b]||[]).some(i=>i.f===id))));}
 
@@ -114,6 +117,8 @@ function renderAdmin(){
       ${AD_TYPES.map(([t,n])=>`<option value="${t}"${AD.schedule[i]===t?' selected':''}>${t==='S'?'Training (Saturday plan)':n}</option>`).join('')}</select></label>`).join('');
   $('#ad-targets').innerHTML='<span></span><span class="lbl">kcal</span><span class="lbl">Protein g</span><span class="lbl">Carbs g</span><span class="lbl">Fat g</span>'+
     AD_TYPES.map(([t,n])=>`<span class="adtl">${n}</span>`+MAC.map(m=>numIn(`ad-tg-${t}-${m}`,AD.targets[t][m],`data-ad="target" data-t="${t}" data-k="${m}"`,`${n} ${m}`)).join('')).join('');
+  /* free foods */
+  $('#ad-free').innerHTML=AD_FREE.map(([x,l,hint])=>`<label class="tog"><input type="checkbox" id="ad-free-${x}" data-ad="free" data-k="${x}"${AD.free[x]?' checked':''}> ${l} are free <span class="muted">– ${hint}</span></label>`).join('');
   /* foods */
   const groups={p:'Protein swaps',c:'Carb swaps',x:'Fat swaps','':'Not in a swap list'};
   $('#ad-foods').innerHTML=Object.entries(AD.foods).map(([id,r])=>{
@@ -128,6 +133,7 @@ function renderAdmin(){
         ${fld('step','Step')}${fld('min','Min serving')}${fld('max','Max serving')}${fld('order','Daily order')}
         <label class="f"><span class="lbl">Unit</span><select id="ad-fd-${id}-unit" data-ad="food" data-id="${id}" data-k="unit">${['g','ml'].map(u=>`<option${r.unit===u?' selected':''}>${u}</option>`).join('')}</select></label>
         <label class="f"><span class="lbl">Swap list</span><select id="ad-fd-${id}-group" data-ad="food" data-id="${id}" data-k="group">${Object.entries(groups).map(([g,n])=>`<option value="${g}"${r.group===g?' selected':''}>${n}</option>`).join('')}</select></label>
+        <label class="f"><span class="lbl">Free food</span><select id="ad-fd-${id}-free" data-ad="food" data-id="${id}" data-k="free">${AD_FREE_OPTS.map(([x,n])=>`<option value="${x}"${(r.free||'')===x?' selected':''}>${n}</option>`).join('')}</select></label>
       </div>
       <div class="adfact">${edited?`<button type="button" class="ghost" data-ad="freset" data-id="${id}">Back to ${adScope==='app'?'built-in':'app'} values</button>`:''}
         ${custom?`<button type="button" class="ghost" data-ad="fdel" data-id="${id}">Delete food</button>`:''}</div>
@@ -198,8 +204,9 @@ document.addEventListener('change',e=>{
   else if(a==='iadd'){if(!el.value)return;const f=el.value,F=AD.foods[f]||FOODS[f];
     adPlanEdit(()=>{const m=adMeal(el);(m[el.dataset.b]=m[el.dataset.b]||[]).push({f,g:F.min||(F.step>=5?50:10),lock:false});});renderAdmin();}
   else if(a==='wday'){AD.schedule[+el.dataset.i]=el.value;}
+  else if(a==='free'){AD.free[el.dataset.k]=el.checked;adTotals();}
   else if(a==='from'){adFrom=isDate(el.value)?el.value:'';}
-  else if(a==='food'&&el.tagName==='SELECT'){AD.foods[el.dataset.id][el.dataset.k]=el.value;const s=$('#ad-fs-'+el.dataset.id);if(s)s.innerHTML=adFoodLine(AD.foods[el.dataset.id]);}
+  else if(a==='food'&&el.tagName==='SELECT'){AD.foods[el.dataset.id][el.dataset.k]=el.value;const s=$('#ad-fs-'+el.dataset.id);if(s)s.innerHTML=adFoodLine(AD.foods[el.dataset.id]);adTotals();}
   else return;
   adStatus();
 });
@@ -350,6 +357,7 @@ function adApplyJson(j){
   const plan=full?j.plan:j;
   if(full&&j.foods&&typeof j.foods==='object'){for(const [id,r] of Object.entries(j.foods)){if(id!=='pudding'&&r&&typeof r==='object')AD.foods[id]={...(AD.foods[id]||{group:'',unit:'g',min:null,max:null,order:null,d:0,step:5}),...r};}}
   if(full&&Array.isArray(j.schedule)&&j.schedule.length===7&&j.schedule.every(t=>['T','R','S'].includes(t)))AD.schedule=[...j.schedule];
+  if(full&&j.free&&typeof j.free==='object')FREE_KINDS.forEach(x=>{if(j.free[x]!=null)AD.free[x]=!!j.free[x];});
   if(full&&j.targets&&typeof j.targets==='object')AD_TYPES.forEach(([t])=>{if(j.targets[t])AD.targets[t]={...AD.targets[t],...j.targets[t]};});
   if(plan&&typeof plan==='object'){const got=AD_TYPES.filter(([t])=>Array.isArray(plan[t])&&plan[t].length);
     got.forEach(([t])=>{AD.plan[t]=plan[t].map(m=>({id:String(m.id),name:String(m.name||''),...(m.note?{note:String(m.note)}:{}),

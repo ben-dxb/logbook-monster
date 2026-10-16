@@ -100,7 +100,10 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       }
       await pg.click('a[data-view=history]'); await pg.waitForSelector('#v-history:not([hidden]) .cell.logged');
       expect(await pg.getAttribute('#v-history .htabs [data-h=cal]', 'aria-current') === 'page', 'History should open on the Calendar tab');
-      await pg.click('a[data-view=weight]'); await pg.waitForSelector('#v-weight:not([hidden]) #chart svg');
+      expect(!(await pg.locator('a[data-view=weight]').count()), 'the Weight view should be gone');
+      await pg.evaluate(() => { location.hash = '#weight'; }); await pg.waitForSelector('#v-timeline:not([hidden])');
+      expect(await pg.evaluate(() => location.hash) === '#history/timeline', 'old #weight links should open the Timeline');
+      await pg.click('a[data-view=history]'); await pg.waitForSelector('#v-history:not([hidden])');
       /* gym: make a workout, log two sets, edit one, look at chart, records and sessions */
       await pg.click('a[data-view=gym]'); await pg.waitForSelector('#v-gym:not([hidden]) #g-body .glist');
       await pg.click('a[href="#gym/new"]'); await pg.fill('#g-wname', 'Saturday — Lower');
@@ -265,8 +268,17 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
           { name: 'side.png', mimeType: 'image/png', buffer: await pic(600, 800, '#3c3') }]);
         await pg.fill('#p-date', '2026-09-01'); await pg.fill('#p-note', 'smoke start'); await pg.click('#p-form button[type=submit]');
         await pg.waitForFunction(() => /Added 2 photos/.test(document.querySelector('#p-list').textContent), null, { timeout: 10000 });
-        await pg.setInputFiles('#p-file', { name: 'later.png', mimeType: 'image/png', buffer: await pic(600, 800, '#33c') });
-        await pg.fill('#p-date', '2026-10-01'); await pg.click('#p-form button[type=submit]');
+        /* a camera JPEG: its EXIF DateTimeOriginal (1 October) beats the date in the form, which is only for photos without one */
+        const jpg = Buffer.from(await pg.evaluate(() => { const c = document.createElement('canvas'); c.width = 600; c.height = 800;
+          const g = c.getContext('2d'); g.fillStyle = '#33c'; g.fillRect(0, 0, 600, 800); return c.toDataURL('image/jpeg').split(',')[1]; }), 'base64');
+        const when = Buffer.from('2026:10:01 07:45:00\0', 'latin1');                 /* TIFF, little-endian: IFD0 → Exif IFD → DateTimeOriginal */
+        const tiff = Buffer.concat([Buffer.from([0x49, 0x49, 42, 0, 8, 0, 0, 0, 1, 0, 0x69, 0x87, 4, 0, 1, 0, 0, 0, 26, 0, 0, 0, 0, 0, 0, 0,
+          1, 0, 0x03, 0x90, 2, 0, when.length, 0, 0, 0, 44, 0, 0, 0, 0, 0, 0, 0]), when]);
+        const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, 0, tiff.length + 8]), Buffer.from('Exif\0\0', 'latin1'), tiff]);
+        await pg.uncheck('#p-exif'); await pg.check('#p-exif');
+        await pg.setInputFiles('#p-file', { name: 'later.jpg', mimeType: 'image/jpeg', buffer: Buffer.concat([jpg.subarray(0, 2), app1, jpg.subarray(2)]) });
+        await pg.waitForFunction(() => /Taken on (1 Oct|Oct 1)\b/.test(document.querySelector('#p-pick').textContent), null, { timeout: 5000 });
+        await pg.fill('#p-date', '2026-09-20'); await pg.click('#p-form button[type=submit]');
         await pg.waitForFunction(() => /Added 1 photo /.test(document.querySelector('#p-list').textContent), null, { timeout: 10000 });
         const big = await pg.evaluate(async () => (await api('GET', '/api/photos')).photos.find(p => p.note === 'smoke start'));
         expect(big && big.tv && big.size < 1500000, 'uploaded photo should be shrunk and have a thumbnail');
@@ -378,6 +390,13 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         expect(await gp.inputValue('#ad-wd-0') === 'R', 'the guest should start from the app defaults');
         await gp.selectOption('#ad-wd-0', 'T'); await gp.click('#ad-save');
         await gp.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent) && !document.querySelector('#ad-reset').hidden, null, { timeout: 5000 });
+        /* free foods: tick sauces free, save, and passata stops counting */
+        expect(!(await gp.isChecked('#ad-free-sauce')) && !(await gp.isChecked('#ad-free-veg')), 'sauces and green veg should count by default');
+        await gp.check('#ad-free-sauce');
+        expect(/Unsaved/.test(await gp.textContent('#ad-status')), 'ticking free sauces should be an unsaved change');
+        await gp.click('#ad-save');
+        await gp.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
+        expect(await gp.isChecked('#ad-free-sauce') && await gp.evaluate(() => FREE.sauce && macOf('passata', 200).k === 0), 'free sauces should be saved and applied');
         /* a change that takes effect later: Mondays are rest days again from 2031, days before keep training */
         await gp.selectOption('#ad-wd-0', 'R'); await gp.fill('#ad-from', '2031-01-01'); await gp.click('#ad-save');
         await gp.waitForFunction(() => /Scheduled/.test(document.querySelector('#ad-versions').textContent) && /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });

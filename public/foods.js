@@ -27,8 +27,8 @@ function fPlanFoods(){
   const out=[], used=new Set(), meals=new Map();
   const ing=(id)=>{const F=FOODS[id];if(!F||isLib(id)||used.has(id))return;used.add(id);
     out.push({id:'plan:f:'+id,fid:id,plan:true,mine:false,public:false,ai:null,by:null,kind:'ingredient',
-      name:F.n,unit:F.unit==='ml'?'ml':'g',group:SWAP_LISTS.x.includes(id)?'Fats':guessGroup(F.n),k:fRound(F.k),p:fRound(F.p),c:fRound(F.c),f:fRound(F.f),
-      recipe:id==='pudding'?'Values from your rice pudding batch on the Food Tracker page.':''});};
+      name:F.n,unit:F.unit==='ml'?'ml':'g',group:SWAP_LISTS.x.includes(id)?'Fats':guessGroup(F.n),k:fRound(F.k),p:fRound(F.p),c:fRound(F.c),f:fRound(F.f),free:F.free||'',
+      recipe:id==='pudding'?'Values from your rice pudding batch on the Daily Tracker page.':''});};
   /* every meal of every day of the week, with both built-in breakfasts and the Saturday pie */
   for(let d=0;d<7;d++){
     const t=TYPE[d], opts=CUSTOM_PLAN&&CUSTOM_PLAN[t]?[['omelette',false]]:[['omelette',false],['eggs',false],...(t==='S'?[['omelette',true]]:[])];
@@ -58,7 +58,7 @@ function fPlanFoods(){
 }
 /* ---------- starter foods ---------- */
 const F_STARTER=STARTER.map(x=>({id:'std:'+x.id,std:true,plan:false,mine:false,public:false,ai:null,by:null,kind:'ingredient',
-  name:x.n,unit:x.u||'g',k:x.k,p:x.p,c:x.c,f:x.f,recipe:'',group:x.g,state:x.s||'',yield:x.y||null,dry:x.s==='raw'&&x.g==='Grains and potatoes'&&!/potato/i.test(x.n)||/lentil/i.test(x.n),
+  name:x.n,unit:x.u||'g',k:x.k,p:x.p,c:x.c,f:x.f,free:x.fr||'',recipe:'',group:x.g,state:x.s||'',yield:x.y||null,dry:x.s==='raw'&&x.g==='Grains and potatoes'&&!/potato/i.test(x.n)||/lentil/i.test(x.n),
   about:`${x.note?x.note+' ':''}Typical values from USDA FoodData Central (carbs include fibre) – check your pack.${x.y?` Cooked values assume it weighs about ${x.y}% of the ${x.s==='raw'&&/rice|pasta|quinoa|lentil/i.test(x.n)?'dry':'raw'} weight once cooked.`:''}`}));
 
 let fPlanCache=null;
@@ -145,7 +145,7 @@ function fListPage(){
   const ord=ORDERS.map(([v,l])=>`<option value="${v}"${fF.order===v?' selected':''}>${l}</option>`).join('');
   const tags=TAGS.map(([v,l])=>`<button type="button" data-fa="tag" data-v="${v}" aria-pressed="${fF.tags.includes(v)}">${l}</button>`).join('');
   return `<div class="gbar"><h2>Food Library</h2><a class="btn" href="#foods/new">New food</a></div>
-    <p class="fintro">Your meal plan is already here – every meal in it and every food it uses, kept up to date with the plan – along with common fitness foods to start from. “Weights” shows foods per 100 g raw or cooked. Add your own meals and ingredients too, with a recipe if you like. Share one and everyone can add it to their plan. “Add to plan” puts it in a meal or the off-plan list of any day, and the rest of the day rebalances around it. In the Food Tracker you’ll also find them under “+ Add a food…” in every meal. Values marked ⚑ were estimated by AI – tap one to see where it came from.</p>
+    <p class="fintro">Your meal plan is already here – every meal in it and every food it uses, kept up to date with the plan – along with common fitness foods to start from. “Weights” shows foods per 100 g raw or cooked. Add your own meals and ingredients too, with a recipe if you like. Share one and everyone can add it to their plan. “Add to plan” puts it in a meal or the off-plan list of any day, and the rest of the day rebalances around it. In the Daily Tracker you’ll also find them under “+ Add a food…” in every meal. Values marked ⚑ were estimated by AI – tap one to see where it came from.</p>
     <div class="seg fkinds" id="f-kinds" role="group" aria-label="Type"></div>
     <div class="ftools"><input id="f-q" type="search" placeholder="Search names, recipes and people" aria-label="Search foods" value="${esc(fQuery)}">
       <label class="fsel"><span class="lbl">Show</span><select id="f-who">${who}</select></label>
@@ -171,7 +171,7 @@ function renderFoodList(){
   $('#f-count').textContent=all.length?`${list.length} of ${all.length} food${all.length===1?'':'s'}`:'';
   $('#f-clear').hidden=!fBusy();
   let h=fMsg?`<p class="note fmsg" role="status">${esc(fMsg)}</p>`:'';
-  if(!all.length)h+=gEmpty('Nothing here yet. Tap “New food” to add a meal or an ingredient, or tick “Save to my food library” when you add something off plan on the Food Tracker page.');
+  if(!all.length)h+=gEmpty('Nothing here yet. Tap “New food” to add a meal or an ingredient, or tick “Save to my food library” when you add something off plan on the Daily Tracker page.');
   else if(!list.length)h+=gEmpty(fF.who==='shared'&&!fQuery.trim()&&!fF.tags.length&&!fF.group?'Nobody has shared a food like that yet.':'No foods match. Try fewer filters.');
   /* A–Z gets letter headings once the list is long enough to scroll */
   let last='';
@@ -191,7 +191,7 @@ function fCard(f){
   const canDel=!f.plan&&!f.std&&(f.mine||isAdmin);
   const adding=fAdding&&fAdding.id===f.id;
   return `<article class="fcard" data-id="${f.id}">
-    <div class="fhead"><h3>${esc(f.name)}</h3>${kind}${tag}</div>
+    <div class="fhead"><h3>${esc(f.name)}</h3>${kind}${tag}${fFreeChip(f)}</div>
     <span class="ml">${fMacros(f,true)} <i>${libPer(f.unit)}${f.shown?' '+fWord(f,f.shown):''}</i></span>
     ${fCanWt(f)?`<div class="fwt"><div class="seg" role="group" aria-label="Weighed">${fWtSeg(f.shown,'wt',f.id,f)}</div><span class="muted">cooked ≈ ${f.yield}% of ${fWord(f,'raw')} weight</span></div>`:''}
     ${f.ai&&fOpen.has(String(f.id))?fSource(f.ai):''}
@@ -203,6 +203,9 @@ function fCard(f){
       ${canDel?`<button class="ghost" type="button" data-fa="del" data-id="${f.id}">${f.mine?'Delete':'Delete (admin)'}</button>`:''}</div>`}
   </article>`;
 }
+/* a sauce or green veg: says so, and whether your plan counts it as free (no macros) */
+const F_FREE={sauce:'Sauce',veg:'Green veg'};
+const fFreeChip=f=>F_FREE[f.free]?`<span class="chip kind">${F_FREE[f.free]}${FREE[f.free]?' · free':''}</span>`:'';
 function fWtSeg(cur,act,id,f){
   return ['raw','cooked'].map(v=>`<button type="button" data-fa="${act}" data-v="${v}"${id!==''?` data-id="${esc(id)}"`:''} aria-pressed="${cur===v}">${v==='raw'?(f&&f.dry?'Dry':f?'Raw':'Raw / dry'):'Cooked'}</button>`).join('');
 }
@@ -237,6 +240,8 @@ function fEditPage(f){
       <label class="f fwide"><span class="lbl">Name</span><input id="f-name" maxlength="80" required value="${esc(v.name)}" placeholder="e.g. Protein pancakes, or Chicken breast (raw)"></label>
       <div class="f fwide"><span class="lbl">This is a</span><div class="seg" role="group" aria-label="Type">${kinds}</div></div>
       <label class="f fwide"><span class="lbl">Values are</span><select id="f-unit">${unit}</select></label>
+      <label class="f fwide"><span class="lbl">Free food</span><select id="f-free">${[['','No – always counted'],['sauce','Sauce'],['veg','Green veg']].map(([x,l])=>`<option value="${x}"${(v.free||'')===x?' selected':''}>${l}</option>`).join('')}</select>
+        <span class="muted">A sauce or green veg counts no macros when your plan sets that kind free (Account admin).</span></label>
       <label class="f fstate"><span class="lbl">Weighed</span><select id="f-state">${[['','Neither (ready to eat)'],['raw','Raw / dry'],['cooked','Cooked']].map(([x,l])=>`<option value="${x}"${(v.state||'')===x?' selected':''}>${l}</option>`).join('')}</select></label>
       <label class="f fstate"><span class="lbl">Cooked weight, % of raw</span><input id="f-yield" type="number" inputmode="numeric" min="10" max="1000" step="1" value="${esc(v.yield==null?'':v.yield)}" placeholder="e.g. 75 chicken, 280 rice"></label>
       ${box('k','kcal')}${box('p','Protein g')}${box('c','Carbs g')}${box('f','Fat g')}
@@ -281,7 +286,7 @@ async function fFill(btn){
 }
 async function fSave(form){
   const v=id=>$('#'+id).value, err=$('#f-err');
-  const body={name:v('f-name'),unit:v('f-unit'),kind:form.dataset.kind,k:v('f-k'),p:v('f-p'),c:v('f-c'),f:v('f-f'),recipe:v('f-recipe'),public:$('#f-public').checked,ai:fEdit&&fEdit.ai,state:v('f-state'),yield:v('f-yield')};
+  const body={name:v('f-name'),unit:v('f-unit'),kind:form.dataset.kind,k:v('f-k'),p:v('f-p'),c:v('f-c'),f:v('f-f'),recipe:v('f-recipe'),public:$('#f-public').checked,ai:fEdit&&fEdit.ai,state:v('f-state'),yield:v('f-yield'),free:v('f-free')};
   const id=form.dataset.id, btn=form.querySelector('button[type=submit]');
   btn.disabled=true;err.hidden=true;
   try{

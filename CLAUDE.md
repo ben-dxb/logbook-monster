@@ -29,11 +29,11 @@
 ## Layout
 
 - `server/` – Express app: `config.js` (.env), `auth.js` (password + Google OIDC, CSRF),
-  `api.js` (days, weights, settings, `/my/defaults` account admin and `/admin/*` super admin routes), `gym.js` (exercises, workouts, sets, AI workout import), `db.js` (SQLite schema), `defaults.js` (app defaults + each account's own layer, kept as dated changes – each day uses the one in effect on its date),
+  `api.js` (days, weights, settings, `/my/defaults` account admin and `/admin/*` super admin routes), `gym.js` (exercises, workouts, sets, AI workout import), `db.js` (SQLite schema), `defaults.js` (app defaults + each account's own layer, kept as dated changes – each day uses the one in effect on its date; `free` says whether sauces / green veg count – foods tagged `free:'sauce'|'veg'` add no macros and the solver skips them while that kind is free),
   `users.js` (invites, account list), `mail.js` (SMTP sending – use `mail.notify()` for fire-and-forget notifications).
 - `public/engine.js` – the original calculator data and balancing maths. Change food data and plan
   here; keep the solver behaviour unless asked.
-- `public/app.js` – views (Day, History calendar, Weight), saving, routing. A meal marked eaten (`m.eaten`) is locked whole – the solver never moves it, its controls
+- `public/app.js` – views (Daily Tracker, History calendar), saving, routing. A meal marked eaten (`m.eaten`) is locked whole – the solver never moves it, its controls
   are disabled – and undoing it asks for confirmation.
 - `public/admin.js` – Account admin (`#account`, anyone: own plan/week/targets/foods) and Super admin
   (`#admin`: app defaults, AI key, people, email) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope.
@@ -50,7 +50,7 @@
 - `server/photos.js` / `public/photos.js` – progress photos (`#photos`): each account's own pictures with a date, pose and note,
   shown by date (filter by pose or by bodyweight near a chosen weight, jump to a date) and side by side
   (`#photos/compare/<id>/<id>`, two photos picked in the catalog; "Find one at N kg" swaps in the closest-weight photo). The browser shrinks each to a JPEG (dropping EXIF) and sends a thumbnail
-  after it; `POST /api/photos/:id/ai-pose` asks the AI for the pose (front/side/back/other) from the thumbnail – only when the person asks
+  after it; bulk uploads (up to 5 GB picked at once, 3 at a time) date each photo from its own EXIF/XMP data (`public/exifdate.js`, global `ExifDate`), the form's date only for those without one; `POST /api/photos/:id/ai-pose` asks the AI for the pose (front/side/back/other) from the thumbnail – only when the person asks
   ("Let AI tell" on upload, "Tag poses with AI" over the photos shown, "Ask AI" on one photo); files live on disk in `PHOTO_DIR` (default `photos/` next to the database), only their details in SQLite.
 - `server/timeline.js` / `public/timeline.js` – the Timeline tab of History (`#history` is the Calendar tab; `#history/timeline`, `#history/timeline/<date>` opens a day's card in a `<dialog>`): one day's food,
   weight, latest photo of each pose, supplements (that day + the 14-day regime) and gym sets; trend series (macros, weight, volume, Epley e1RM per

@@ -199,3 +199,14 @@ test('foods can be weighed raw or cooked, with a cooked yield', async () => {
   r = await bob('POST', '/api/foods/ai-fill', { name: 'Chicken thigh', unit: 'g', k: '', p: '', c: '', f: '' });
   assert.strictEqual(r.body.yield, undefined);
 });
+
+test('a food can be a sauce or green veg (free foods); anything else is dropped', async () => {
+  const ann = await signIn('ann@example.com');
+  let r = await ann('POST', '/api/foods', { name: 'Frank\'s hot sauce', unit: 'g', k: 12, p: 0, c: 2, f: 0, free: 'sauce' });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.free, 'sauce');
+  r = await ann('PUT', `/api/foods/${r.body.id}`, { name: 'Frank\'s hot sauce', unit: 'g', k: 12, p: 0, c: 2, f: 0, free: 'pizza' });
+  assert.strictEqual(r.body.free, '');
+  r = await ann('POST', '/api/foods', { name: 'Green beans', unit: 'g', k: 31, p: 1.8, c: 7, f: 0.2, free: 'veg' });
+  assert.strictEqual(r.body.free, 'veg');
+});

@@ -21,7 +21,7 @@ const SUMS={};                              /* date -> saved day summary (for ca
 const WEIGHTS={};                           /* date -> kg */
 const SAVED={days:{},settings:null};        /* last JSON stored on the server, to spot what changed */
 const LOGGED=new Set();                     /* dates stored on the server */
-let view='day', month=todayStr().slice(0,7)+'-01', wRange=90, csrf='', ME='';
+let view='day', month=todayStr().slice(0,7)+'-01', csrf='', ME='';
 let resetArmed=false, isAdmin=false, aiOn=false;
 let LIB=[], LIBV=0;                         /* the food library (yours and shared), and a version to spot changes */
 
@@ -276,9 +276,9 @@ const libUnit=u=>u==='each'?'×':u;
 const libPer=u=>u==='each'?'per item':`per 100${u}`;
 function libMac(o,qty){const m=o.u==='each'?qty:qty/100;return {k:o.per.k*m,p:o.per.p*m,c:o.per.c*m,f:o.per.f*m};}
 /* what goes in a day's off-plan list: carries its own values, so it still works if the food is later changed or removed */
-function libEntry(food,qty){const o={n:food.name,lib:food.id,u:food.unit,per:{k:food.k,p:food.p,c:food.c,f:food.f},qty};return Object.assign(o,libMac(o,qty));}
+function libEntry(food,qty){const o={n:food.name,lib:food.id,u:food.unit,per:{k:food.k,p:food.p,c:food.c,f:food.f},qty};if(food.free)o.free=food.free;return Object.assign(o,libMac(o,qty));}
 function libAdd(D,food,qty){
-  const ex=D.off.find(o=>o.lib===food.id&&o.u===food.unit&&['k','p','c','f'].every(m=>o.per[m]===food[m]));
+  const ex=D.off.find(o=>o.lib===food.id&&o.u===food.unit&&(o.free||'')===(food.free||'')&&['k','p','c','f'].every(m=>o.per[m]===food[m]));
   if(ex){ex.qty+=qty;Object.assign(ex,libMac(ex,ex.qty));}else D.off.push(libEntry(food,qty));
 }
 const libDefault=u=>u==='each'?1:100;
@@ -287,11 +287,12 @@ const libDefault=u=>u==='each'?1:100;
    add up after a food is edited, unshared or deleted. Values are per 100 like every food; a per-item food
    counts its amount in items, so its values are stored ×100. */
 const isLib=f=>typeof f==='string'&&f.startsWith('L:');
-function libHash(food){let h=5381;for(const ch of [food.unit,food.k,food.p,food.c,food.f].join('|'))h=(h*33+ch.charCodeAt(0))>>>0;return h.toString(36);}
+function libHash(food){let h=5381;for(const ch of [food.unit,food.k,food.p,food.c,food.f].concat(food.free?[food.free]:[]).join('|'))h=(h*33+ch.charCodeAt(0))>>>0;return h.toString(36);}
 const libFid=food=>`L:${food.id}:${libHash(food)}`;
 /* An AI-estimated food keeps its ⚑ in meals, and the day's copy remembers its type and which values were estimates. */
 function libFoodRec(food){const m=food.unit==='each'?100:1;
   const F={n:food.name+(food.ai?' ⚑':''),kind:food.kind,ai:food.ai?food.ai.fields:undefined,k:food.k*m,p:food.p*m,c:food.c*m,f:food.f*m,d:0,step:food.unit==='each'?1:food.unit==='ml'?10:5,cat:'c'};
+  if(food.free)F.free=food.free;
   if(food.unit!=='g')F.unit=food.unit==='each'?'×':'ml';return F;}
 function libLoad(D){for(const [fid,F] of Object.entries(D.lib||{}))if(isLib(fid)&&!FOODS[fid])FOODS[fid]={...F};}
 /* After the library changes or the admin defaults are applied (which drop foods the calculator didn't ship with). */
@@ -374,85 +375,19 @@ function renderHistory(){
   ].map(([l,v,s])=>`<div class="stat"><span class="lbl">${l}</span><span class="num">${v}</span>${s?`<span class="sub">${s}</span>`:''}</div>`).join('');
 }
 
-/* ---------- weight view ---------- */
-function rolling(entries){ /* 7-day average ending on each weigh-in */
-  return entries.map(([d,kg],i)=>{const from=addDays(d,-6);let s=0,n=0;
-    for(let j=i;j>=0&&entries[j][0]>=from;j--){s+=entries[j][1];n++;}return [d,s/n];});
-}
-function renderWeight(){
-  if(!$('#w-date').value)$('#w-date').value=todayStr();
-  $('#wrange').querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.r===wRange)));
-  const all=Object.entries(WEIGHTS).sort((a,b)=>a[0]<b[0]?-1:1);
-  const avgAll=rolling(all);
-  const from=wRange?addDays(todayStr(),-wRange+1):'0000';
-  const idx=all.findIndex(e=>e[0]>=from); const pts=idx<0?[]:all.slice(idx), avg=idx<0?[]:avgAll.slice(idx);
-  /* stats */
-  const last=all[all.length-1], lastAvg=avgAll[avgAll.length-1];
-  const ch=pts.length>1?pts[pts.length-1][1]-pts[0][1]:null;
-  const lo=pts.length?Math.min(...pts.map(p=>p[1])):null;
-  $('#wstats').innerHTML=[
-    ['Latest',last?`${last[1].toFixed(1)}<i>kg</i>`:'–',last?fmtShort(last[0]):'No weigh-ins yet'],
-    ['7-day average',lastAvg?`${lastAvg[1].toFixed(1)}<i>kg</i>`:'–',''],
-    ['Change',ch!=null?`${ch>=0?'+':'−'}${Math.abs(ch).toFixed(1)}<i>kg</i>`:'–',wRange?`last ${wRange} days`:'all time'],
-    ['Lowest',lo!=null?`${lo.toFixed(1)}<i>kg</i>`:'–',wRange?`last ${wRange} days`:'all time'],
-  ].map(([l,v,s])=>`<div class="stat"><span class="lbl">${l}</span><span class="num">${v}</span>${s?`<span class="sub">${s}</span>`:''}</div>`).join('');
-  drawChart(pts,avg);
-  /* list */
-  $('#wlist').innerHTML=all.length?all.slice().reverse().map(([d,kg],i,arr)=>{
-    const prev=arr[i+1];const c=prev?kg-prev[1]:null;
-    return `<div class="wrow"><a href="#day/${d}">${esc(parse(d).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short',year:'numeric'}))}</a>
-      <span class="kg">${kg.toFixed(1)} kg</span><span class="ch">${c==null?'':(c>=0?'+':'−')+Math.abs(c).toFixed(1)}</span>
-      <button class="x" data-act="wdel" data-d="${d}" aria-label="Delete weight for ${esc(fmtLong(d))}">×</button></div>`;}).join('')
-    :'<p class="empty">Log your first weigh-in above, or on any day in the Food Tracker.</p>';
-}
-function drawChart(pts,avg){
-  const box=$('#chart');
-  if(!pts.length){box.innerHTML='<p class="emptyc">No weigh-ins in this range.</p>';return;}
-  const W=Math.max(300,box.clientWidth||600), H=Math.round(Math.min(320,Math.max(220,W*0.42)));
-  const m={l:40,r:12,t:12,b:26};
-  const t0=parse(pts[0][0]).getTime(), t1=Math.max(t0+86400000,parse(pts[pts.length-1][0]).getTime());
-  const vals=pts.map(p=>p[1]).concat(avg.map(p=>p[1]));
-  let lo=Math.min(...vals), hi=Math.max(...vals); const pad=Math.max(0.5,(hi-lo)*0.15); lo-=pad; hi+=pad;
-  const step=[0.5,1,2,5,10,20].find(s=>(hi-lo)/s<=5)||50;
-  lo=Math.floor(lo/step)*step; hi=Math.ceil(hi/step)*step;
-  const x=d=>m.l+(parse(d).getTime()-t0)/(t1-t0)*(W-m.l-m.r);
-  const y=v=>m.t+(hi-v)/(hi-lo)*(H-m.t-m.b);
-  let g='<g class="grid">';
-  for(let v=lo;v<=hi+1e-9;v+=step) g+=`<line x1="${m.l}" x2="${W-m.r}" y1="${y(v)}" y2="${y(v)}"/>`;
-  g+='</g><g class="axis">';
-  for(let v=lo;v<=hi+1e-9;v+=step) g+=`<text x="${m.l-6}" y="${y(v)+4}" text-anchor="end">${step<1?v.toFixed(1):v}</text>`;
-  const ticks=pts.length===1?[pts[0][0]]:[pts[0][0],ymd(new Date((t0+t1)/2)),pts[pts.length-1][0]];
-  ticks.forEach((d,i)=>{g+=`<text x="${x(d)}" y="${H-6}" text-anchor="${pts.length===1?'middle':['start','middle','end'][i]}">${esc(fmtShort(d))}</text>`;});
-  g+='</g>';
-  const line=avg.length>1?`<path class="avg" d="${avg.map((p,i)=>(i?'L':'M')+x(p[0]).toFixed(1)+' '+y(p[1]).toFixed(1)).join('')}"/>`:'';
-  const dots=pts.map(p=>`<circle class="pt" cx="${x(p[0]).toFixed(1)}" cy="${y(p[1]).toFixed(1)}" r="3"/>`).join('');
-  box.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Weight from ${esc(fmtShort(pts[0][0]))} to ${esc(fmtShort(pts[pts.length-1][0]))}">${g}${dots}${line}
-    <line class="cross" id="cx" y1="${m.t}" y2="${H-m.b}" visibility="hidden"/><circle class="hi" id="ch" r="5" visibility="hidden"/>
-    <rect id="hit" x="${m.l}" y="0" width="${W-m.l-m.r}" height="${H}" fill="transparent"/></svg><div class="tip" id="tip" hidden></div>`;
-  const svg=box.querySelector('svg'), tip=$('#tip'), cx=$('#cx'), chh=$('#ch');
-  const move=e=>{
-    const r=svg.getBoundingClientRect(), px=(e.clientX-r.left)*W/r.width;
-    let best=0;pts.forEach((p,i)=>{if(Math.abs(x(p[0])-px)<Math.abs(x(pts[best][0])-px))best=i;});
-    const p=pts[best], a=avg[best], X=x(p[0]), Y=y(p[1]);
-    cx.setAttribute('x1',X);cx.setAttribute('x2',X);cx.setAttribute('visibility','visible');
-    chh.setAttribute('cx',X);chh.setAttribute('cy',Y);chh.setAttribute('visibility','visible');
-    tip.hidden=false;tip.innerHTML=`<b>${esc(fmtShort(p[0]))}</b> · ${p[1].toFixed(1)} kg<br>7-day avg ${a[1].toFixed(1)} kg`;
-    tip.style.left=Math.min(Math.max(X*r.width/W,70),r.width-70)+'px';tip.style.top=(Y*r.height/H)+'px';
-  };
-  const leave=()=>{tip.hidden=true;cx.setAttribute('visibility','hidden');chh.setAttribute('visibility','hidden');};
-  $('#hit').addEventListener('pointermove',move);$('#hit').addEventListener('pointerdown',move);$('#hit').addEventListener('pointerleave',leave);
-}
+/* ---------- weight ---------- */
 async function setWeight(date,kg){
   if(kg==null){await api('DELETE','/api/weights/'+date);delete WEIGHTS[date];}
   else{await api('PUT','/api/weights/'+date,{kg});WEIGHTS[date]=Math.round(kg*100)/100;}
 }
 
-/* ---------- routing: #day/2026-10-15, #history/2026-10, #history/timeline/…, #weight, #gym/…, #foods/…, #supps/…, #photos/…, #account, #admin ----------
-   History has two tabs: Calendar (#history) and Timeline (#history/timeline, the 'timeline' view); old #timeline links still work.
+/* ---------- routing: #day/2026-10-15, #history/2026-10, #history/timeline/…, #gym/…, #foods/…, #supps/…, #photos/…, #account, #admin ----------
+   History has two tabs: Calendar (#history) and Timeline (#history/timeline, the 'timeline' view); old #timeline links still work, and old #weight links open the Timeline (weight is logged on the Daily Tracker).
    #account (account admin, anyone) and #admin (super admin) share the #v-admin page. */
-const VIEWS=['day','history','weight','gym','foods','supps','photos','timeline','account','admin'];
+const VIEWS=['day','history','gym','foods','supps','photos','timeline','account','admin'];
 const viewEl=n=>$('#v-'+(n==='account'?'admin':n));
 function route(){
+  if(/^#weight(\/|$)/.test(location.hash))history.replaceState(null,'','#history/timeline');
   if(/^#timeline(\/|$)/.test(location.hash))history.replaceState(null,'','#history/'+location.hash.slice(1));
   let [v,arg,...more]=location.hash.replace(/^#/,'').split('/');
   if(v==='history'&&arg==='timeline'){v='timeline';[arg,...more]=more;}
@@ -469,8 +404,7 @@ function route(){
   else if(view==='foods'){renderFoods(arg?[arg]:[]);}
   else if(view==='supps'){renderSupps(arg?[arg,...more]:[]);}
   else if(view==='photos'){renderPhotos(arg?[arg,...more]:[]);}
-  else if(view==='timeline'){renderTimeline(arg?[arg]:[]);}
-  else renderWeight();
+  else renderTimeline(arg?[arg]:[]);
 }
 function go(hash){if(location.hash==='#'+hash)route();else location.hash=hash;}
 
@@ -523,7 +457,6 @@ document.addEventListener('click',e=>{
   else if(a==='savenow'){saveNow();}
   else if(a==='unlog'){unlogDay();}
   else if(a==='retry'){clearTimeout(saveTimer);saveState='pending';flush();}
-  else if(a==='wdel'){const d=b.dataset.d;if(confirm(`Delete the weigh-in for ${fmtLong(d)}?`))setWeight(d,null).then(renderWeight,err=>{if(!err.signedOut)alert(err.message);});}
   else if(a==='bf'){if(day().meals[0].eaten){alert('Breakfast is marked eaten – undo that first to change it.');return;}
     act(D=>{if(D.bf===b.dataset.v)return;D.bf=b.dataset.v;const p=planFor(wd(),D.bf,D.pie);D.meals[0]=p[0];D.base[0]=clone(p[0]);});}
   else if(a==='del'){editMeal(+b.dataset.m,b.dataset.b,(D,m)=>{m[b.dataset.b].splice(+b.dataset.i,1);});}
@@ -599,14 +532,7 @@ $('#offform').addEventListener('submit',async e=>{
 });
 $('#coach').addEventListener('click',()=>act(D=>{D.targets={...(D.pie?PIE_TARGETS:COACH[TYPE[wd()]])};}));
 
-/* ---------- weight view & account ---------- */
-$('#wform').addEventListener('submit',async e=>{
-  e.preventDefault();const d=$('#w-date').value,kg=+$('#w-kg').value;
-  if(!isDate(d)||!(kg>=20&&kg<=400)){alert('Enter a date and a weight between 20 and 400 kg.');return;}
-  try{await setWeight(d,kg);$('#w-kg').value='';renderWeight();}catch(err){if(!err.signedOut)alert(err.message);}
-});
-$('#wrange').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;wRange=+b.dataset.r;renderWeight();});
-let rz;window.addEventListener('resize',()=>{clearTimeout(rz);rz=setTimeout(()=>{if(view==='weight')renderWeight();},150);});
+/* ---------- account ---------- */
 window.addEventListener('hashchange',route);
 $('#logout').addEventListener('click',async()=>{
   if(pending.size){clearTimeout(saveTimer);await flush();}

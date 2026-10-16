@@ -4,7 +4,8 @@
    include fibre, so they can read a little higher than a UK label. s = how the values are weighed
    ('raw' – dry for rice, pasta, grains and lentils – or '' when it isn't cooked or comes ready to eat);
    y = cooked weight as a % of raw, used to show the values per 100 g cooked. Yields are typical: meat
-   and fish lose about a quarter of their weight, rice and pasta take up 2–3 times theirs in water. */
+   and fish lose about a quarter of their weight, rice and pasta take up 2–3 times theirs in water.
+   fr = 'veg' (green veg) or 'sauce': counts no macros for accounts that set that kind free. */
 const STARTER=[
   /* protein */
   {id:'chicken-breast',n:'Chicken breast, skinless',k:120,p:22.5,c:0,f:2.6,s:'raw',y:75,g:'Meat and fish'},
@@ -36,8 +37,8 @@ const STARTER=[
   {id:'banana',n:'Banana, peeled',k:89,p:1.1,c:22.8,f:0.3,s:'',g:'Fruit and veg'},
   {id:'blueberries',n:'Blueberries',k:57,p:0.7,c:14.5,f:0.3,s:'',g:'Fruit and veg'},
   {id:'apple',n:'Apple',k:52,p:0.3,c:13.8,f:0.2,s:'',g:'Fruit and veg'},
-  {id:'broccoli',n:'Broccoli',k:34,p:2.8,c:6.6,f:0.4,s:'',g:'Fruit and veg'},
-  {id:'spinach',n:'Spinach',k:23,p:2.9,c:3.6,f:0.4,s:'',g:'Fruit and veg'},
+  {id:'broccoli',n:'Broccoli',k:34,p:2.8,c:6.6,f:0.4,s:'',g:'Fruit and veg',fr:'veg'},
+  {id:'spinach',n:'Spinach',k:23,p:2.9,c:3.6,f:0.4,s:'',g:'Fruit and veg',fr:'veg'},
   {id:'red-pepper',n:'Red pepper',k:31,p:1,c:6,f:0.3,s:'',g:'Fruit and veg'},
   /* fats */
   {id:'avocado',n:'Avocado',k:160,p:2,c:8.5,f:14.7,s:'',g:'Fats'},
