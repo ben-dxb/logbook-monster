@@ -1,15 +1,20 @@
 'use strict';
-/* App-wide defaults the admin sets: food values, which weekdays are training/rest, day targets
-   and an uploaded meal plan. Stored as one JSON document and layered over engine.js in the browser. */
+/* App-wide defaults the super admin sets: food values, which weekdays are training/rest, day targets
+   and an uploaded meal plan. Stored as one JSON document and layered over engine.js in the browser.
+   Each account can keep its own version of any of these (user_defaults), layered over the app's. */
 const config = require('./config');
 const db = require('./db');
-const { FOODS } = require('../public/engine.js');
+const { FOODS, layerDefaults } = require('../public/engine.js');
 
 const q = {
   get: db.prepare("SELECT data, updated_by, updated_at FROM app_config WHERE key = 'defaults'"),
   put: db.prepare(`INSERT INTO app_config (key, data, updated_by) VALUES ('defaults', ?, ?)
     ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_by = excluded.updated_by, updated_at = datetime('now')`),
   firstUser: db.prepare('SELECT MIN(id) AS id FROM users'),
+  mine: db.prepare('SELECT data, updated_at FROM user_defaults WHERE user_id = ?'),
+  putMine: db.prepare(`INSERT INTO user_defaults (user_id, data) VALUES (?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = datetime('now')`),
+  delMine: db.prepare('DELETE FROM user_defaults WHERE user_id = ?'),
 };
 
 /* ADMIN_EMAILS decides; without it the first account created is the admin. */
@@ -23,8 +28,9 @@ const TYPES = ['T', 'R', 'S'];
 const FOOD_ID = /^[a-z][a-z0-9_]{0,31}$/;
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 
-/* Throws a readable message on anything that would break the calculator. */
-function clean(input) {
+/* Throws a readable message on anything that would break the calculator.
+   baseFoods: foods from a lower layer (the app's) that a plan may also use. */
+function clean(input, baseFoods = {}) {
   if (!isObj(input)) throw new Error('Defaults must be an object');
   const num = (v, lo, hi, what) => {
     const n = +v;
@@ -56,7 +62,8 @@ function clean(input) {
       group: ['p', 'c', 'x'].includes(r.group) ? r.group : '',
     };
   }
-  const known = id => Object.prototype.hasOwnProperty.call(FOODS, id) || Object.prototype.hasOwnProperty.call(out.foods, id);
+  const has = (o, id) => Object.prototype.hasOwnProperty.call(o, id);
+  const known = id => has(FOODS, id) || has(baseFoods, id) || has(out.foods, id);
 
   if (input.schedule != null) {
     if (!Array.isArray(input.schedule) || input.schedule.length !== 7 || !input.schedule.every(t => TYPES.includes(t))) {
@@ -111,7 +118,24 @@ function get() {
 function put(input, user) {
   const data = clean(input);
   q.put.run(JSON.stringify(data), user.email);
-  return get();
+  return forUser(user);
 }
 
-module.exports = { isAdmin, clean, get, put };
+/* The account's own layer, or null when it uses the app defaults as they are. */
+function mine(user) {
+  const row = q.mine.get(user.id);
+  return row ? { ...JSON.parse(row.data), updatedAt: row.updated_at } : null;
+}
+function putMine(input, user) {
+  const data = clean(input, get().foods || {});
+  const empty = !Object.keys(data.foods).length && !data.schedule && !Object.keys(data.targets).length && !data.plan;
+  if (empty) q.delMine.run(user.id); else q.putMine.run(user.id, JSON.stringify(data));
+  return forUser(user);
+}
+function delMine(user) { q.delMine.run(user.id); return forUser(user); }
+/* What the browser gets: the app defaults plus the account's own layer. */
+function forUser(user) { return { ...get(), mine: mine(user) }; }
+/* What the account's days actually start from. */
+function effective(user) { return layerDefaults(get(), mine(user)); }
+
+module.exports = { isAdmin, clean, get, put, mine, putMine, delMine, forUser, effective };

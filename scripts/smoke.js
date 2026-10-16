@@ -53,6 +53,15 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       expect(/Reese/.test(await pg.textContent('#offlist')), 'snack should survive reload');
       expect(await pg.inputValue('#meals input[data-act=pack][data-k=w] >> nth=0') === '320', 'pack weight should survive reload');
       expect(await pg.inputValue('#wt') === '80.5', 'weight should survive reload');
+      /* protein driver: switch auto-balance to direct protein, it sticks across a reload, then back to total */
+      if (first) {
+        await pg.click('[data-act=pbasis][data-v=direct]');
+        await pg.waitForFunction(() => /Direct protein min/.test(document.querySelector('#sum').textContent) && /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
+        await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
+        expect(await pg.getAttribute('[data-act=pbasis][data-v=direct]', 'aria-pressed') === 'true', 'direct protein setting should survive reload');
+        await pg.click('[data-act=pbasis][data-v=total]');
+        await pg.waitForFunction(() => /Protein min/.test(document.querySelector('#sum').textContent) && !/Direct protein min/.test(document.querySelector('#sum').textContent), null, { timeout: 5000 });
+      }
       await pg.click('a[data-view=history]'); await pg.waitForSelector('#v-history:not([hidden]) .cell.logged');
       await pg.click('a[data-view=weight]'); await pg.waitForSelector('#v-weight:not([hidden]) #chart svg');
       /* gym: make a workout, log two sets, edit one, look at chart, records and sessions */
@@ -117,7 +126,25 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.waitForSelector('#v-day:not([hidden]) #offlist', { timeout: 5000 });
       await pg.waitForFunction(() => /Smoke pancakes/.test(document.querySelector('#offlist').textContent) && /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
       await pg.selectOption('#ln', { label: 'Smoke pancakes (per item)' }); await pg.fill('#lq', '1'); await pg.click('#libform button');
-      await pg.waitForFunction(() => n => [...document.querySelectorAll('#offlist input[data-act=oqty]')].some(i => i.value === n), first ? '3' : '6', { timeout: 5000 });
+      await pg.waitForFunction(n => [...document.querySelectorAll('#offlist input[data-act=oqty]')].some(i => i.value === n), first ? '3' : '6', { timeout: 5000 });
+      /* inside meals: from the Foods page into meal 1, then from a meal's "+ Add a food…" on the Day page */
+      const inMeals = () => pg.evaluate(() => [...document.querySelectorAll('#meals select[data-act=swap]')].filter(x => (x.selectedOptions[0] || {}).textContent === 'Smoke pancakes').length);
+      const mBefore = await inMeals();
+      await pg.click('a[data-view=foods]'); await pg.waitForSelector('#f-list .fcard');
+      await pg.click('#f-list .fcard:has-text("Smoke pancakes") [data-fa=add]'); await pg.waitForSelector('#f-awhere');
+      await pg.selectOption('#f-awhere', '0'); await pg.click('#f-addform button[type=submit]');
+      await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
+      await pg.waitForFunction(() => /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
+      expect(await inMeals() === mBefore + 1, 'food added from the Foods page should be in meal 1');
+      await pg.selectOption('select[data-add=c][data-m="1"]', { label: 'Smoke pancakes' }); await pg.click('[data-act=save][data-m="1"]');
+      await pg.waitForFunction(n => [...document.querySelectorAll('#meals select[data-act=swap]')].filter(x => (x.selectedOptions[0] || {}).textContent === 'Smoke pancakes').length === n, mBefore + 2, { timeout: 5000 });
+      await pg.waitForFunction(() => /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
+      if (!first) {
+        /* change the food's values: the saved day keeps the old ones and still loads */
+        await pg.evaluate(async () => { const f = LIB.find(x => x.name === 'Smoke pancakes'); await api('PUT', '/api/foods/' + f.id, { ...f, k: 500 }); });
+        await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
+        expect(await inMeals() === mBefore + 2, 'meal items should survive the food being edited');
+      }
       /* admin (the only account is the first one, so it is the admin) */
       await pg.click('#acct>summary'); await pg.click('#adminlink'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-meals .admeal');
       if (first) {
@@ -148,11 +175,31 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         expect(/guest@example\.com/.test(await gp.textContent('#intro')), 'invite page should name the invited email');
         await gp.fill('#password', 'guest-password-1'); await gp.click('#submit');
         await gp.waitForSelector('#v-day:not([hidden]) #meals .meal', { timeout: 5000 });
+        /* account admin: the guest has their own plan page but no super admin page */
+        expect(await gp.isHidden('#adminlink'), 'super admin link should be hidden for other accounts');
+        await gp.evaluate(() => { location.hash = '#admin'; });
+        await gp.waitForSelector('#v-day:not([hidden])', { timeout: 5000 });
+        await gp.click('#acct>summary'); await gp.click('#accountlink');
+        await gp.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal', { timeout: 5000 });
+        expect(await gp.isHidden('#ad-uh') && await gp.isHidden('#ad-eh') && await gp.isHidden('#ad-keybox'), 'people, email and the AI key are super admin only');
+        expect(await gp.inputValue('#ad-wd-0') === 'R', 'the guest should start from the app defaults');
+        await gp.selectOption('#ad-wd-0', 'T'); await gp.click('#ad-save');
+        await gp.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent) && !document.querySelector('#ad-reset').hidden, null, { timeout: 5000 });
+        const gscroll = await gp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        expect(gscroll <= 1, `horizontal overflow of ${gscroll}px on the account admin page`);
+        await gp.evaluate(() => { location.hash = '#day/2030-01-07'; });
+        await gp.waitForFunction(() => /Training day/.test(document.querySelector('#dsub').textContent), null, { timeout: 5000 });
         await gctx.close();
       }
       await pg.click('#ad-types [data-t=R]');
       expect(await pg.inputValue('#ad-mn-0') === 'Smoke bowl', 'uploaded plan should be shown');
       expect(await pg.inputValue('#ad-wd-0') === 'R', 'Monday should now be a rest day');
+      /* the super admin's own account admin page follows the app defaults until they change something */
+      await pg.click('#acct>summary'); await pg.click('#accountlink');
+      await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
+      expect(await pg.isHidden('#ad-uh') && /App plan/.test(await pg.textContent('#ad-planstate')), 'account admin should show the app plan and no people');
+      await pg.click('#acct>summary'); await pg.click('#adminlink');
+      await pg.waitForSelector('#v-admin:not(.mine):not([hidden]) #ad-users .aduser');
       await pg.click('a[data-view=day]'); await pg.click('[data-act=next]'); await pg.waitForTimeout(200);
       await pg.evaluate(() => { location.hash = '#day/2030-01-07'; }); /* a Monday nobody has saved */
       await pg.waitForFunction(() => /Rest day/.test(document.querySelector('#dsub').textContent), null, { timeout: 5000 });

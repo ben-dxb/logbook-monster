@@ -22,7 +22,7 @@ const WEIGHTS={};                           /* date -> kg */
 const SAVED={days:{},settings:null};        /* last JSON stored on the server, to spot what changed */
 const LOGGED=new Set();                     /* dates stored on the server */
 let view='day', month=todayStr().slice(0,7)+'-01', wRange=90, csrf='', ME='';
-let resetArmed=false, isAdmin=false;
+let resetArmed=false, isAdmin=false, aiOn=false;
 let LIB=[], LIBV=0;                         /* the food library (yours and shared), and a version to spot changes */
 
 /* ---------- server ---------- */
@@ -51,7 +51,7 @@ function restoreStash(){
   try{localStorage.removeItem(STASH);}catch{}
   if(Date.now()-st.at>14*86400000)return;
   for(const [key,j] of st.jobs){
-    if(key==='@settings'){const v=JSON.parse(j);S.pud={...PUD_DEFAULT,...(v.pud||{})};S.snackOv=v.snackOv||{};recalcPudding();}
+    if(key==='@settings'){const v=JSON.parse(j);S.pud={...PUD_DEFAULT,...(v.pud||{})};S.snackOv=v.snackOv||{};S.pBasis=v.pBasis==='direct'?'direct':'total';recalcPudding();}
     else if(isDate(key)){S.days[key]=migrate(JSON.parse(j));SAVED.days[key]=null;}
   }
 }
@@ -61,19 +61,22 @@ function migrate(D){
   D.meals.forEach((m,mi)=>['p','c','x'].forEach(b=>(m[b]||(m[b]=[])).forEach(i=>{
     if(i.a==null){const bm=D.base&&D.base[mi];const bi=bm&&bm.id===m.id?(bm[b]||[]).find(x=>x.f===i.f):null;i.a=bi?bi.g:i.g;}})));
   D.off=D.off||[];
+  libLoad(D);
   return D;
 }
 const pending=new Map(); let saveTimer=null, saveState='idle', saveErr='', inFlight=false;
+const settingsJson=()=>JSON.stringify({pud:S.pud,snackOv:S.snackOv||{},pBasis:S.pBasis||'total'});
 function summaryOf(date,D){const t=dayTotals(D);return {...t,targets:{...D.targets},type:TYPE[wdOf(date)]};}
 
 /* Called after every render: anything that differs from what the server has gets queued. */
 function persist(){
   for(const [date,D] of Object.entries(S.days)){
+    libSync(D);
     const j=JSON.stringify(D);
     if(SAVED.days[date]===undefined){SAVED.days[date]=j;continue;}   /* first sight of an unsaved plan: baseline */
     if(SAVED.days[date]!==j) pending.set(date,j);
   }
-  const sj=JSON.stringify({pud:S.pud,snackOv:S.snackOv||{}});
+  const sj=settingsJson();
   if(SAVED.settings!==null&&SAVED.settings!==sj) pending.set('@settings',sj);
   if(pending.size){saveState='pending';clearTimeout(saveTimer);saveTimer=setTimeout(flush,600);}
   renderStatus();
@@ -178,7 +181,7 @@ function boxHtml(D,mi,box,label){
   return `<div class="box"><div class="bh"><span class="lbl">${label}</span>${items.length?macLine(t):''}</div>
     ${items.map((i,ii)=>itemRow(D,mi,box,ii,i)).join('')||'<p class="empty">Nothing here</p>'}
     ${box==='p'?items.filter(i=>i.g>0&&FOODS[i.f].order!=null).map(i=>packHtml(D,mi,i)).join(''):''}
-    <div class="add"><select id="a-${S.cur}-${mi}-${box}" data-add="${box}" data-m="${mi}" aria-label="Add a food"><option value="">+ Add a food…</option>${(box==='x'?FAT_SWAPS:Object.keys(FOODS).filter(f=>!FAT_SWAPS.includes(f))).map(f=>`<option value="${f}">${esc(FOODS[f].n)}</option>`).join('')}</select></div>
+    <div class="add"><select id="a-${S.cur}-${mi}-${box}" data-add="${box}" data-m="${mi}" aria-label="Add a food"><option value="">+ Add a food…</option>${(box==='x'?FAT_SWAPS:Object.keys(FOODS).filter(f=>!FAT_SWAPS.includes(f)&&!isLib(f))).map(f=>`<option value="${f}">${esc(FOODS[f].n)}</option>`).join('')}${libOptions()}</select></div>
   </div>`;
 }
 function chip(m,val,tgt){
@@ -222,9 +225,12 @@ function render(){
   renderWeek();
   renderWeightInline();
   const names={k:'Calories',p:'Protein min',c:'Carbs',f:'Fat max'};
+  const dir=pKey()==='d';if(dir)names.p='Direct protein min';
+  const val=m=>m==='p'&&dir?T.d:T[m];
   $('#sum').innerHTML=MAC.map(m=>`<div class="stat"><span class="lbl">${names[m]}</span>
-      <span class="num">${r0(T[m])}<i>/ ${r0(tg[m])}${m==='k'?'':'g'}</i></span>${chip(m,T[m],+tg[m])}
-      ${m==='p'?`<span class="sub">direct ${r0(T.d)}g</span>`:''}</div>`).join('');
+      <span class="num">${r0(val(m))}<i>/ ${r0(tg[m])}${m==='k'?'':'g'}</i></span>${chip(m,val(m),+tg[m])}
+      ${m==='p'?`<span class="sub">${dir?`total ${r0(T.p)}g`:`direct ${r0(T.d)}g`}</span>`:''}</div>`).join('');
+  document.querySelectorAll('[data-act="pbasis"]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===(dir?'direct':'total'))));
   const left={k:tg.k-T.k,p:tg.p-T.p,c:tg.c-T.c,f:tg.f-T.f};
   $('#left').innerHTML=D.auto?'':`<b>Left to spend off plan:</b> ${r0(Math.max(0,left.k))} kcal · P ${r1(Math.max(0,left.p))} · C ${r1(Math.max(0,left.c))} · F ${r1(Math.max(0,left.f))}`;
   $('#left').hidden=D.auto;
@@ -274,11 +280,35 @@ function libAdd(D,food,qty){
   if(ex){ex.qty+=qty;Object.assign(ex,libMac(ex,ex.qty));}else D.off.push(libEntry(food,qty));
 }
 const libDefault=u=>u==='each'?1:100;
-/* Add a library food to any day (from the Foods page), then show that day. */
-async function addFoodToDay(food,date,qty){
+/* Library foods inside meals. Each version of a food's values gets its own calculator id, L:<id>:<hash>
+   (never a valid admin food id), and a day keeps a copy of the ones it uses in D.lib, so saved days still
+   add up after a food is edited, unshared or deleted. Values are per 100 like every food; a per-item food
+   counts its amount in items, so its values are stored ×100. */
+const isLib=f=>typeof f==='string'&&f.startsWith('L:');
+function libHash(food){let h=5381;for(const ch of [food.unit,food.k,food.p,food.c,food.f].join('|'))h=(h*33+ch.charCodeAt(0))>>>0;return h.toString(36);}
+const libFid=food=>`L:${food.id}:${libHash(food)}`;
+function libFoodRec(food){const m=food.unit==='each'?100:1;
+  const F={n:food.name,k:food.k*m,p:food.p*m,c:food.c*m,f:food.f*m,d:0,step:food.unit==='each'?1:food.unit==='ml'?10:5,cat:'c'};
+  if(food.unit!=='g')F.unit=food.unit==='each'?'×':'ml';return F;}
+function libLoad(D){for(const [fid,F] of Object.entries(D.lib||{}))if(isLib(fid)&&!FOODS[fid])FOODS[fid]={...F};}
+/* After the library changes or the admin defaults are applied (which drop foods the calculator didn't ship with). */
+function libRegister(){LIB.forEach(f=>{FOODS[libFid(f)]=libFoodRec(f);});Object.values(S.days).forEach(libLoad);LIBV++;}
+function libSync(D){let lib=null;
+  allItems(D).forEach(i=>{if(isLib(i.f)&&FOODS[i.f]){lib=lib||{};lib[i.f]=(D.lib&&D.lib[i.f])||{...FOODS[i.f]};}});
+  if(lib)D.lib=lib;else delete D.lib;}
+const libOptions=()=>LIB.length?`<optgroup label="Food library">${LIB.map(f=>`<option value="${libFid(f)}">${esc(f.name)}</option>`).join('')}</optgroup>`:'';
+/* which box a library food goes in when added to a meal from the Foods page: where most of its calories come from */
+function libBox(f){const p=f.p*4,c=f.c*4,x=f.f*9;return p>=c&&p>=x?'p':x>c?'x':'c';}
+/* Add a library food to any day (from the Foods page): off plan, or into a meal (saved, so the rest of the day rebalances). */
+async function addFoodToDay(food,date,qty,mi){
   if(!(qty>0)||!isDate(date))return false;
   if(!await loadDay(date))return false;
-  S.cur=date;act(D=>libAdd(D,food,qty));go('day/'+date);
+  S.cur=date;
+  const D=day(), fid=libFid(food);
+  if(mi!=null&&D.meals[mi]&&FOODS[fid]){const box=libBox(food);
+    editMeal(mi,box,(D,m)=>{(m[box]=m[box]||[]).push(it(fid,qty));});saveMeal(mi);}
+  else act(D=>libAdd(D,food,qty));
+  go('day/'+date);
   return true;
 }
 function renderLibForm(){
@@ -409,17 +439,19 @@ async function setWeight(date,kg){
   else{await api('PUT','/api/weights/'+date,{kg});WEIGHTS[date]=Math.round(kg*100)/100;}
 }
 
-/* ---------- routing: #day/2026-10-15, #history/2026-10, #weight, #gym/…, #foods/…, #admin ---------- */
-const VIEWS=['day','history','weight','gym','foods','admin'];
+/* ---------- routing: #day/2026-10-15, #history/2026-10, #weight, #gym/…, #foods/…, #account, #admin ----------
+   #account (account admin, anyone) and #admin (super admin) share the #v-admin page. */
+const VIEWS=['day','history','weight','gym','foods','account','admin'];
+const viewEl=n=>$('#v-'+(n==='account'?'admin':n));
 function route(){
   const [v,arg,...more]=location.hash.replace(/^#/,'').split('/');
   view=VIEWS.includes(v)&&(v!=='admin'||isAdmin)?v:'day';
   document.querySelectorAll('.views a').forEach(a=>{if(a.dataset.view===view)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
-  VIEWS.forEach(n=>{$('#v-'+n).hidden=n!==view;});
+  VIEWS.forEach(n=>{viewEl(n).hidden=true;});viewEl(view).hidden=false;
   $('#acct').open=false;
   if(view==='day'){openDay(isDate(arg)?arg:S.cur);}
   else if(view==='history'){if(/^\d{4}-\d{2}$/.test(arg||''))month=arg+'-01';renderHistory();}
-  else if(view==='admin'){renderAdmin();}
+  else if(view==='account'||view==='admin'){renderAdmin();}
   else if(view==='gym'){renderGym(arg?[arg,...more]:[]);}
   else if(view==='foods'){renderFoods(arg?[arg]:[]);}
   else renderWeight();
@@ -461,6 +493,7 @@ document.addEventListener('click',e=>{
   else if(a==='save'){saveMeal(+b.dataset.m);}
   else if(a==='undo'){undoMeal(+b.dataset.m);}
   else if(a==='odel'){act(D=>{D.off.splice(+b.dataset.i,1);});}
+  else if(a==='pbasis'){if(S.pBasis!==b.dataset.v){S.pBasis=b.dataset.v;act(()=>{});}}
   else if(a==='reset'){if(!resetArmed){resetArmed=true;render();return;}resetArmed=false;S.days[S.cur]=freshDay(wd());render();}
 });
 /* pack weights: update the portion as you type, without re-rendering under your fingers */
@@ -483,7 +516,8 @@ document.addEventListener('change',e=>{
   else if(a==='pie'){act(D=>{D.pie=el.checked;D.meals=planFor(wd(),D.bf,D.pie);D.base=clone(D.meals);D.targets={...(D.pie?PIE_TARGETS:COACH.S)};});}
   else if(a==='auto'){act(D=>{D.auto=el.checked;});}
   else if(el.dataset.add){const mi=+el.dataset.m,box=el.dataset.add,f=el.value;if(!f||!FOODS[f])return;
-      editMeal(mi,box,(D,m)=>{const n=it(f,FOODS[f].min||(FOODS[f].step>=5?50:10));(m[box]=m[box]||[]).push(n);});}
+      const g=isLib(f)?(FOODS[f].unit==='×'?1:100):FOODS[f].min||(FOODS[f].step>=5?50:10);
+      editMeal(mi,box,(D,m)=>{const n=it(f,g);(m[box]=m[box]||[]).push(n);});}
   else if(a==='oqty'){act(D=>{const o=D.off[+el.dataset.i];o.qty=Math.max(0,+el.value||0);Object.assign(o,o.lib?libMac(o,o.qty):snackMac(o.snack,o.qty));});}
   else if(a==='sv'){S.snackOv=S.snackOv||{};const id=el.dataset.s;S.snackOv[id]={...(S.snackOv[id]||{}),[el.dataset.m]:+el.value||0};
       act(D=>{D.off.forEach(o=>{if(o.snack===id)Object.assign(o,snackMac(id,o.qty));});});}
@@ -514,7 +548,7 @@ $('#offform').addEventListener('submit',async e=>{
   if(!o.k&&!o.p&&!o.c&&!o.f)return;
   let food=null;
   if($('#o-save').checked){   /* keep it in the food library as one item, to add again on other days */
-    try{food=await api('POST','/api/foods',{name:o.n,unit:'each',k:o.k,p:o.p,c:o.c,f:o.f});LIB.push(food);LIB.sort((a,b)=>a.name.localeCompare(b.name));LIBV++;}
+    try{food=await api('POST','/api/foods',{name:o.n,unit:'each',k:o.k,p:o.p,c:o.c,f:o.f});LIB.push(food);LIB.sort((a,b)=>a.name.localeCompare(b.name));libRegister();}
     catch(err){if(!err.signedOut)alert('Couldn’t save it to your food library: '+err.message);return;}
   }
   act(D=>{if(food)libAdd(D,food,1);else D.off.push(o);});
@@ -550,12 +584,13 @@ document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(
     const me=await api('GET','/api/me');csrf=me.csrf;ME=me.email;
     $('#who').textContent=me.name||me.email;$('#who').title=me.email;
     if(!me.hasPassword){$('#pwcur').hidden=true;$('#pwbox').querySelector('summary').textContent='Set a password';}
-    isAdmin=!!me.admin;$('#adminlink').hidden=!isAdmin;
+    isAdmin=!!me.admin;aiOn=!!me.ai;$('#adminlink').hidden=!isAdmin;
     const [settings,sums,weights,defs,lib]=await Promise.all([api('GET','/api/settings'),api('GET','/api/days'),api('GET','/api/weights'),api('GET','/api/defaults'),api('GET','/api/foods')]);
-    LIB=(lib&&lib.foods)||[];LIBV++;
-    applyDefaults(defs);
+    LIB=(lib&&lib.foods)||[];
+    setDefaults(defs);
     S.pud={...PUD_DEFAULT,...((settings||{}).pud||{})};S.snackOv=(settings||{}).snackOv||{};
-    SAVED.settings=JSON.stringify({pud:S.pud,snackOv:S.snackOv});
+    S.pBasis=(settings||{}).pBasis==='direct'?'direct':'total';
+    SAVED.settings=settingsJson();
     (sums||[]).forEach(s=>{SUMS[s.date]=s;LOGGED.add(s.date);});
     (weights||[]).forEach(w=>{WEIGHTS[w.date]=w.kg;});
     recalcPudding();

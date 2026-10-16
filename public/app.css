@@ -177,7 +177,9 @@ footer{font-size:12px;color:var(--muted)}
   .wform{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
   .wform .btn{grid-column:1/-1}
 }
-/* ---------- admin ---------- */
+/* ---------- admin: account admin (.mine) and super admin share one page ---------- */
+#v-admin.mine .adapp,#v-admin.mine .adsuper,#v-admin:not(.mine) .admine{display:none}
+.adintro h2{margin-bottom:4px}
 .adbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;
   background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 12px}
 .adbar .sb{display:flex;gap:8px;margin-left:auto}
@@ -356,7 +358,8 @@ footer{font-size:12px;color:var(--muted)}
 .factions a.ghost{text-decoration:none}
 .fadd{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px 8px;align-items:end;border-top:1px solid var(--line);padding-top:8px;max-width:440px}
 .gbar a.btn{text-decoration:none}
-.fadd .fprev,.fadd .factions{grid-column:1/-1}
+.fadd .fprev,.fadd .factions,.fadd .fwhere{grid-column:1/-1}
+.fwhere select{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px}
 .fform{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;align-items:end}
 .fform .fwide{grid-column:1/-1}
 .fform select{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px}
