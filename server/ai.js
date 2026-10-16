@@ -13,6 +13,7 @@ const TYPES_IN = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
 const TASKS = {
   plan: { name: 'Meal plan import', hint: 'Reads a coach’s PDF or photo – needs a model that reads PDFs' },
   workout: { name: 'Workout plan import', hint: 'Reads a PDF or photo of a training plan – needs a model that reads PDFs' },
+  supps: { name: 'Supplement regime import', hint: 'Reads a PDF or photo of a supplement regime – needs a model that reads PDFs' },
   food: { name: 'Food values', hint: 'Fills in blank calories and macros in the food library (text only)' },
   pose: { name: 'Photo poses', hint: 'Tells front / side / back from a progress photo – needs a model that sees images' },
   summary: { name: 'Timeline summary', hint: 'Writes the summary of trends on the Timeline (text only)' },

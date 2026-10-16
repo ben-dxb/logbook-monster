@@ -2,10 +2,13 @@
 /* Supplements: a library (yours plus everything someone has shared, like the food library) and a log of
    what you took each day. A log entry is picked from the library or typed in free text, with an amount
    and a unit (g, mg, mcg, IU, capsules…). Only the owner changes a library entry; an admin can also
-   remove a shared one. */
+   remove a shared one. A supplement regime (a coach's PDF or a photo) can be read with AI into line items,
+   checked in the browser, then added to the library – and logged for a day – with /import. */
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const defaults = require('./defaults');
+const ai = require('./ai');
 
 const COLS = 's.id, s.user_id, s.name, s.amount, s.unit, s.notes, s.public, s.updated_at, u.name AS owner';
 const LOG = 'id, date, supplement_id AS sid, name, amount, unit, note, created_at AS created';
@@ -19,6 +22,7 @@ const q = {
     WHERE id = ? AND user_id = ?`),
   del: db.prepare('DELETE FROM supplements WHERE id = ?'),
   mine: db.prepare('SELECT id, name, amount, unit, notes, public FROM supplements WHERE user_id = ? ORDER BY id'),
+  mineByName: db.prepare('SELECT id FROM supplements WHERE user_id = ? AND name = ? COLLATE NOCASE ORDER BY id LIMIT 1'),
 
   logRange: db.prepare(`SELECT ${LOG} FROM supplement_log WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date, id`),
   logGet: db.prepare(`SELECT ${LOG} FROM supplement_log WHERE user_id = ? AND id = ?`),
@@ -89,6 +93,63 @@ function cleanLog(b, user, keep) {
   return { date: b.date, sid, name, amount: amountOf(b.amount), unit: unitOf(b.unit), note: line(b.note, 200, 'Note') };
 }
 
+function tx(fn) {
+  db.exec('BEGIN');
+  try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
+}
+
+/* ---------- AI: read a supplement regime into line items ---------- */
+const MAX_ITEMS = 60;
+function prompt(names) {
+  return `You turn a supplement regime (a coach's or doctor's PDF, a screenshot or a photo of a list or a pill organiser chart) into JSON line items for a supplement tracking app.
+
+Make one item per supplement and dose. If the same supplement is taken at different times of day with the same amount, make one item and say when in "notes" (e.g. "Morning and evening with food"); if the amounts differ, make one item per time.
+Each item is {"name": short product or nutrient name (at most 80 characters, e.g. "Vitamin D3", "Magnesium glycinate", "Omega-3 fish oil"), "amount": the amount taken each time as a number (null if the document gives none), "unit": one of ${UNITS.join(', ')}, "notes": when and how to take it, how often if not daily, strength per capsule or brand, at most 300 characters}.
+Pick the unit the document uses for the dose: a count of capsules / tablets / softgels / scoops when it says "2 caps", otherwise the weight or IU. Convert µg to mcg. Put the strength per capsule in notes when the dose is a count.
+
+The person already has these supplements in their library – when the document means the same thing, use exactly that name:
+${names.length ? names.map(n => '- ' + n).join('\n') : '(none yet)'}
+
+Add "notes": an array of short strings listing anything you estimated, converted or could not read.
+
+Reply with only the JSON object: {"items": [{"name": "...", "amount": 5, "unit": "g", "notes": "..."}], "notes": [...]}`;
+}
+/* the model's unit words onto ours: "µg" → mcg, "capsule" → capsules, "iu" → IU */
+const UNIT_ALIAS = { 'µg': 'mcg', 'μg': 'mcg', ug: 'mcg', microgram: 'mcg', micrograms: 'mcg', milligram: 'mg', milligrams: 'mg', gram: 'g', grams: 'g',
+  iu: 'IU', caps: 'capsules', cap: 'capsules', capsule: 'capsules', tab: 'tablets', tabs: 'tablets', tablet: 'tablets', softgel: 'softgels',
+  scoop: 'scoops', serving: 'servings', drop: 'drops', millilitres: 'ml', milliliters: 'ml', mL: 'ml' };
+function aiUnit(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (UNITS.includes(s)) return s;
+  const a = UNIT_ALIAS[s] || UNIT_ALIAS[s.toLowerCase()];
+  if (a) return a;
+  return UNITS.find(u => u.toLowerCase() === s.toLowerCase()) || null;
+}
+function tidyItems(raw, user) {
+  const notes = Array.isArray(raw.notes) ? raw.notes.filter(n => typeof n === 'string').map(n => n.slice(0, 300)).slice(0, 30) : [];
+  const items = [];
+  for (const r of (Array.isArray(raw.items) ? raw.items : []).filter(isObj).slice(0, MAX_ITEMS)) {
+    const name = String(r.name == null ? '' : r.name).replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (!name) continue;
+    let unit = aiUnit(r.unit), amount = null;
+    if (!unit) { notes.push(`${name}: unit “${String(r.unit).slice(0, 20)}” isn’t one the app knows – set it before adding`); unit = 'mg'; }
+    else if (r.amount != null && r.amount !== '') {
+      try { amount = amountOf(r.amount); } catch { notes.push(`${name}: left out the amount – it wasn’t a number`); }
+    }
+    const row = q.mineByName.get(user.id, name);
+    items.push({ name, amount, unit, notes: String(r.notes == null ? '' : r.notes).replace(/\s+/g, ' ').trim().slice(0, 300), existing: row ? row.id : null });
+  }
+  if (!items.length) throw Object.assign(new Error('The AI couldn’t find any supplements in that file'), { status: 422 });
+  return { items, notes };
+}
+
+/* The OpenRouter key is the admin's, so each account gets a handful of reads an hour. */
+const aiLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, limit: 12, standardHeaders: 'draft-7', legacyHeaders: false,
+  keyGenerator: req => 'u' + req.user.id,
+  message: { error: 'That’s a lot of AI reads – wait a while and try again.' },
+});
+
 /* Other people's supplements show their name, never their email. */
 function view(r, user) {
   const mine = r.user_id === user.id;
@@ -99,7 +160,56 @@ function view(r, user) {
 const router = express.Router();
 const send = (res, e) => { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); };
 
-router.get('/', (req, res) => res.json({ supplements: q.list.all(req.user.id).map(r => view(r, req.user)), units: UNITS, trends: trendsOf(req.user) }));
+router.get('/', (req, res) => res.json({ supplements: q.list.all(req.user.id).map(r => view(r, req.user)), units: UNITS, trends: trendsOf(req.user),
+  ai: ai.status().configured }));
+
+/* AI: read the file and hand back line items to check. Nothing is saved until /import. */
+router.post('/ai-import', aiLimit, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), async (req, res) => {
+  try {
+    const names = q.mine.all(req.user.id).map(r => r.name);
+    const type = String(req.get('content-type') || '').split(';')[0].trim();
+    const { reply, model } = await ai.ask(prompt(names), Buffer.isBuffer(req.body) ? req.body : null, type, 'supplement regime', { task: 'supps' });
+    res.json({ ...tidyItems(reply, req.user), model });
+  } catch (e) { send(res, e); }
+});
+
+/* Add checked line items to your library – one you already have by the same name is updated with the new amount,
+   unit and notes rather than added twice – and, with a date in "log", log each one that has an amount on that day. */
+router.post('/import', (req, res) => {
+  try {
+    const list = isObj(req.body) && Array.isArray(req.body.items) ? req.body.items : null;
+    if (!list || !list.length) throw fail('Nothing to import');
+    if (list.length > MAX_ITEMS) throw fail(`Import ${MAX_ITEMS} supplements at most at a time`);
+    const day = req.body.log == null || req.body.log === '' ? null : req.body.log;
+    if (day !== null && !isDate(day)) throw fail('Pick a day to log them on');
+    const items = list.map((b, i) => {
+      try { return clean({ ...(isObj(b) ? b : {}), public: false }); }
+      catch (e) { throw fail(`Item ${i + 1}${isObj(b) && b.name ? ` (${String(b.name).slice(0, 40)})` : ''}: ${e.message}`); }
+    });
+    const out = tx(() => {
+      let added = 0, updated = 0;
+      const entries = [];
+      for (const d of items) {
+        const have = q.mineByName.get(req.user.id, d.name);
+        let id;
+        if (have) {
+          const row = q.get.get(have.id);
+          q.put.run(d.name, d.amount, d.unit, d.notes || row.notes, row.public, have.id, req.user.id);
+          id = have.id; updated++;
+        } else {
+          if (q.count.get(req.user.id).n >= MAX_SUPPS) throw fail(`Your supplement library is full (${MAX_SUPPS})`);
+          id = Number(q.add.run(req.user.id, d.name, d.amount, d.unit, d.notes, 0).lastInsertRowid); added++;
+        }
+        if (day && d.amount != null) {
+          if (q.logCount.get(req.user.id).n >= MAX_LOG) throw fail('Your supplement log is full');
+          entries.push(q.logGet.get(req.user.id, Number(q.logAdd.run(req.user.id, day, id, d.name, d.amount, d.unit, '').lastInsertRowid)));
+        }
+      }
+      return { added, updated, entries };
+    });
+    res.json({ ...out, supplements: q.list.all(req.user.id).map(r => view(r, req.user)) });
+  } catch (e) { send(res, e); }
+});
 
 /* "Trend" box: follow a supplement (by name) on the Timeline's chart. Declared before /:id. */
 router.put('/trend', (req, res) => {

@@ -43,7 +43,7 @@
 - `public/admin.js` – Account admin (`#account`, anyone: own plan – day templates, meals, week, targets, foods) and Super admin
   (`#admin`, in tabs: `#admin/ai`, `#admin/people`, `#admin/email`, `#admin/options`; no plan editor) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope,
   `data-adtab` per super admin tab. AI settings (OpenRouter key, default model and a model per task – `TASKS` in `server/ai.js`:
-  plan, workout, food, pose, summary; pass `{ task }` to `ai.ask`/`ai.askText`) are super admin only. App-wide switches (`OPTIONS` in `server/api.js`, stored in `app_config` 'options', sent in `/api/me`;
+  plan, workout, supps, food, pose, summary; pass `{ task }` to `ai.ask`/`ai.askText`) are super admin only. App-wide switches (`OPTIONS` in `server/api.js`, stored in `app_config` 'options', sent in `/api/me`;
   `planFiles` shows the CSV / JSON plan upload and download buttons on Account admin) are set on the super admin Options tab via `PUT /api/admin/options`.
 - `public/gym.js` – the Gym view (workouts, exercise sets, sessions, AI import preview).
 - `server/foods.js` / `public/foods.js` – the food library: meals and ingredients (`kind`) people enter (per 100 g/ml
@@ -54,7 +54,7 @@
   one in a meal or a day's off-plan list. Inside meals a library food is a calculator food with id `L:<id>:<hash of its
   values>`; each day keeps a copy in `D.lib` so old days still load after the food changes (`libRegister`/`libSync` in `app.js`).
 - `server/supps.js` / `public/supps.js` – supplements: a library (usual amount + unit, private or shared, like foods) and a
-  per-day log (`#supps`), each entry picked from the library or typed as free text, with an amount and a unit (g, mg, mcg, IU…).
+  per-day log (`#supps`), each entry picked from the library or typed as free text, with an amount and a unit (g, mg, mcg, IU…). A regime (PDF or photo) is read with AI into line items on the Library tab (`POST /api/supps/ai-import`), checked and edited in the browser, then `POST /api/supps/import` adds them – one of yours with the same name is updated – and can log them for a day.
 - `server/photos.js` / `public/photos.js` – progress photos (`#photos`): each account's own pictures with a date, pose and note,
   shown by date (filter by pose or by bodyweight near a chosen weight, jump to a date) and side by side
   (`#photos/compare/<id>/<id>`, two photos picked in the catalog; "Find one at N kg" swaps in the closest-weight photo). The browser shrinks each to a JPEG (dropping EXIF) and sends a thumbnail

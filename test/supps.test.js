@@ -7,18 +7,39 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
+const http = require('node:http');
 
-const [PORT] = require('./_ports').freePorts(1);
+const [PORT, AI_PORT] = require('./_ports').freePorts(2);
+/* Stands in for OpenRouter: records what it was asked and reads every "regime" into the same line items. */
+const aiSeen = [];
+const fakeAi = http.createServer((req, res) => {
+  let body = '';
+  req.on('data', c => { body += c; });
+  req.on('end', () => {
+    aiSeen.push(JSON.parse(body));
+    const reply = { items: [
+      { name: 'Vitamin D3', amount: 5000, unit: 'iu', notes: 'Morning with food' },
+      { name: '  Omega-3   fish oil ', amount: 2, unit: 'caps', notes: '1 g EPA+DHA per 2 caps' },
+      { name: 'Methyl B12', amount: 1000, unit: 'µg', notes: '' },
+      { name: 'Greens powder', amount: null, unit: 'scoop', notes: 'Most days' },
+      { name: 'Mystery', amount: 3, unit: 'spoonful' },
+      { name: '', amount: 1, unit: 'g' }, 'junk',
+    ], notes: ['Guessed the fish oil strength'] };
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ model: 'test/model', choices: [{ message: { content: '```json\n' + JSON.stringify(reply) + '\n```' } }] }));
+  });
+});
 const BASE = `http://127.0.0.1:${PORT}`;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'logbook-monster-supps-'));
 const root = path.join(__dirname, '..');
 const env = { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', BASE_URL: BASE, DB_PATH: path.join(dir, 't.db'),
   SESSION_SECRET: 'x'.repeat(40), AUTH_RATE_LIMIT: '1000', ALLOWED_EMAILS: '', ADMIN_EMAILS: 'admin@example.com', ALLOW_REGISTRATION: 'false',
-  GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: '' };
+  GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: 'sk-test-key-1234', OPENROUTER_BASE_URL: `http://127.0.0.1:${AI_PORT}` };
 let srv;
 
 before(async () => {
-  for (const who of ['admin', 'ann', 'bob']) {
+  await new Promise(r => fakeAi.listen(AI_PORT, '127.0.0.1', r));
+  for (const who of ['admin', 'ann', 'bob', 'cara']) {
     execFileSync(process.execPath, ['--disable-warning=ExperimentalWarning', 'scripts/create-user.js', `${who}@example.com`],
       { cwd: root, env: { ...env, NEW_PASSWORD: 'long-password-1' }, stdio: 'ignore' });
   }
@@ -32,11 +53,15 @@ before(async () => {
   }
   throw new Error('server did not start');
 });
-after(() => { srv.kill(); fs.rmSync(dir, { recursive: true, force: true }); });
+after(() => { srv.kill(); fakeAi.close(); fs.rmSync(dir, { recursive: true, force: true }); });
 
 async function signIn(email) {
   let cookie = '', csrf = '';
   const req = async (method, url, body) => {
+    if (Buffer.isBuffer(body)) {   /* a file upload: sent as it is, with its own type */
+      const r = await fetch(BASE + url, { method, headers: { cookie, 'content-type': 'application/pdf', 'x-csrf-token': csrf }, body });
+      return { status: r.status, body: await r.json().catch(() => null) };
+    }
     const r = await fetch(BASE + url, { method, redirect: 'manual',
       headers: { ...(cookie ? { cookie } : {}), ...(body ? { 'content-type': 'application/json' } : {}), 'x-csrf-token': csrf },
       body: body ? JSON.stringify(body) : undefined });
@@ -131,4 +156,49 @@ test('supplement log: free text, amounts and units, per day and per account', as
 
   assert.strictEqual((await ann('DELETE', `/api/supps/log/${e.id}`)).status, 200);
   assert.strictEqual((await ann('GET', '/api/supps/log?date=2026-09-02')).body.entries.length, 0);
+});
+
+test('a supplement regime read with AI: line items to check, then added to the library and logged for a day', async () => {
+  const cara = await signIn('cara@example.com'), bob = await signIn('bob@example.com');
+  let r = await cara('POST', '/api/supps', { name: 'vitamin d3', amount: 1000, unit: 'IU', notes: 'Old note', public: true });
+  const mine = r.body.id;
+  assert.strictEqual((await cara('GET', '/api/supps')).body.ai, true);
+
+  r = await cara('POST', '/api/supps/ai-import', Buffer.from('%PDF-1.4 regime'));
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  const sent = aiSeen.at(-1);
+  assert.ok(sent.messages[0].content.includes('- vitamin d3'), 'the model is told the names already in the library');
+  assert.strictEqual(sent.messages[1].content[1].type, 'file');
+  assert.deepStrictEqual(r.body.items.map(x => [x.name, x.amount, x.unit, !!x.existing]), [
+    ['Vitamin D3', 5000, 'IU', true], ['Omega-3 fish oil', 2, 'capsules', false], ['Methyl B12', 1000, 'mcg', false],
+    ['Greens powder', null, 'scoops', false], ['Mystery', null, 'mg', false]]);
+  assert.ok(r.body.notes.includes('Guessed the fish oil strength'));
+  assert.ok(r.body.notes.some(n => /Mystery: unit “spoonful”/.test(n)), 'an unknown unit is flagged to set by hand');
+  assert.strictEqual(r.body.model, 'test/model');
+  assert.strictEqual((await cara('GET', '/api/supps')).body.supplements.length, 1, 'nothing is saved by reading');
+
+  /* add four of them and log the ones with an amount; the one already in the library is updated, not doubled */
+  const items = r.body.items.slice(0, 4);
+  assert.strictEqual((await cara('POST', '/api/supps/import', { items, log: 'nope' })).status, 400);
+  assert.strictEqual((await cara('POST', '/api/supps/import', { items: [] })).status, 400);
+  assert.strictEqual((await cara('POST', '/api/supps/import', { items: [...items, { name: 'X', amount: 1, unit: 'spoon' }] })).status, 400);
+  assert.strictEqual((await cara('GET', '/api/supps')).body.supplements.length, 1, 'a bad line adds nothing');
+  r = await cara('POST', '/api/supps/import', { items, log: '2026-10-01' });
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.deepStrictEqual([r.body.added, r.body.updated], [3, 1]);
+  assert.deepStrictEqual(r.body.entries.map(e => [e.name, e.amount, e.unit]), [['Vitamin D3', 5000, 'IU'], ['Omega-3 fish oil', 2, 'capsules'], ['Methyl B12', 1000, 'mcg']]);
+  const lib = r.body.supplements.filter(s => s.mine);
+  assert.strictEqual(lib.length, 4);
+  const d3 = lib.find(s => s.id === mine);
+  assert.deepStrictEqual([d3.name, d3.amount, d3.notes, d3.public], ['Vitamin D3', 5000, 'Morning with food', true], 'keeps it shared');
+  assert.ok(lib.filter(s => s.id !== mine).every(s => !s.public), 'new ones are private');
+  assert.strictEqual(lib.find(s => s.name === 'Greens powder').amount, null);
+  assert.strictEqual((await cara('GET', '/api/supps/log?date=2026-10-01')).body.entries.length, 3);
+
+  /* without a date nothing is logged; Bob's import doesn't touch Cara's library */
+  r = await bob('POST', '/api/supps/import', { items: [{ name: 'Vitamin D3', amount: 2000, unit: 'IU' }] });
+  assert.deepStrictEqual([r.body.added, r.body.updated, r.body.entries.length], [1, 0, 0]);
+  assert.strictEqual((await cara('GET', '/api/supps')).body.supplements.find(s => s.id === mine).amount, 5000);
+
+  assert.strictEqual((await cara('POST', '/api/supps/ai-import', {})).status, 400, 'JSON is not a file');
 });
