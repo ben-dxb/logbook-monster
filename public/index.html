@@ -266,6 +266,16 @@
       </form>
       <div id="ad-foods" class="adfoods"></div>
     </section>
+    <section class="panel admine" aria-labelledby="ad-pdh">
+      <h2 id="ad-pdh">Delete progress photos</h2>
+      <p>Delete all your progress photos taken between two dates, both days included. They’re gone for good – download any you want to keep first.</p>
+      <form id="ad-pdel" class="adpdel">
+        <label class="f"><span class="lbl">From</span><input id="ad-pd-from" type="date" required></label>
+        <label class="f"><span class="lbl">To</span><input id="ad-pd-to" type="date" required></label>
+        <button class="btn" type="submit" id="ad-pd-btn" disabled>Delete photos</button>
+      </form>
+      <p id="ad-pdmsg" class="sub" role="status"></p>
+    </section>
     <section class="panel adsuper" aria-labelledby="ad-uh">
       <h2 id="ad-uh">People</h2>
       <p>Invite someone by email. They get a link to pick a password (or use Google with that address) and have their own days, history and weight. The link works once and runs out after 7 days. Invited people can sign in even if <code>ALLOWED_EMAILS</code> doesn’t list them.</p>

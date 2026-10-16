@@ -25,6 +25,7 @@ const q = {
   put: db.prepare('UPDATE photos SET date = ?, pose = ?, note = ? WHERE user_id = ? AND id = ?'),
   thumb: db.prepare('UPDATE photos SET thumb = ? WHERE user_id = ? AND id = ?'),
   del: db.prepare('DELETE FROM photos WHERE user_id = ? AND id = ?'),
+  delRange: db.prepare('DELETE FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? RETURNING file, thumb'),
   all: db.prepare('SELECT id, date, pose, note, size, created_at AS created FROM photos WHERE user_id = ? ORDER BY date, id'),
 };
 
@@ -106,6 +107,19 @@ router.put('/:id', (req, res) => {
     const m = meta(req.body);
     q.put.run(m.date, m.pose, m.note, req.user.id, id);
     res.json(view(q.get.get(req.user.id, id)));
+  } catch (e) { send(res, e); }
+});
+
+/* DELETE /api/photos?from=2026-01-01&to=2026-03-31: every one of your photos dated in that range (both days
+   included), from Account admin. Both dates are needed, so a missing one can't wipe the lot. */
+router.delete('/', (req, res) => {
+  try {
+    const { from, to } = req.query;
+    if (!isDate(from) || !isDate(to)) throw fail('Pick the first and last dates of the photos to delete');
+    if (from > to) throw fail('The first date is after the last one');
+    const rows = q.delRange.all(req.user.id, from, to);
+    removeFiles(rows);
+    res.json({ deleted: rows.length });
   } catch (e) { send(res, e); }
 });
 
