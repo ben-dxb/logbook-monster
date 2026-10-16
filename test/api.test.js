@@ -218,6 +218,11 @@ test('account admin: anyone keeps their own plan over the app defaults, only for
   assert.strictEqual((await friend.req('DELETE', '/api/my/defaults')).body.mine, null);
   await friend.req('PUT', '/api/my/defaults', mine);
   assert.strictEqual((await friend.req('PUT', '/api/my/defaults', {})).body.mine, null);   /* nothing different = no layer */
+  /* free foods: only the kinds set are kept, as true/false, and a layer with only that is still a layer */
+  const fr = await friend.req('PUT', '/api/my/defaults', { free: { sauce: 1, veg: false, pizza: true } });
+  assert.deepStrictEqual(fr.body.mine.free, { sauce: true, veg: false });
+  assert.strictEqual((await friend.req('PUT', '/api/my/defaults', { free: 'yes' })).status, 400);
+  await friend.req('DELETE', '/api/my/defaults');
 });
 
 test('account admin: plan changes take effect from a date, earlier days keep the plan they had', async () => {

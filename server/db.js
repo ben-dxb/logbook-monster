@@ -183,6 +183,8 @@ if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'invited_
   /* state: values weighed 'raw' (dry for rice and pasta), 'cooked' or '' (neither); yield: cooked weight as % of raw */
   if (!cols.includes('state')) db.exec("ALTER TABLE foods ADD COLUMN state TEXT NOT NULL DEFAULT ''");
   if (!cols.includes('yield')) db.exec('ALTER TABLE foods ADD COLUMN yield REAL');
+  /* free: 'sauce' or 'veg' (green veg) – counts no macros for accounts that set that kind free; '' otherwise */
+  if (!cols.includes('free')) db.exec("ALTER TABLE foods ADD COLUMN free TEXT NOT NULL DEFAULT ''");
 }
 
 module.exports = db;

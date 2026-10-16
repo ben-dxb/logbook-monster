@@ -383,6 +383,13 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         expect(await gp.inputValue('#ad-wd-0') === 'R', 'the guest should start from the app defaults');
         await gp.selectOption('#ad-wd-0', 'T'); await gp.click('#ad-save');
         await gp.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent) && !document.querySelector('#ad-reset').hidden, null, { timeout: 5000 });
+        /* free foods: tick sauces free, save, and passata stops counting */
+        expect(!(await gp.isChecked('#ad-free-sauce')) && !(await gp.isChecked('#ad-free-veg')), 'sauces and green veg should count by default');
+        await gp.check('#ad-free-sauce');
+        expect(/Unsaved/.test(await gp.textContent('#ad-status')), 'ticking free sauces should be an unsaved change');
+        await gp.click('#ad-save');
+        await gp.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
+        expect(await gp.isChecked('#ad-free-sauce') && await gp.evaluate(() => FREE.sauce && macOf('passata', 200).k === 0), 'free sauces should be saved and applied');
         /* a change that takes effect later: Mondays are rest days again from 2031, days before keep training */
         await gp.selectOption('#ad-wd-0', 'R'); await gp.fill('#ad-from', '2031-01-01'); await gp.click('#ad-save');
         await gp.waitForFunction(() => /Scheduled/.test(document.querySelector('#ad-versions').textContent) && /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });

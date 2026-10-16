@@ -10,22 +10,23 @@ const db = require('./db');
 const defaults = require('./defaults');
 const ai = require('./ai');
 
-const COLS = 'f.id, f.user_id, f.name, f.unit, f.kind, f.k, f.p, f.c, f.f, f.recipe, f.public, f.ai, f.state, f.yield, f.updated_at, u.name AS owner';
+const COLS = 'f.id, f.user_id, f.name, f.unit, f.kind, f.k, f.p, f.c, f.f, f.recipe, f.public, f.ai, f.state, f.yield, f.free, f.updated_at, u.name AS owner';
 const q = {
   list: db.prepare(`SELECT ${COLS} FROM foods f JOIN users u ON u.id = f.user_id
     WHERE f.user_id = ? OR f.public = 1 ORDER BY f.name COLLATE NOCASE, f.id`),
   get: db.prepare(`SELECT ${COLS} FROM foods f JOIN users u ON u.id = f.user_id WHERE f.id = ?`),
   count: db.prepare('SELECT COUNT(*) AS n FROM foods WHERE user_id = ?'),
-  add: db.prepare('INSERT INTO foods (user_id, name, unit, kind, k, p, c, f, recipe, public, ai, state, yield) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
-  put: db.prepare(`UPDATE foods SET name = ?, unit = ?, kind = ?, k = ?, p = ?, c = ?, f = ?, recipe = ?, public = ?, ai = ?, state = ?, yield = ?, updated_at = datetime('now')
+  add: db.prepare('INSERT INTO foods (user_id, name, unit, kind, k, p, c, f, recipe, public, ai, state, yield, free) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+  put: db.prepare(`UPDATE foods SET name = ?, unit = ?, kind = ?, k = ?, p = ?, c = ?, f = ?, recipe = ?, public = ?, ai = ?, state = ?, yield = ?, free = ?, updated_at = datetime('now')
     WHERE id = ? AND user_id = ?`),
   del: db.prepare('DELETE FROM foods WHERE id = ?'),
-  mine: db.prepare('SELECT id, name, unit, kind, k, p, c, f, recipe, public, ai, state, yield FROM foods WHERE user_id = ? ORDER BY id'),
+  mine: db.prepare('SELECT id, name, unit, kind, k, p, c, f, recipe, public, ai, state, yield, free FROM foods WHERE user_id = ? ORDER BY id'),
 };
 
 const MAX_FOODS = 500;
 const UNITS = ['g', 'ml', 'each'];
 const KINDS = ['meal', 'ingredient'];
+const FREE = ['sauce', 'veg'];   /* free foods: sauce or green veg, see engine.js */
 const MACROS = ['k', 'p', 'c', 'f'];
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 const fail = (msg, status = 400) => Object.assign(new Error(msg), { status });
@@ -61,6 +62,7 @@ function clean(b) {
   /* no kind given (e.g. saved from the Day page): a recipe or a whole portion makes it a meal */
   out.kind = KINDS.includes(b.kind) ? b.kind : out.recipe || unit === 'each' ? 'meal' : 'ingredient';
   out.ai = cleanAi(b.ai);
+  out.free = FREE.includes(b.free) ? b.free : '';
   Object.assign(out, cleanState(b, unit));
   return out;
 }
@@ -98,7 +100,7 @@ const aiOf = r => { try { return r.ai ? cleanAi(JSON.parse(r.ai)) : null; } catc
 function view(r, user) {
   const mine = r.user_id === user.id;
   return { id: r.id, name: r.name, unit: r.unit, kind: r.kind, k: r.k, p: r.p, c: r.c, f: r.f, recipe: r.recipe,
-    public: !!r.public, ai: aiOf(r), state: r.state || '', yield: r.yield == null ? null : r.yield, mine, by: mine ? null : r.owner || null, updated: r.updated_at };
+    public: !!r.public, ai: aiOf(r), state: r.state || '', yield: r.yield == null ? null : r.yield, free: r.free || '', mine, by: mine ? null : r.owner || null, updated: r.updated_at };
 }
 
 /* ---------- AI fill ---------- */
@@ -175,7 +177,7 @@ router.post('/', (req, res) => {
   try {
     const d = clean(req.body);
     if (q.count.get(req.user.id).n >= MAX_FOODS) throw fail(`Your library is full (${MAX_FOODS} foods)`);
-    const { lastInsertRowid } = q.add.run(req.user.id, d.name, d.unit, d.kind, d.k, d.p, d.c, d.f, d.recipe, d.public, d.ai && JSON.stringify(d.ai), d.state, d.yield);
+    const { lastInsertRowid } = q.add.run(req.user.id, d.name, d.unit, d.kind, d.k, d.p, d.c, d.f, d.recipe, d.public, d.ai && JSON.stringify(d.ai), d.state, d.yield, d.free);
     res.json(view(q.get.get(Number(lastInsertRowid)), req.user));
   } catch (e) { send(res, e); }
 });
@@ -186,7 +188,7 @@ router.put('/:id', (req, res) => {
     if (!row || (row.user_id !== req.user.id && !row.public)) throw fail('No such food', 404);
     if (row.user_id !== req.user.id) throw fail('Only the person who added this food can change it', 403);
     const d = clean(req.body);
-    q.put.run(d.name, d.unit, d.kind, d.k, d.p, d.c, d.f, d.recipe, d.public, d.ai && JSON.stringify(d.ai), d.state, d.yield, row.id, req.user.id);
+    q.put.run(d.name, d.unit, d.kind, d.k, d.p, d.c, d.f, d.recipe, d.public, d.ai && JSON.stringify(d.ai), d.state, d.yield, d.free, row.id, req.user.id);
     res.json(view(q.get.get(row.id), req.user));
   } catch (e) { send(res, e); }
 });

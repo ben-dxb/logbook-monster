@@ -12,8 +12,8 @@ const FOODS = {
   whites:   {n:'Egg whites',                 k:52,  p:10.9, c:0.7,  f:0.2, d:10.9, step:5, cat:'p'},
   cheese:   {n:'Cathedral City Lighter',     k:310, p:29.1, c:0.1,  f:21.5,d:29.1, step:5, cat:'p'},
   whey:     {n:'Amix whey isolate',          k:371, p:87.1, c:2,    f:1.1, d:87.1, step:1, cat:'p'},
-  passata:  {n:'Passata',                    k:31,  p:1.5,  c:6,    f:0.1, d:0,    step:5, cat:'p'},
-  paste:    {n:'Tomato paste',               k:82,  p:4.3,  c:15,   f:0.5, d:0,    step:5, cat:'p'},
+  passata:  {n:'Passata',                    k:31,  p:1.5,  c:6,    f:0.1, d:0,    step:5, cat:'p', free:'sauce'},
+  paste:    {n:'Tomato paste',               k:82,  p:4.3,  c:15,   f:0.5, d:0,    step:5, cat:'p', free:'sauce'},
   potato:   {n:'Boiled potatoes (Health Road)', k:77, p:1.8, c:17,  f:0.1, d:0,    step:5, cat:'c', order:400},
   pasta:    {n:'Pasta (Health Road, cooked)', k:158, p:5.8, c:30.9, f:0.9, d:0,    step:5, cat:'c', order:300},
   dates:    {n:'Dates',                      k:280, p:2.5,  c:75,   f:0.4, d:0,    step:1, cat:'c', max:45, spill:'syrup'},
@@ -110,14 +110,19 @@ const clone=o=>JSON.parse(JSON.stringify(o));
 /* ---------- admin defaults: food values, week schedule, targets and an uploaded plan ----------
    The built-in values above are the fallback; applyDefaults() layers the admin's saved defaults on top. */
 let CUSTOM_PLAN=null;                       /* {T:[meals],R:[meals],S:[meals]} or null for the built-in plan */
+/* Free foods: a food tagged free:'sauce' or free:'veg' (green veg) counts no macros while that kind is set free
+   (cfg.free, an account setting kept with the plan, so each day uses the setting in effect on its date). */
+const FREE_KINDS=['sauce','veg'];
+const FREE={sauce:false,veg:false};
+const isFree=f=>{const F=FOODS[f];return !!(F&&F.free&&FREE[F.free]);};
 const BUILTIN={foods:clone(FOODS),type:[...TYPE],coach:clone(COACH),
   swaps:{p:[...PROTEIN_SWAPS],c:[...CARB_SWAPS],x:[...FAT_SWAPS]}};
 const SWAP_LISTS={p:PROTEIN_SWAPS,c:CARB_SWAPS,x:FAT_SWAPS};
-const FOOD_FIELDS=['n','k','p','c','f','d','step','unit','min','max','order','group'];
+const FOOD_FIELDS=['n','k','p','c','f','d','step','unit','min','max','order','group','free'];
 function builtinGroup(id){for(const g in BUILTIN.swaps)if(BUILTIN.swaps[g].includes(id))return g;return '';}
 /* the editable view of a food: built-in fields plus which swap list it belongs to */
 function foodRecord(id){const F=FOODS[id];const r={group:foodGroup(id)};
-  FOOD_FIELDS.forEach(k=>{if(k!=='group')r[k]=F[k]!=null?F[k]:(k==='unit'?'g':null);});return r;}
+  FOOD_FIELDS.forEach(k=>{if(k!=='group')r[k]=F[k]!=null?F[k]:(k==='unit'?'g':k==='free'?'':null);});return r;}
 function foodGroup(id){for(const g in SWAP_LISTS)if(SWAP_LISTS[g].includes(id))return g;return '';}
 function applyDefaults(cfg){
   cfg=cfg||{};
@@ -129,6 +134,7 @@ function applyDefaults(cfg){
     ['n','k','p','c','f','d','step'].forEach(k=>{if(r[k]!=null)F[k]=r[k];});
     ['min','max','order'].forEach(k=>{if(r[k]!=null)F[k]=r[k];else delete F[k];});
     if(r.unit==='ml')F.unit='ml';else delete F.unit;
+    if(r.free!=null){if(FREE_KINDS.includes(r.free))F.free=r.free;else delete F.free;}
     if(r.group!=null){for(const g in groups)groups[g]=groups[g].filter(x=>x!==id);if(groups[r.group])groups[r.group].push(id);}
   }
   for(const g in SWAP_LISTS)SWAP_LISTS[g].splice(0,SWAP_LISTS[g].length,...groups[g]);
@@ -136,6 +142,7 @@ function applyDefaults(cfg){
   TYPE.splice(0,7,...sch);
   for(const t in BUILTIN.coach) COACH[t]={...BUILTIN.coach[t],...((cfg.targets||{})[t]||{})};
   CUSTOM_PLAN=cfg.plan||null;
+  FREE_KINDS.forEach(x=>{FREE[x]=!!(cfg.free&&cfg.free[x]);});
   if(typeof recalcPudding==='function'&&typeof S!=='undefined')recalcPudding();
 }
 /* an account's own defaults on top of the app's: its foods, week, targets and plan win wherever it has set them */
@@ -143,7 +150,7 @@ function layerDefaults(app,mine){
   app=app||{};mine=mine||{};
   const plan=app.plan||mine.plan?{...(app.plan||{}),...(mine.plan||{})}:null;
   return {foods:{...(app.foods||{}),...(mine.foods||{})},schedule:mine.schedule||app.schedule||null,
-    targets:{...(app.targets||{}),...(mine.targets||{})},plan};
+    targets:{...(app.targets||{}),...(mine.targets||{})},plan,free:{...(app.free||{}),...(mine.free||{})}};
 }
 /* meals of an uploaded plan for one day type; foods that no longer exist are left out */
 function customPlan(t){
@@ -173,10 +180,12 @@ function freshDay(d){
 }
 
 /* ---------- maths ---------- */
-function macOf(f,g){const F=FOODS[f];return {k:F.k*g/100,p:F.p*g/100,c:F.c*g/100,f:F.f*g/100,d:F.d*g/100};}
+function macOf(f,g){const F=FOODS[f];if(isFree(f))return {k:0,p:0,c:0,f:0,d:0};return {k:F.k*g/100,p:F.p*g/100,c:F.c*g/100,f:F.f*g/100,d:F.d*g/100};}
+/* an off-plan entry carries its own values; one from a free food (o.free) counts nothing while that kind is free */
+function offMac(o){return o.free&&FREE[o.free]?{k:0,p:0,c:0,f:0,d:0}:{k:+o.k||0,p:+o.p||0,c:+o.c||0,f:+o.f||0,d:0};}
 function sum(list){const t={k:0,p:0,c:0,f:0,d:0};list.forEach(x=>{for(const m in t)t[m]+=x[m]||0});return t;}
 function allItems(day){const a=[];day.meals.forEach(m=>BOXES.forEach(([b])=>(m[b]||[]).forEach(i=>a.push(i))));return a;}
-function dayTotals(day){return sum(allItems(day).map(i=>macOf(i.f,i.g)).concat(day.off.map(o=>({k:+o.k||0,p:+o.p||0,c:+o.c||0,f:+o.f||0,d:0}))));}
+function dayTotals(day){return sum(allItems(day).map(i=>macOf(i.f,i.g)).concat(day.off.map(offMac)));}
 
 function gauss(M,r){
   const n=r.length;const A=M.map((row,i)=>row.concat([r[i]]));
@@ -202,7 +211,7 @@ function solveWith(day,items,free,on){
   let active=free.slice(); const pinned=new Map(); let sol=null;
   for(let iter=0;iter<25&&active.length;iter++){
     const fixed=sum(items.filter(i=>!active.includes(i)).map(i=>macOf(i.f,pinned.has(i)?pinned.get(i):i.g))
-      .concat(day.off.map(o=>({k:+o.k||0,p:+o.p||0,c:+o.c||0,f:+o.f||0}))));
+      .concat(day.off.map(offMac)));
     const b=MAC.map((m,j)=>tgt[j]-fixed[key(m)]);
     const A=MAC.map(m=>active.map(i=>FOODS[i.f][key(m)]/100));
     const n=active.length, M=[], r=[];
@@ -233,7 +242,7 @@ function solve(day,held,opts={}){
   const items=allItems(day);
   const anc=i=>(i.a!=null?i.a:i.g);
   const eaten=new Set();day.meals.forEach(m=>{if(m.eaten)BOXES.forEach(([b])=>(m[b]||[]).forEach(i=>eaten.add(i)));}); /* eaten meals never move */
-  const free=items.filter(i=>anc(i)>0&&!i.lock&&!held.has(i)&&!eaten.has(i)&&!(opts.protect&&FOODS[i.f].d>0));
+  const free=items.filter(i=>anc(i)>0&&!i.lock&&!held.has(i)&&!eaten.has(i)&&!isFree(i.f)&&!(opts.protect&&FOODS[i.f].d>0));
   if(!free.length) return;
   const used=(f,except)=>items.filter(i=>i.f===f&&i!==except).reduce((s,i)=>s+i.g,0);
   free.forEach(i=>{
@@ -246,7 +255,7 @@ function solve(day,held,opts={}){
   const on=opts.on?opts.on.slice():[1,0,1,0]; let out;
   for(let pass=0;pass<3;pass++){
     out=solveWith(day,items,free,on);
-    const t=sum(items.map(i=>macOf(i.f,out.has(i)?out.get(i):i.g)).concat(day.off.map(o=>({k:+o.k||0,p:+o.p||0,c:+o.c||0,f:+o.f||0}))));
+    const t=sum(items.map(i=>macOf(i.f,out.has(i)?out.get(i):i.g)).concat(day.off.map(offMac)));
     let changed=false;
     if(!opts.protect&&!on[1]&&t[pKey()]<(+day.targets.p||0)-3){on[1]=1;changed=true;}
     if(!on[3]&&t.f>(+day.targets.f||0)+0.5){on[3]=1;changed=true;}
@@ -304,4 +313,4 @@ function packPortion(g,pack,meat){return g>0&&pack>0&&meat>0?g/meat*pack:null;}
 function fmtG(i){const u=FOODS[i.f].unit||'g';return Math.round(i.g)+u;}
 
 /* lets the server check food ids against the same data */
-if(typeof module!=='undefined') module.exports={FOODS,TYPE,COACH,packPortion,layerDefaults,balanceMeal,macOf,sum,it};
+if(typeof module!=='undefined') module.exports={FOODS,TYPE,COACH,FREE,FREE_KINDS,packPortion,layerDefaults,applyDefaults,balanceMeal,macOf,dayTotals,sum,it};

@@ -276,9 +276,9 @@ const libUnit=u=>u==='each'?'×':u;
 const libPer=u=>u==='each'?'per item':`per 100${u}`;
 function libMac(o,qty){const m=o.u==='each'?qty:qty/100;return {k:o.per.k*m,p:o.per.p*m,c:o.per.c*m,f:o.per.f*m};}
 /* what goes in a day's off-plan list: carries its own values, so it still works if the food is later changed or removed */
-function libEntry(food,qty){const o={n:food.name,lib:food.id,u:food.unit,per:{k:food.k,p:food.p,c:food.c,f:food.f},qty};return Object.assign(o,libMac(o,qty));}
+function libEntry(food,qty){const o={n:food.name,lib:food.id,u:food.unit,per:{k:food.k,p:food.p,c:food.c,f:food.f},qty};if(food.free)o.free=food.free;return Object.assign(o,libMac(o,qty));}
 function libAdd(D,food,qty){
-  const ex=D.off.find(o=>o.lib===food.id&&o.u===food.unit&&['k','p','c','f'].every(m=>o.per[m]===food[m]));
+  const ex=D.off.find(o=>o.lib===food.id&&o.u===food.unit&&(o.free||'')===(food.free||'')&&['k','p','c','f'].every(m=>o.per[m]===food[m]));
   if(ex){ex.qty+=qty;Object.assign(ex,libMac(ex,ex.qty));}else D.off.push(libEntry(food,qty));
 }
 const libDefault=u=>u==='each'?1:100;
@@ -287,11 +287,12 @@ const libDefault=u=>u==='each'?1:100;
    add up after a food is edited, unshared or deleted. Values are per 100 like every food; a per-item food
    counts its amount in items, so its values are stored ×100. */
 const isLib=f=>typeof f==='string'&&f.startsWith('L:');
-function libHash(food){let h=5381;for(const ch of [food.unit,food.k,food.p,food.c,food.f].join('|'))h=(h*33+ch.charCodeAt(0))>>>0;return h.toString(36);}
+function libHash(food){let h=5381;for(const ch of [food.unit,food.k,food.p,food.c,food.f].concat(food.free?[food.free]:[]).join('|'))h=(h*33+ch.charCodeAt(0))>>>0;return h.toString(36);}
 const libFid=food=>`L:${food.id}:${libHash(food)}`;
 /* An AI-estimated food keeps its ⚑ in meals, and the day's copy remembers its type and which values were estimates. */
 function libFoodRec(food){const m=food.unit==='each'?100:1;
   const F={n:food.name+(food.ai?' ⚑':''),kind:food.kind,ai:food.ai?food.ai.fields:undefined,k:food.k*m,p:food.p*m,c:food.c*m,f:food.f*m,d:0,step:food.unit==='each'?1:food.unit==='ml'?10:5,cat:'c'};
+  if(food.free)F.free=food.free;
   if(food.unit!=='g')F.unit=food.unit==='each'?'×':'ml';return F;}
 function libLoad(D){for(const [fid,F] of Object.entries(D.lib||{}))if(isLib(fid)&&!FOODS[fid])FOODS[fid]={...F};}
 /* After the library changes or the admin defaults are applied (which drop foods the calculator didn't ship with). */

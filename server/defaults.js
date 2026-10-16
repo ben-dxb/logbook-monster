@@ -6,7 +6,7 @@
    so days before a change keep the plan they had: user_defaults holds {versions:[…]}, oldest first. */
 const config = require('./config');
 const db = require('./db');
-const { FOODS, layerDefaults } = require('../public/engine.js');
+const { FOODS, FREE_KINDS, layerDefaults } = require('../public/engine.js');
 
 const q = {
   get: db.prepare("SELECT data, updated_by, updated_at FROM app_config WHERE key = 'defaults'"),
@@ -45,7 +45,7 @@ function clean(input, baseFoods = {}) {
     if (required && !s) throw new Error(`${what} is missing`);
     return s;
   };
-  const out = { foods: {}, schedule: null, targets: {}, plan: null };
+  const out = { foods: {}, schedule: null, targets: {}, plan: null, free: {} };
 
   const foods = input.foods == null ? {} : input.foods;
   if (!isObj(foods)) throw new Error('Foods must be an object');
@@ -62,6 +62,7 @@ function clean(input, baseFoods = {}) {
       unit: r.unit === 'ml' ? 'ml' : 'g',
       min: opt(r.min, 0, 5000, `${w} min`), max: opt(r.max, 1, 5000, `${w} max`), order: opt(r.order, 1, 10000, `${w} order`),
       group: ['p', 'c', 'x'].includes(r.group) ? r.group : '',
+      free: FREE_KINDS.includes(r.free) ? r.free : '',
     };
   }
   const has = (o, id) => Object.prototype.hasOwnProperty.call(o, id);
@@ -73,6 +74,11 @@ function clean(input, baseFoods = {}) {
     }
     out.schedule = [...input.schedule];
   }
+
+  /* free foods: whether sauces / green veg count no macros; only the kinds this layer sets */
+  const free = input.free == null ? {} : input.free;
+  if (!isObj(free)) throw new Error('Free foods must be an object');
+  for (const x of FREE_KINDS) if (free[x] != null) out.free[x] = !!free[x];
 
   const targets = input.targets == null ? {} : input.targets;
   if (!isObj(targets)) throw new Error('Targets must be an object');
@@ -114,7 +120,7 @@ function clean(input, baseFoods = {}) {
 
 function get() {
   const row = q.get.get();
-  if (!row) return { foods: {}, schedule: null, targets: {}, plan: null };
+  if (!row) return { foods: {}, schedule: null, targets: {}, plan: null, free: {} };
   return { ...JSON.parse(row.data), updatedBy: row.updated_by, updatedAt: row.updated_at };
 }
 function put(input, user) {
@@ -127,7 +133,7 @@ const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const isDate = v => typeof v === 'string' && DATE_RE.test(v) && !isNaN(Date.parse(v + 'T00:00:00Z'));
 const MAX_VERSIONS = 100;
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const isEmpty = d => !Object.keys(d.foods || {}).length && !d.schedule && !Object.keys(d.targets || {}).length && !d.plan;
+const isEmpty = d => !Object.keys(d.foods || {}).length && !d.schedule && !Object.keys(d.targets || {}).length && !d.plan && !Object.keys(d.free || {}).length;
 
 /* The account's own plan changes, oldest first. A layer saved before versions is one version from the start. */
 function myVersions(user) {
