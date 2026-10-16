@@ -23,6 +23,16 @@ const fakeAi = http.createServer((req, res) => {
       res.setHeader('content-type', 'application/json');
       return res.end(JSON.stringify({ model: 'test/model', choices: [{ message: { content: JSON.stringify(program) } }] }));
     }
+    /* a file saying BAD:<kind> gets back a reply the app can't use */
+    const file = aiSeen.at(-1).body.messages[1].content[1];
+    const bad = file && file.file && /BAD:(\w+)/.exec(Buffer.from(file.file.file_data.split(',')[1], 'base64').toString());
+    if (bad) {
+      const choice = { cut: { message: { content: '{"plan": {"T": [{"id": "1", "na' }, finish_reason: 'length' },
+        empty: { message: { content: null }, finish_reason: 'stop' },
+        noplan: { message: { content: '{"plan": {}, "notes": ["Not a meal plan"]}' }, finish_reason: 'stop' } }[bad[1]];
+      res.setHeader('content-type', 'application/json');
+      return res.end(JSON.stringify({ model: 'test/model', choices: [choice] }));
+    }
     const plan = { plan: { T: [{ id: '1', name: 'Oats & skyr', p: [{ f: 'skyr_0', g: 250 }, { f: 'dragonfruit', g: 10 }], c: [{ f: 'banana', g: '120' }], x: [] }] },
       foods: { skyr_0: { n: 'Skyr 0%', k: 63, p: 11, c: 4, f: 0.2, d: 11, step: 5, unit: 'g', group: 'p' }, chicken: { n: 'hijack', k: 1, p: 1, c: 1, f: 1, step: 1 } },
       targets: { T: { k: 2900, p: 240, c: 350, f: 65 } }, schedule: ['T', 'R'], notes: ['Estimated the banana'] };
@@ -331,6 +341,14 @@ test('AI: the key and models are the super admin’s, a plan is read against you
   await pdf(admin);
   assert.strictEqual(aiSeen.at(-1).body.model, 'test/model');
   await admin.req('PUT', '/api/admin/ai', { models: { food: '' } });
+
+  /* a reply the app can't use says why, instead of "Something went wrong" */
+  for (const [kind, msg] of [['cut', /too long and got cut off/], ['empty', /empty reply/], ['noplan', /couldn’t find a meal plan/]]) {
+    const b = await pdf(admin, `%PDF-1.4 BAD:${kind}`);
+    const e = await b.json();
+    assert.ok(b.status >= 400 && b.status < 600, kind);
+    assert.match(e.error, msg);
+  }
 
   assert.strictEqual((await admin.req('PUT', '/api/admin/ai', { key: '' })).body.configured, false);
   await admin.req('DELETE', '/api/my/defaults');

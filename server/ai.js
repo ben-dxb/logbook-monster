@@ -101,12 +101,15 @@ Add "notes": an array of short strings listing anything you estimated, converted
 Reply with only the JSON object: {"templates": [{"id": "T", "name": "Training"}, ...], "plan": {"T": [...], ...}, "foods": {...}, "targets": {...}, "schedule": [...], "notes": [...]}`;
 }
 
+/* A problem with what the AI sent back: shown to the person as it is (not "Something went wrong"). */
+const unusable = msg => Object.assign(new Error(msg), { status: 502 });
+
 /* Pull the JSON object out of the reply, even if it is wrapped in a code fence or prose. */
 function parseReply(text) {
   const s = String(text || '').replace(/```(?:json)?/gi, '');
   const a = s.indexOf('{'), b = s.lastIndexOf('}');
-  if (a < 0 || b <= a) throw new Error('The AI reply had no plan in it');
-  try { return JSON.parse(s.slice(a, b + 1)); } catch { throw new Error('The AI reply wasn’t valid JSON – try again'); }
+  if (a < 0 || b <= a) throw unusable('The AI reply had nothing the app could use in it – try again');
+  try { return JSON.parse(s.slice(a, b + 1)); } catch { throw unusable('The AI reply wasn’t valid JSON – try again'); }
 }
 
 /* Keep everything that passes the same checks as a save; list what was dropped. */
@@ -152,7 +155,7 @@ function tidy(raw, foods) {
     }
     if (!Object.keys(out.plan).length) out.plan = null;
   }
-  if (!out.plan) throw new Error('The AI couldn’t find a meal plan in that file');
+  if (!out.plan) throw Object.assign(new Error('The AI couldn’t find a meal plan in that file'), { status: 422 });
   out.templates = out.templates.filter(t => out.plan[t.id] || (isObj(raw.targets) && raw.targets[t.id]));
   for (const [t, v] of Object.entries(isObj(raw.targets) ? raw.targets : {})) {
     if (!out.templates.some(x => x.id === t)) continue;
@@ -204,8 +207,17 @@ async function call(system, content, maxTokens, timeout, task) {
     const msg = (j.error && j.error.message) || `HTTP ${r.status}`;
     throw Object.assign(new Error(r.status === 401 ? 'OpenRouter didn’t accept the API key' : `OpenRouter: ${String(msg).slice(0, 200)}`), { status: 502 });
   }
-  const text = j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
-  return { reply: parseReply(Array.isArray(text) ? text.map(x => x.text || '').join('') : text), model: j.model || c.model };
+  const choice = (j.choices && j.choices[0]) || {};
+  const text = choice.message && choice.message.content;
+  const parts = Array.isArray(text) ? text.map(x => x.text || '').join('') : text;
+  const model = j.model || c.model;
+  try { return { reply: parseReply(parts), model }; }
+  catch (e) {
+    console.error(`AI reply unusable (${model}, finish_reason ${choice.finish_reason}, ${String(parts || '').length} chars): ${e.message}`);
+    if (choice.finish_reason === 'length') throw unusable('The AI reply was too long and got cut off – try a shorter file, or another model for this task on the Super admin page');
+    if (!String(parts || '').trim()) throw unusable(`The AI (${String(model).slice(0, 100)}) sent back an empty reply – try again, or pick another model for this task on the Super admin page`);
+    throw e;
+  }
 }
 
 async function importPlan(buf, type, user) {
