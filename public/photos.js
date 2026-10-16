@@ -9,6 +9,7 @@
 let PHOTOS=null, PPOSES=['front','side','back','other'], PWT={};
 let pPose='all', pDate=todayStr(), pUpPose='front', pMsg='', pTok=0, pBusy=false;
 let pSel=false, pPick=[];                          /* picking photos to compare, and the ones picked (up to 2) */
+let pAi=false, pAiBusy=false;                     /* AI set up (an admin's OpenRouter key), and a "Tag with AI" run going */
 let pNear=false, pNearKg='', pTol=1;              /* only days when you weighed about the same: around pNearKg (blank = your latest weigh-in), ± pTol kg */
 const P_MAX=2000, P_THUMB=480;                     /* longest side in pixels: the photo, the thumbnail */
 const P_NAME={front:'Front',side:'Side',back:'Back',other:'Other'}, P_TOLS=[0.5,1,2,3];
@@ -21,7 +22,7 @@ const pPoseName=p=>P_NAME[p]||p;
 function pSort(){PHOTOS.sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id);}
 async function pLoad(){
   const [r,w]=await Promise.all([api('GET','/api/photos'),api('GET','/api/weights')]);
-  PHOTOS=(r&&r.photos)||[];if(r&&r.poses)PPOSES=r.poses;pSort();
+  PHOTOS=(r&&r.photos)||[];if(r&&r.poses)PPOSES=r.poses;pAi=!!(r&&r.ai);pSort();
   PWT={};(w||[]).forEach(x=>{PWT[x.date]=x.kg;});
 }
 const pYmd=d=>parse(d).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});
@@ -78,7 +79,13 @@ async function renderPhotos(args){
 }
 
 /* ---------- the catalog: upload, then every day with photos, newest first ---------- */
-function pPoseOptions(sel){return PPOSES.map(v=>`<option value="${v}"${v===sel?' selected':''}>${esc(pPoseName(v))}</option>`).join('');}
+function pPoseOptions(sel,withAi){
+  return (withAi&&pAi?`<option value="ai"${sel==='ai'?' selected':''}>Let AI tell</option>`:'')+
+    PPOSES.map(v=>`<option value="${v}"${v===sel?' selected':''}>${esc(pPoseName(v))}</option>`).join('');
+}
+/* the AI's pose for a photo; save stores it too */
+const pAskAi=(id,save)=>api('POST',`/api/photos/${id}/ai-pose`,{save});
+const P_AI_NOTE='The AI looks at the small version of each photo, sent to the AI service set up for this app; nothing else about you goes with it.';
 function pCatalogPage(){
   const seg=[['all','All'],...PPOSES.map(v=>[v,pPoseName(v)])].map(([v,l])=>`<button type="button" data-pa="filter" data-v="${v}" aria-pressed="${pPose===v}">${esc(l)}</button>`).join('');
   const days=[...new Set(PHOTOS.map(p=>p.date))], latest=pLatest();
@@ -87,17 +94,18 @@ function pCatalogPage(){
     <form id="p-form" class="panel sform">
       <label class="f swide"><span class="lbl">Photos</span><input id="p-file" type="file" accept="image/*" multiple required></label>
       <label class="f"><span class="lbl">Date taken</span><input id="p-date" type="date" required value="${pDate}" max="${todayStr()}"></label>
-      <label class="f"><span class="lbl">Pose</span><select id="p-pose">${pPoseOptions(pUpPose)}</select></label>
+      <label class="f"><span class="lbl">Pose</span><select id="p-pose">${pPoseOptions(pAi||pUpPose!=='ai'?pUpPose:'front',true)}</select></label>
       <label class="f swide"><span class="lbl">Note (optional)</span><input id="p-note" maxlength="200" placeholder="e.g. morning, fasted, after the cut"></label>
       <p id="p-err" class="aderr swide" role="alert" hidden></p>
       <div class="factions swide"><button class="btn" type="submit">Upload</button><span id="p-state" class="sub" role="status"></span></div>
-      <p class="sub swide">Only you can see your photos. They’re made smaller before upload and the camera’s details, location included, are left out.</p>
+      <p class="sub swide">Only you can see your photos. They’re made smaller before upload and the camera’s details, location included, are left out.${pAi?' With “Let AI tell”, the small version of each photo goes to the AI service set up for this app to pick the pose.':''}</p>
     </form>
     <div class="ptools">
       <div class="seg" role="group" aria-label="Pose">${seg}</div>
       <div class="prow">
         <label class="f pjump"><span class="lbl">Jump to date</span><input id="p-jump" type="date"${days.length?` min="${days[days.length-1]}" max="${days[0]}"`:' disabled'}></label>
         <button class="ghost" type="button" data-pa="select" id="p-selbtn" aria-pressed="${pSel}"${PHOTOS.length<2?' disabled':''}>Compare two photos</button>
+        ${pAi?`<button class="ghost" type="button" data-pa="aitag" id="p-aibtn"${PHOTOS.length&&!pAiBusy?'':' disabled'} title="Let the AI set the pose of the photos shown">${pAiBusy?'Tagging…':'Tag poses with AI'}</button>`:''}
       </div>
       <div class="prow pweight">
         <label class="tog"><input type="checkbox" id="p-near"${pNear?' checked':''}${latest?'':' disabled'}> Same weight as</label>
@@ -188,12 +196,13 @@ async function pSend(method,url,blob){
 async function pUpload(form){
   if(pBusy)return;
   const err=$('#p-err'), st=$('#p-state'), btn=form.querySelector('button[type=submit]');
-  const files=[...$('#p-file').files], date=$('#p-date').value, pose=$('#p-pose').value, note=$('#p-note').value.trim();
+  const files=[...$('#p-file').files], date=$('#p-date').value, pick=$('#p-pose').value, note=$('#p-note').value.trim();
+  const byAi=pick==='ai', pose=byAi?'other':pick;
   err.hidden=true;
   if(!files.length){err.textContent='Pick one or more photos.';err.hidden=false;return;}
   if(!isDate(date)){err.textContent='Pick the date the photos were taken.';err.hidden=false;return;}
-  pBusy=true;btn.disabled=true;pDate=date;pUpPose=pose;
-  let done=0;
+  pBusy=true;btn.disabled=true;pDate=date;pUpPose=pick;
+  let done=0, aiMiss=0;
   try{
     for(const f of files){
       st.textContent=files.length>1?`Uploading ${done+1} of ${files.length}…`:'Uploading…';
@@ -201,8 +210,12 @@ async function pUpload(form){
       let p=await pSend('POST',`/api/photos?${new URLSearchParams({date,pose,note})}`,big);
       try{p=await pSend('PUT',`/api/photos/${p.id}/thumb`,small);}catch(e){if(e.signedOut)throw e;}   /* the catalog falls back to the full picture */
       PHOTOS.push(p);done++;
+      if(byAi){
+        st.textContent=files.length>1?`Asking the AI about ${done} of ${files.length}…`:'Asking the AI which pose it is…';
+        try{const a=await pAskAi(p.id,true);PHOTOS[PHOTOS.length-1]=a.photo;}catch(e){if(e.signedOut)throw e;aiMiss++;}   /* stays "other" */
+      }
     }
-    pMsg=`Added ${done} photo${done===1?'':'s'} for ${fmtLong(date)}.`;
+    pMsg=`Added ${done} photo${done===1?'':'s'} for ${fmtLong(date)}.`+(aiMiss?` The AI couldn’t tag ${aiMiss===done?(done===1?'it':'them'):aiMiss} – ${aiMiss===1?'it’s':'they’re'} under Other; change the pose on the photo.`:'');
   }catch(e){
     if(e.signedOut)return;
     err.textContent=(done?`Added ${done} of ${files.length}. `:'')+e.message;err.hidden=false;
@@ -225,6 +238,7 @@ function pOnePage(p){
     <form id="p-eform" class="panel sform" data-id="${p.id}">
       <label class="f"><span class="lbl">Date taken</span><input id="p-edate" type="date" required value="${p.date}"></label>
       <label class="f"><span class="lbl">Pose</span><select id="p-epose">${pPoseOptions(p.pose)}</select></label>
+      ${pAi?`<div class="factions"><button class="ghost" type="button" data-pa="aione" data-id="${p.id}" title="${esc(P_AI_NOTE)}">Ask AI for the pose</button><span id="p-aisay" class="sub" role="status"></span></div>`:''}
       <label class="f swide"><span class="lbl">Note (optional)</span><input id="p-enote" maxlength="200" value="${esc(p.note)}"></label>
       <p id="p-eerr" class="aderr swide" role="alert" hidden></p>
       <div class="factions swide"><button class="btn" type="submit">Save changes</button>
@@ -249,6 +263,39 @@ async function pDelete(id){
   PHOTOS=PHOTOS.filter(x=>x.id!==id);pPick=pPick.filter(x=>x!==id);pMsg='Deleted the photo.';go('photos');
 }
 
+
+/* "Tag poses with AI": the AI sets the pose of every photo the catalog shows (so pick Other first to sort only those) */
+async function pAiTagAll(){
+  if(pAiBusy)return;
+  const list=pShown();if(!list.length)return;
+  if(!confirm(`Let the AI look at the ${list.length} photo${list.length===1?'':'s'} shown and set ${list.length===1?'its':'their'} pose (front, side, back or other)? Poses you set yourself will be replaced.\n\n${P_AI_NOTE}`))return;
+  pAiBusy=true;pMsg='';
+  const btn=()=>$('#p-aibtn');
+  let done=0, changed=0, miss=0, why='';
+  try{
+    for(const p of list){
+      const b=btn();if(b){b.disabled=true;b.textContent=`Tagging ${done+1} of ${list.length}…`;}
+      try{
+        const a=await pAskAi(p.id,true);
+        if(a.photo.pose!==p.pose)changed++;
+        const i=PHOTOS.findIndex(x=>x.id===p.id);if(i>=0)PHOTOS[i]=a.photo;
+      }catch(e){if(e.signedOut)return;miss++;why=e.message;if(/OpenRouter|API key|wait a while|set up/.test(why))break;}   /* the same for the rest */
+      done++;
+    }
+    pMsg=`The AI looked at ${done-miss} photo${done-miss===1?'':'s'} and changed the pose of ${changed}.`+(miss?` ${miss} couldn’t be tagged: ${why}`:'')+(done<list.length?` Stopped before the last ${list.length-done}.`:'');
+  }finally{pAiBusy=false;}
+  if(view==='photos'&&!location.hash.replace(/^#/,'').split('/')[1]){const b=btn();if(b){b.disabled=false;b.textContent='Tag poses with AI';}renderPhotoList();}
+}
+async function pAiOne(b){
+  const say=$('#p-aisay');b.disabled=true;say.textContent='Asking the AI…';
+  try{
+    const a=await pAskAi(+b.dataset.id,false);
+    const sel=$('#p-epose');if(!sel)return;
+    sel.value=a.pose;
+    say.textContent=a.pose===pById(+b.dataset.id).pose?`The AI agrees: ${pPoseName(a.pose)}.`:`The AI says ${pPoseName(a.pose)} – tap Save changes to keep it.`;
+  }catch(e){if(!e.signedOut)say.textContent=e.message;}
+  finally{b.disabled=false;}
+}
 
 /* ---------- two photos side by side ---------- */
 /* Pick from the catalog (#photos/compare/12/34), or here: either side from a list, and "match weight" finds
@@ -309,6 +356,8 @@ document.addEventListener('click',e=>{
   else if(a==='repick'){const s=[...document.querySelectorAll('#p-cmp select')].map(x=>+x.value);pSel=true;pPick=s;pMsg='';go('photos');}
   else if(a==='withthis'){pSel=true;pPick=[+b.dataset.id];pMsg='';go('photos');}
   else if(a==='match')pMatch(+b.dataset.keep,+b.dataset.drop);
+  else if(a==='aitag')pAiTagAll();
+  else if(a==='aione')pAiOne(b);
 });
 document.addEventListener('change',e=>{
   if(view!=='photos')return;

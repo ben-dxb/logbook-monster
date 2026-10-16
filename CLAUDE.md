@@ -50,7 +50,8 @@
 - `server/photos.js` / `public/photos.js` – progress photos (`#photos`): each account's own pictures with a date, pose and note,
   shown by date (filter by pose or by bodyweight near a chosen weight, jump to a date) and side by side
   (`#photos/compare/<id>/<id>`, two photos picked in the catalog; "Find one at N kg" swaps in the closest-weight photo). The browser shrinks each to a JPEG (dropping EXIF) and sends a thumbnail
-  after it; files live on disk in `PHOTO_DIR` (default `photos/` next to the database), only their details in SQLite.
+  after it; `POST /api/photos/:id/ai-pose` asks the AI for the pose (front/side/back/other) from the thumbnail – only when the person asks
+  ("Let AI tell" on upload, "Tag poses with AI" over the photos shown, "Ask AI" on one photo); files live on disk in `PHOTO_DIR` (default `photos/` next to the database), only their details in SQLite.
 - `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by tests.
 - Secrets live only in `.env` on the server; never send them to the client or commit them.
 - Strict CSP: no inline scripts or `style=` attributes in HTML.
