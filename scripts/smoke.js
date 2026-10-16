@@ -111,7 +111,25 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.waitForSelector('#v-day:not([hidden]) #offlist', { timeout: 5000 });
       await pg.waitForFunction(() => /Smoke pancakes/.test(document.querySelector('#offlist').textContent) && /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
       await pg.selectOption('#ln', { label: 'Smoke pancakes (per item)' }); await pg.fill('#lq', '1'); await pg.click('#libform button');
-      await pg.waitForFunction(() => n => [...document.querySelectorAll('#offlist input[data-act=oqty]')].some(i => i.value === n), first ? '3' : '6', { timeout: 5000 });
+      await pg.waitForFunction(n => [...document.querySelectorAll('#offlist input[data-act=oqty]')].some(i => i.value === n), first ? '3' : '6', { timeout: 5000 });
+      /* inside meals: from the Foods page into meal 1, then from a meal's "+ Add a food…" on the Day page */
+      const inMeals = () => pg.evaluate(() => [...document.querySelectorAll('#meals select[data-act=swap]')].filter(x => (x.selectedOptions[0] || {}).textContent === 'Smoke pancakes').length);
+      const mBefore = await inMeals();
+      await pg.click('a[data-view=foods]'); await pg.waitForSelector('#f-list .fcard');
+      await pg.click('#f-list .fcard:has-text("Smoke pancakes") [data-fa=add]'); await pg.waitForSelector('#f-awhere');
+      await pg.selectOption('#f-awhere', '0'); await pg.click('#f-addform button[type=submit]');
+      await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
+      await pg.waitForFunction(() => /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
+      expect(await inMeals() === mBefore + 1, 'food added from the Foods page should be in meal 1');
+      await pg.selectOption('select[data-add=c][data-m="1"]', { label: 'Smoke pancakes' }); await pg.click('[data-act=save][data-m="1"]');
+      await pg.waitForFunction(n => [...document.querySelectorAll('#meals select[data-act=swap]')].filter(x => (x.selectedOptions[0] || {}).textContent === 'Smoke pancakes').length === n, mBefore + 2, { timeout: 5000 });
+      await pg.waitForFunction(() => /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
+      if (!first) {
+        /* change the food's values: the saved day keeps the old ones and still loads */
+        await pg.evaluate(async () => { const f = LIB.find(x => x.name === 'Smoke pancakes'); await api('PUT', '/api/foods/' + f.id, { ...f, k: 500 }); });
+        await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
+        expect(await inMeals() === mBefore + 2, 'meal items should survive the food being edited');
+      }
       /* admin (the only account is the first one, so it is the admin) */
       await pg.click('#acct>summary'); await pg.click('#adminlink'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-meals .admeal');
       if (first) {

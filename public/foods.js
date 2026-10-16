@@ -1,13 +1,13 @@
 'use strict';
 /* Foods view: the food library. Foods you enter yourself (per 100 g, per 100 ml or per item) with an
-   optional recipe, and foods other people have shared. "Add to plan" puts one in a day's off-plan list.
+   optional recipe, and foods other people have shared. "Add to plan" puts one in a meal or a day's off-plan list.
    #foods, #foods/new, #foods/12 (edit one of yours). Uses helpers and LIB from app.js. */
 
 let fFilter='all', fQuery='', fAdding=null, fMsg='', fTok=0;
 
 const fById=id=>LIB.find(f=>f.id===id);
 const fMacros=f=>`<b>${r0(f.k)}</b> kcal · P ${r1(f.p)} · C ${r1(f.c)} · F ${r1(f.f)}`;
-function fSort(){LIB.sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})||a.id-b.id);LIBV++;}
+function fSort(){LIB.sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})||a.id-b.id);libRegister();}
 
 async function renderFoods(args){
   if(view!=='foods')return;
@@ -26,7 +26,7 @@ async function renderFoods(args){
 function fListPage(){
   const seg=[['all','All'],['mine','Mine'],['shared','Shared']].map(([v,l])=>`<button type="button" data-fa="filter" data-v="${v}" aria-pressed="${fFilter===v}">${l}</button>`).join('');
   return `<div class="gbar"><h2>Food library</h2><a class="btn" href="#foods/new">New food</a></div>
-    <p class="fintro">Foods you enter yourself, with their recipe if you like. Share one and everyone can add it to their plan. “Add to plan” puts it in a day’s off-plan list and the rest of the day rebalances around it.</p>
+    <p class="fintro">Foods you enter yourself, with their recipe if you like. Share one and everyone can add it to their plan. “Add to plan” puts it in a meal or the off-plan list of any day, and the rest of the day rebalances around it. On the Day page you’ll also find them under “+ Add a food…” in every meal.</p>
     <div class="ftools"><input id="f-q" type="search" placeholder="Search foods and recipes" aria-label="Search foods" value="${esc(fQuery)}">
       <div class="seg" role="group" aria-label="Show">${seg}</div></div>
     <div id="f-list" class="flist"></div>`;
@@ -61,9 +61,17 @@ function fAddForm(f){
   return `<form class="fadd" id="f-addform" data-id="${f.id}">
     <label class="f"><span class="lbl">Day</span><input id="f-adate" type="date" value="${esc(a.date)}" required></label>
     <label class="f"><span class="lbl">${ul}</span><input id="f-aqty" type="number" inputmode="decimal" min="0" step="${f.unit==='each'?'0.5':'1'}" value="${esc(a.qty)}" required></label>
+    <label class="f fwhere"><span class="lbl">Where</span><select id="f-awhere">${fWhereOpts(a.date,a.where)}</select></label>
     <span class="ml fprev" id="f-aprev">${fMacros(m)}</span>
     <div class="factions"><button class="btn" type="submit">Add to plan</button><button class="ghost" type="button" data-fa="cancel">Cancel</button></div>
   </form>`;
+}
+
+/* the meals of that day (as saved, or as the plan would start it), plus the off-plan list */
+function fWhereOpts(date,sel){
+  let meals=[];
+  if(isDate(date)){try{meals=S.days[date]?S.days[date].meals:planFor(wdOf(date),'omelette',false);}catch{meals=[];}}
+  return `<option value="off">Off plan</option>`+meals.map((m,mi)=>`<option value="${mi}"${String(mi)===String(sel)?' selected':''}>Meal ${esc(m.id)} – ${esc(m.name)}</option>`).join('');
 }
 
 /* ---------- add / edit ---------- */
@@ -100,7 +108,7 @@ async function fDelete(id){
   const f=fById(id);if(!f)return;
   if(!confirm(f.mine?`Delete “${f.name}” from your library? Days you've already added it to keep it.`:`Delete “${f.name}”${f.by?' (shared by '+f.by+')':''} from the library for everyone?`))return;
   try{await api('DELETE','/api/foods/'+id);}catch(e){if(!e.signedOut)alert(e.message);return;}
-  LIB=LIB.filter(x=>x.id!==id);LIBV++;fMsg=`Deleted “${f.name}”.`;
+  LIB=LIB.filter(x=>x.id!==id);libRegister();fMsg=`Deleted “${f.name}”.`;
   if(location.hash==='#foods')renderFoodList();else go('foods');
 }
 
@@ -109,15 +117,17 @@ document.addEventListener('click',e=>{
   const b=e.target.closest('[data-fa]');if(!b||view!=='foods')return;
   const a=b.dataset.fa;fMsg='';
   if(a==='filter'){fFilter=b.dataset.v;document.querySelectorAll('[data-fa=filter]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderFoodList();}
-  else if(a==='add'){const f=fById(+b.dataset.id);fAdding={id:f.id,date:S.cur,qty:libDefault(f.unit)};renderFoodList();const q=$('#f-aqty');if(q)q.focus();}
+  else if(a==='add'){const f=fById(+b.dataset.id);fAdding={id:f.id,date:S.cur,qty:libDefault(f.unit),where:'off'};renderFoodList();const q=$('#f-aqty');if(q)q.focus();}
   else if(a==='cancel'){fAdding=null;renderFoodList();}
   else if(a==='del'){fDelete(+b.dataset.id);}
 });
 document.addEventListener('input',e=>{
   if(view!=='foods')return;
   if(e.target.id==='f-q'){fQuery=e.target.value;renderFoodList();}
+  else if(fAdding&&e.target.id==='f-awhere'){fAdding.where=e.target.value;}
   else if(fAdding&&(e.target.id==='f-aqty'||e.target.id==='f-adate')){
     fAdding[e.target.id==='f-aqty'?'qty':'date']=e.target.value;
+    if(e.target.id==='f-adate'){fAdding.where='off';$('#f-awhere').innerHTML=fWhereOpts(fAdding.date,'off');}
     const f=fById(fAdding.id);if(f&&e.target.id==='f-aqty')$('#f-aprev').innerHTML=fMacros(libMac({u:f.unit,per:f},+e.target.value||0));
   }
 });
@@ -127,6 +137,7 @@ document.addEventListener('submit',async e=>{
     e.preventDefault();const f=fById(+e.target.dataset.id),date=$('#f-adate').value,qty=+$('#f-aqty').value||0;
     if(!f)return;
     if(!isDate(date)||!(qty>0)){alert('Pick a day and an amount above 0.');return;}
-    fAdding=null;await addFoodToDay(f,date,qty);
+    const w=$('#f-awhere').value;
+    fAdding=null;await addFoodToDay(f,date,qty,w==='off'?null:+w);
   }
 });
