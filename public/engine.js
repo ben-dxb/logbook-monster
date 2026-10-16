@@ -183,17 +183,21 @@ function gauss(M,r){
   for(let i=n-1;i>=0;i--){let s=A[i][n];for(let j=i+1;j<n;j++)s-=A[i][j]*x[j];x[i]=s/(A[i][i]||1e-12);}
   return x;
 }
+/* Which protein the protein target is measured against: 'total' (every food) or 'direct' (meat, eggs, dairy, whey).
+   An account setting (S.pBasis); off-plan food counts as no direct protein. */
+function pKey(){return typeof S!=='undefined'&&S.pBasis==='direct'?'d':'p';}
 /* Move the unlocked amounts as little as possible (in % terms) while hitting the day targets.
    Calories and carbs are matched; protein is only pulled up if it falls short; fat only pulled down if it goes over. */
 function solveWith(day,items,free,on){
+  const pk=pKey(), key=m=>m==='p'?pk:m;
   const tgt=MAC.map(m=>+day.targets[m]||0);
   const cw=[0.01,0.1,0.3,0.05].map((x,j)=>on[j]?x:0);
   let active=free.slice(); const pinned=new Map(); let sol=null;
   for(let iter=0;iter<25&&active.length;iter++){
     const fixed=sum(items.filter(i=>!active.includes(i)).map(i=>macOf(i.f,pinned.has(i)?pinned.get(i):i.g))
       .concat(day.off.map(o=>({k:+o.k||0,p:+o.p||0,c:+o.c||0,f:+o.f||0}))));
-    const b=MAC.map((m,j)=>tgt[j]-fixed[m]);
-    const A=MAC.map(m=>active.map(i=>FOODS[i.f][m]/100));
+    const b=MAC.map((m,j)=>tgt[j]-fixed[key(m)]);
+    const A=MAC.map(m=>active.map(i=>FOODS[i.f][key(m)]/100));
     const n=active.length, M=[], r=[];
     for(let a=0;a<n;a++){
       M.push(new Array(n).fill(0));
@@ -235,7 +239,7 @@ function solve(day,held,opts={}){
     out=solveWith(day,items,free,on);
     const t=sum(items.map(i=>macOf(i.f,out.has(i)?out.get(i):i.g)).concat(day.off.map(o=>({k:+o.k||0,p:+o.p||0,c:+o.c||0,f:+o.f||0}))));
     let changed=false;
-    if(!opts.protect&&!on[1]&&t.p<(+day.targets.p||0)-3){on[1]=1;changed=true;}
+    if(!opts.protect&&!on[1]&&t[pKey()]<(+day.targets.p||0)-3){on[1]=1;changed=true;}
     if(!on[3]&&t.f>(+day.targets.f||0)+0.5){on[3]=1;changed=true;}
     if(!changed)break;
   }

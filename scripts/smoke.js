@@ -47,6 +47,15 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
       expect(/Reese/.test(await pg.textContent('#offlist')), 'snack should survive reload');
       expect(await pg.inputValue('#wt') === '80.5', 'weight should survive reload');
+      /* protein driver: switch auto-balance to direct protein, it sticks across a reload, then back to total */
+      if (first) {
+        await pg.click('[data-act=pbasis][data-v=direct]');
+        await pg.waitForFunction(() => /Direct protein min/.test(document.querySelector('#sum').textContent) && /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
+        await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
+        expect(await pg.getAttribute('[data-act=pbasis][data-v=direct]', 'aria-pressed') === 'true', 'direct protein setting should survive reload');
+        await pg.click('[data-act=pbasis][data-v=total]');
+        await pg.waitForFunction(() => /Protein min/.test(document.querySelector('#sum').textContent) && !/Direct protein min/.test(document.querySelector('#sum').textContent), null, { timeout: 5000 });
+      }
       await pg.click('a[data-view=history]'); await pg.waitForSelector('#v-history:not([hidden]) .cell.logged');
       await pg.click('a[data-view=weight]'); await pg.waitForSelector('#v-weight:not([hidden]) #chart svg');
       /* gym: make a workout, log two sets, edit one, look at chart, records and sessions */
