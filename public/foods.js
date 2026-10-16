@@ -25,7 +25,7 @@ async function renderFoods(args){
 /* ---------- the list ---------- */
 function fListPage(){
   const seg=[['all','All'],['mine','Mine'],['shared','Shared']].map(([v,l])=>`<button type="button" data-fa="filter" data-v="${v}" aria-pressed="${fFilter===v}">${l}</button>`).join('');
-  return `<div class="gbar"><h2>Food library</h2><a class="btn" href="#foods/new">New food</a></div>
+  return `<div class="gbar"><h2>Meal Planner</h2><a class="btn" href="#foods/new">New food</a></div>
     <p class="fintro">Foods you enter yourself, with their recipe if you like. Share one and everyone can add it to their plan. “Add to plan” puts it in a day’s off-plan list and the rest of the day rebalances around it.</p>
     <div class="ftools"><input id="f-q" type="search" placeholder="Search foods and recipes" aria-label="Search foods" value="${esc(fQuery)}">
       <div class="seg" role="group" aria-label="Show">${seg}</div></div>
