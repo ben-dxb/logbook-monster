@@ -10,7 +10,7 @@ const http = require('node:http');
 const { DatabaseSync } = require('node:sqlite');
 
 const [PORT, AI_PORT] = require('./_ports').freePorts(2);
-/* Stands in for OpenRouter: answers with the pose written in the picture's bytes ("pose:back"), or junk */
+/* Stands in for OpenRouter: answers with the pose and pose type written in the picture's bytes ("pose:back style:back_relaxed"), or junk */
 const aiSeen = [];
 const fakeAi = http.createServer((req, res) => {
   let body = '';
@@ -18,9 +18,9 @@ const fakeAi = http.createServer((req, res) => {
   req.on('end', () => {
     const j = JSON.parse(body); aiSeen.push(j);
     const img = Buffer.from(j.messages[1].content[1].image_url.url.split(',')[1], 'base64').toString('latin1');
-    const m = /pose:(\w+)/.exec(img);
+    const m = /pose:(\w+)/.exec(img), st = /style:(\w+)/.exec(img);
     res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ model: 'test/vision', choices: [{ message: { content: JSON.stringify({ pose: m ? m[1] : 'upside-down' }) } }] }));
+    res.end(JSON.stringify({ model: 'test/vision', choices: [{ message: { content: JSON.stringify({ pose: m ? m[1] : 'upside-down', style: st ? st[1] : 'flexy' }) } }] }));
   });
 });
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -76,7 +76,8 @@ test('progress photos: upload, catalog by date, edit, private to their owner, fi
   const ann = await signIn('ann@example.com'), bob = await signIn('bob@example.com');
   let r = await ann('GET', '/api/photos');
   assert.deepStrictEqual(r.body.photos, []);
-  assert.deepStrictEqual(r.body.poses, ['front', 'side', 'back', 'other']);
+  assert.deepStrictEqual(r.body.poses, ['front', 'left', 'right', 'back', 'other']);
+  assert.deepStrictEqual(r.body.styles, ['relaxed', 'front_relaxed', 'back_relaxed', 'front_double_biceps', 'back_double_biceps', 'most_muscular']);
 
   r = await ann('POST', '/api/photos?date=2026-09-01&pose=front&note=%20%20fasted%20%20', jpeg('a'));
   assert.strictEqual(r.status, 200);
@@ -164,28 +165,40 @@ test('progress photos: removing an account removes its pictures', async () => {
 test('progress photos: the AI tags the pose, from the thumbnail, only when asked to save', async () => {
   const ann = await signIn('ann@example.com'), other = await signIn('admin@example.com');
   assert.strictEqual((await ann('GET', '/api/photos')).body.ai, true);
-  const p = (await ann('POST', '/api/photos?date=2026-10-05&pose=other&note=gym', jpeg('pose:front'))).body;
+  const p = (await ann('POST', '/api/photos?date=2026-10-05&pose=other&note=gym', jpeg('pose:front style:most_muscular'))).body;
+  assert.strictEqual(p.style, '', 'no pose type until one is set');
   aiSeen.length = 0;
 
   /* just asking: the answer comes back, nothing is saved */
   let r = await ann('POST', `/api/photos/${p.id}/ai-pose`, {});
   assert.strictEqual(r.status, 200);
-  assert.strictEqual(r.body.pose, 'front');
-  assert.strictEqual(r.body.photo.pose, 'other');
+  assert.deepStrictEqual([r.body.pose, r.body.style], ['front', 'most_muscular']);
+  assert.deepStrictEqual([r.body.photo.pose, r.body.photo.style], ['other', '']);
   assert.match(aiSeen[0].messages[1].content[1].image_url.url, /^data:image\/jpeg;base64,/);
-  assert.match(aiSeen[0].messages[0].content, /"front" \| "back" \| "side" \| "other"/);
+  assert.match(aiSeen[0].messages[0].content, /"front" \| "back" \| "left" \| "right" \| "other"/);
+  assert.match(aiSeen[0].messages[0].content, /"front_double_biceps" \| "back_double_biceps" \| "most_muscular"/);
 
   /* the thumbnail is what is sent once there is one */
-  await ann('PUT', `/api/photos/${p.id}/thumb`, jpeg('pose:back'));
+  await ann('PUT', `/api/photos/${p.id}/thumb`, jpeg('pose:back style:back_double_biceps'));
   r = await ann('POST', `/api/photos/${p.id}/ai-pose`, { save: true });
-  assert.deepStrictEqual({ pose: r.body.pose, saved: r.body.photo.pose, note: r.body.photo.note, date: r.body.photo.date },
-    { pose: 'back', saved: 'back', note: 'gym', date: '2026-10-05' });
-  assert.strictEqual((await ann('GET', '/api/photos')).body.photos.find(x => x.id === p.id).pose, 'back');
+  assert.deepStrictEqual({ pose: r.body.pose, saved: r.body.photo.pose, style: r.body.photo.style, note: r.body.photo.note, date: r.body.photo.date },
+    { pose: 'back', saved: 'back', style: 'back_double_biceps', note: 'gym', date: '2026-10-05' });
+  const got = (await ann('GET', '/api/photos')).body.photos.find(x => x.id === p.id);
+  assert.deepStrictEqual([got.pose, got.style], ['back', 'back_double_biceps']);
 
-  /* an answer that isn't a pose counts as other */
+  /* left and right side */
+  await ann('PUT', `/api/photos/${p.id}/thumb`, jpeg('pose:left style:relaxed'));
+  r = await ann('POST', `/api/photos/${p.id}/ai-pose`, {});
+  assert.deepStrictEqual([r.body.pose, r.body.style], ['left', 'relaxed']);
+  await ann('PUT', `/api/photos/${p.id}/thumb`, jpeg('pose:right style:relaxed'));
+  assert.strictEqual((await ann('POST', `/api/photos/${p.id}/ai-pose`, {})).body.pose, 'right');
+
+  /* an answer that isn't a pose counts as other; one that isn't a pose type, as none – and the old "side" isn't an answer */
+  await ann('PUT', `/api/photos/${p.id}/thumb`, jpeg('pose:side'));
+  assert.strictEqual((await ann('POST', `/api/photos/${p.id}/ai-pose`, {})).body.pose, 'other');
   await ann('PUT', `/api/photos/${p.id}/thumb`, jpeg('no-hint'));
   r = await ann('POST', `/api/photos/${p.id}/ai-pose`, { save: true });
-  assert.strictEqual(r.body.pose, 'other');
+  assert.deepStrictEqual([r.body.pose, r.body.style, r.body.photo.style], ['other', '', '']);
 
   /* whose pose it is: the AI's once it tags it (keeping it on an edit), the person's once they change it, and
      a photo uploaded for the AI to tag counts as the AI's even before it answers */
@@ -193,8 +206,15 @@ test('progress photos: the AI tags the pose, from the thumbnail, only when asked
   assert.strictEqual(p.poseAi, false);
   r = await ann('PUT', `/api/photos/${p.id}`, { date: '2026-10-05', pose: 'other', note: 'gym 2' });
   assert.strictEqual(r.body.poseAi, true);
-  r = await ann('PUT', `/api/photos/${p.id}`, { date: '2026-10-05', pose: 'side', note: 'gym 2' });
-  assert.strictEqual(r.body.poseAi, false);
+  r = await ann('PUT', `/api/photos/${p.id}`, { date: '2026-10-05', pose: 'other', style: 'most_muscular', note: 'gym 2' });
+  assert.deepStrictEqual([r.body.style, r.body.poseAi], ['most_muscular', false], 'changing the pose type makes it the person\'s');
+  await ann('PUT', `/api/photos/${p.id}/thumb`, jpeg('no-hint'));
+  assert.strictEqual((await ann('POST', `/api/photos/${p.id}/ai-pose`, { save: true })).body.photo.poseAi, true);
+  r = await ann('PUT', `/api/photos/${p.id}`, { date: '2026-10-05', pose: 'right', note: 'gym 2' });
+  assert.deepStrictEqual([r.body.pose, r.body.style, r.body.poseAi], ['right', '', false], 'a pose type left out keeps the one there is');
+  r = await ann('PUT', `/api/photos/${p.id}`, { date: '2026-10-05', pose: 'side', style: 'relaxed', note: 'gym 2' });
+  assert.deepStrictEqual([r.body.pose, r.body.style], ['side', 'relaxed'], 'older photos may keep "side"');
+  assert.strictEqual((await ann('PUT', `/api/photos/${p.id}`, { date: '2026-10-05', pose: 'left', style: 'side_chest' })).status, 400);
   assert.strictEqual((await ann('POST', '/api/photos?date=2026-10-06&pose=other&ai=1', jpeg('x'))).body.poseAi, true);
 
   /* nobody else can have someone's photo read */

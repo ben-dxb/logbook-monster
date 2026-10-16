@@ -22,7 +22,7 @@ const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const r0=x=>Math.round(x), r1=x=>(Math.round(x*10)/10).toFixed(1);
 const gEmpty=t=>`<p class="empty">${t}</p>`;
-const P_NAME={front:'Front',side:'Side',back:'Back',other:'Other'};
+const P_NAME={front:'Front',left:'Left side',right:'Right side',side:'Side',back:'Back',other:'Other'};
 const pSrc=p=>`${SHARED.base}/api/photos/${p.id}/file?v=${encodeURIComponent(p.v)}`;
 const pThumb=p=>p.tv?`${SHARED.base}/api/photos/${p.id}/thumb?v=${encodeURIComponent(p.tv)}`:pSrc(p);
 const pPoseName=p=>P_NAME[p]||p;

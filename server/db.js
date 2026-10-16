@@ -211,4 +211,10 @@ if (!db.prepare('PRAGMA table_info(photos)').all().some(c => c.name === 'pose_ai
   db.exec('ALTER TABLE photos ADD COLUMN pose_ai INTEGER NOT NULL DEFAULT 0');
 }
 
+/* Added later: style is the pose type (relaxed, front_double_biceps… – STYLES in photos.js), '' when not set.
+   Poses also gained left and right; older 'side' photos keep 'side'. */
+if (!db.prepare('PRAGMA table_info(photos)').all().some(c => c.name === 'style')) {
+  db.exec("ALTER TABLE photos ADD COLUMN style TEXT NOT NULL DEFAULT ''");
+}
+
 module.exports = db;
