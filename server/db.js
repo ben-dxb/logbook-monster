@@ -142,6 +142,13 @@ CREATE TABLE IF NOT EXISTS supplement_log (
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS supplement_log_day ON supplement_log(user_id, date);
+/* Supplements an account follows on the Timeline's trend chart ("Trend" ticked in the supplements module), by
+   name, so library and free-text log entries with the same name count together. */
+CREATE TABLE IF NOT EXISTS supplement_trends (
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name       TEXT NOT NULL COLLATE NOCASE,
+  PRIMARY KEY (user_id, name)
+);
 /* Progress photos: the image files live on disk in config.photoDir under random names (file, and a small
    thumb made in the browser); this keeps who owns them, the date taken, the pose and a note. */
 CREATE TABLE IF NOT EXISTS photos (

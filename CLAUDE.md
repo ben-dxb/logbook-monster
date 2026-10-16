@@ -51,6 +51,10 @@
   shown by date (filter by pose or by bodyweight near a chosen weight, jump to a date) and side by side
   (`#photos/compare/<id>/<id>`, two photos picked in the catalog; "Find one at N kg" swaps in the closest-weight photo). The browser shrinks each to a JPEG (dropping EXIF) and sends a thumbnail
   after it; files live on disk in `PHOTO_DIR` (default `photos/` next to the database), only their details in SQLite.
+- `server/timeline.js` / `public/timeline.js` – the Timeline (`#timeline`, `#timeline/<date>` opens a day's card in a `<dialog>`): one day's food,
+  weight, latest photo of each pose, supplements (that day + the 14-day regime) and gym sets; trend series (macros, weight, volume, Epley e1RM per
+  exercise and a strength index, plus supplements with "Trend" ticked – `supplement_trends`, by name) toggled on the chart; `POST /api/timeline/summary`
+  sends weekly averages and correlations of the shown metrics to the AI.
 - `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by tests.
 - Secrets live only in `.env` on the server; never send them to the client or commit them.
 - Strict CSP: no inline scripts or `style=` attributes in HTML.

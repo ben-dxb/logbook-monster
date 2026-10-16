@@ -22,6 +22,7 @@
       <a href="#foods" data-view="foods">Food Library</a>
       <a href="#supps" data-view="supps">Supplements</a>
       <a href="#photos" data-view="photos">Photos</a>
+      <a href="#timeline" data-view="timeline">Timeline</a>
     </nav>
     <details class="acct" id="acct">
       <summary><span id="who">Account</span></summary>
@@ -196,6 +197,12 @@
     <div id="p-body" class="gbody"></div>
   </section>
 
+  <!-- ===================== TIMELINE ===================== -->
+  <section id="v-timeline" class="view" hidden>
+    <div id="t-body" class="gbody"></div>
+  </section>
+  <dialog id="t-card" class="tcard" aria-labelledby="t-ctitle"><div id="t-cbody" class="tcbody"></div></dialog>
+
   <!-- ===================== ADMIN =====================
        One page, two scopes: #account (account admin – anyone, their own plan, week, targets and foods)
        and #admin (super admin – the app defaults everyone starts from, AI key, people, email).
@@ -324,5 +331,6 @@
 <script src="/foods.js"></script>
 <script src="/supps.js"></script>
 <script src="/photos.js"></script>
+<script src="/timeline.js"></script>
 </body>
 </html>

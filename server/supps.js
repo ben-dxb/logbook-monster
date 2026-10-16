@@ -27,9 +27,15 @@ const q = {
   logPut: db.prepare('UPDATE supplement_log SET date = ?, supplement_id = ?, name = ?, amount = ?, unit = ?, note = ? WHERE user_id = ? AND id = ?'),
   logDel: db.prepare('DELETE FROM supplement_log WHERE user_id = ? AND id = ?'),
   logAll: db.prepare(`SELECT ${LOG} FROM supplement_log WHERE user_id = ? ORDER BY date, id`),
-};
 
-const MAX_SUPPS = 300, MAX_LOG = 50000;
+  trends: db.prepare('SELECT name FROM supplement_trends WHERE user_id = ? ORDER BY name'),
+  trendCount: db.prepare('SELECT COUNT(*) AS n FROM supplement_trends WHERE user_id = ?'),
+  trendAdd: db.prepare('INSERT OR IGNORE INTO supplement_trends (user_id, name) VALUES (?, ?)'),
+  trendDel: db.prepare('DELETE FROM supplement_trends WHERE user_id = ? AND name = ?'),
+};
+const trendsOf = user => q.trends.all(user.id).map(r => r.name);
+
+const MAX_SUPPS = 300, MAX_LOG = 50000, MAX_TRENDS = 30;
 const UNITS = ['g', 'mg', 'mcg', 'IU', 'ml', 'drops', 'capsules', 'tablets', 'softgels', 'scoops', 'servings'];
 const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const isDate = s => typeof s === 'string' && DATE_RE.test(s) && !isNaN(Date.parse(s + 'T00:00:00Z'));
@@ -93,7 +99,21 @@ function view(r, user) {
 const router = express.Router();
 const send = (res, e) => { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); };
 
-router.get('/', (req, res) => res.json({ supplements: q.list.all(req.user.id).map(r => view(r, req.user)), units: UNITS }));
+router.get('/', (req, res) => res.json({ supplements: q.list.all(req.user.id).map(r => view(r, req.user)), units: UNITS, trends: trendsOf(req.user) }));
+
+/* "Trend" box: follow a supplement (by name) on the Timeline's chart. Declared before /:id. */
+router.put('/trend', (req, res) => {
+  try {
+    if (!isObj(req.body)) throw fail('Send a name');
+    const name = line(req.body.name, 200, 'Name');
+    if (!name) throw fail('Send a name');
+    if (req.body.on) {
+      if (q.trendCount.get(req.user.id).n >= MAX_TRENDS) throw fail(`You can follow ${MAX_TRENDS} supplements on the trend chart at most`);
+      q.trendAdd.run(req.user.id, name);
+    } else q.trendDel.run(req.user.id, name);
+    res.json({ trends: trendsOf(req.user) });
+  } catch (e) { send(res, e); }
+});
 
 router.post('/', (req, res) => {
   try {
@@ -157,6 +177,7 @@ router.delete('/:id', (req, res) => {
 const exportFor = user => ({
   library: q.mine.all(user.id).map(r => ({ ...r, public: !!r.public })),
   log: q.logAll.all(user.id),
+  trends: trendsOf(user),
 });
 
-module.exports = { router, exportFor, UNITS };
+module.exports = { router, exportFor, trendsOf, UNITS };
