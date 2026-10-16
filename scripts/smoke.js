@@ -288,6 +288,7 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await pg.waitForFunction(() => /Added 1 photo /.test(document.querySelector('#p-list').textContent), null, { timeout: 10000 });
         const big = await pg.evaluate(async () => (await api('GET', '/api/photos')).photos.find(p => p.note === 'smoke start'));
         expect(big && big.tv && big.size < 1500000, 'uploaded photo should be shrunk and have a thumbnail');
+        expect(big.pose === 'other' && !(await pg.locator('#p-pose').count()), 'without AI there is no pose to pick on upload and photos go in as Other');
       }
       expect(await pg.locator('#p-list .pday').count() === 2 && await pg.locator('#p-list .ptile').count() === 3, 'catalog should show 3 photos over 2 days');
       await pg.waitForFunction(() => [...document.querySelectorAll('#p-list .ptile img')].every(i => i.complete && i.naturalWidth > 0), null, { timeout: 5000 });
@@ -314,6 +315,7 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.fill('#p-nearkg', ''); await pg.uncheck('#p-near');
       await pg.waitForFunction(() => document.querySelectorAll('#p-list .pday').length === 2);
       expect(first === !(await pg.locator('#p-aibtn').count()), '"Tag poses with AI" only once AI is set up');
+      if (!first) expect(await pg.locator('#p-pose').inputValue() === 'ai', 'with AI set up, uploads default to "Let AI tell"');
       await pg.fill('#p-jump', '2026-09-04'); await pg.waitForSelector('#p-d-2026-09-01.hit');
       /* pick two photos in the catalog and compare them, older on the left */
       await pg.click('#p-selbtn'); await pg.waitForSelector('#p-selbar:not([hidden])');

@@ -49,7 +49,7 @@ const EXT = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' }
 function meta(b) {
   const o = b || {};
   if (!isDate(o.date)) throw fail('Pick the date the photo was taken');
-  const pose = o.pose == null || o.pose === '' ? 'front' : o.pose;
+  const pose = o.pose == null || o.pose === '' ? 'other' : o.pose;
   if (!POSES.includes(pose)) throw fail(`Pick a pose: ${POSES.join(', ')}`);
   const note = String(o.note == null ? '' : o.note).replace(/\s+/g, ' ').trim();
   if (note.length > 200) throw fail('Note is too long (200 characters at most)');
