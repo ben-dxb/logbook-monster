@@ -47,7 +47,8 @@
 - `server/supps.js` / `public/supps.js` – supplements: a library (usual amount + unit, private or shared, like foods) and a
   per-day log (`#supps`), each entry picked from the library or typed as free text, with an amount and a unit (g, mg, mcg, IU…).
 - `server/photos.js` / `public/photos.js` – progress photos (`#photos`): each account's own pictures with a date, pose and note,
-  shown by date and side by side (`#photos/compare`). The browser shrinks each to a JPEG (dropping EXIF) and sends a thumbnail
+  shown by date (filter by pose or by bodyweight near a chosen weight, jump to a date) and side by side
+  (`#photos/compare/<id>/<id>`, two photos picked in the catalog; "Find one at N kg" swaps in the closest-weight photo). The browser shrinks each to a JPEG (dropping EXIF) and sends a thumbnail
   after it; files live on disk in `PHOTO_DIR` (default `photos/` next to the database), only their details in SQLite.
 - `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by tests.
 - Secrets live only in `.env` on the server; never send them to the client or commit them.
