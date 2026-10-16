@@ -177,6 +177,13 @@ also download their own data from the account menu.
 - Invite links carry a random token (only its SHA-256 is stored), run out after 7 days and are
   void once used or replaced. The SMTP password is kept on the server and never sent back.
 
+## Working on it
+
+Changes come in as pull requests into `main`. One Claude Code session, the merge master
+(`session_01Esfggck8VJzAvQMTdXhUdR`, "Logbook-monster Merge Master – Do Not Archive"), is in charge of
+`main`: it checks every PR for conflicts, reviews it, runs `npm run check` on the merged result and merges.
+Other sessions send their PRs to it rather than merging themselves – see `CLAUDE.md`.
+
 ## Layout
 
 ```
