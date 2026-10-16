@@ -9,7 +9,7 @@
    any without one. Uses helpers from app.js and gym.js (gHead, gEmpty). */
 
 let PHOTOS=null, PPOSES=['front','side','back','other'], PWT={};
-let pPose='all', pDate=todayStr(), pUpPose='front', pMsg='', pTok=0, pBusy=false;
+let pPose='all', pDate=todayStr(), pUpPose='ai', pMsg='', pTok=0, pBusy=false;
 let pSel=false, pPick=[];                          /* picking photos to compare, and the ones picked (up to 2) */
 let pAi=false, pAiBusy=false;                     /* AI set up (an admin's OpenRouter key), and a "Tag with AI" run going */
 let pUseExif=true;                                /* date each photo from its own data (the date picked for any without one) */
@@ -99,13 +99,13 @@ function pCatalogPage(){
     <form id="p-form" class="panel sform">
       <label class="f swide"><span class="lbl">Photos</span><input id="p-file" type="file" accept="image/*" multiple required></label>
       <label class="f"><span class="lbl">${pUseExif?'Date if a photo has none':'Date taken'}</span><input id="p-date" type="date" required value="${pDate}" max="${todayStr()}"></label>
-      <label class="f"><span class="lbl">Pose</span><select id="p-pose">${pPoseOptions(pAi||pUpPose!=='ai'?pUpPose:'front',true)}</select></label>
+      ${pAi?`<label class="f"><span class="lbl">Pose</span><select id="p-pose">${pPoseOptions(pUpPose,true)}</select></label>`:''}
       <label class="tog swide"><input type="checkbox" id="p-exif"${pUseExif?' checked':''}> Date each photo from its own data (when it was taken)</label>
       <label class="f swide"><span class="lbl">Note (optional)</span><input id="p-note" maxlength="200" placeholder="e.g. morning, fasted, after the cut"></label>
       <p id="p-pick" class="sub swide" role="status"></p>
       <p id="p-err" class="aderr swide" role="alert" hidden></p>
       <div class="factions swide"><button class="btn" type="submit">Upload</button><span id="p-state" class="sub" role="status"></span></div>
-      <p class="sub swide">Pick as many as you like, up to 5 GB at a time. Only you can see your photos. They’re made smaller before upload and the camera’s details, location included, are left out.${pAi?' With “Let AI tell”, the small version of each photo goes to the AI service set up for this app to pick the pose.':''}</p>
+      <p class="sub swide">Pick as many as you like, up to 5 GB at a time. Only you can see your photos. They’re made smaller before upload and the camera’s details, location included, are left out.${pAi?' With “Let AI tell”, the small version of each photo goes to the AI service set up for this app to pick the pose.':' They go in under Other – open a photo to set its pose.'}</p>
     </form>
     <div class="ptools">
       <div class="seg" role="group" aria-label="Pose">${seg}</div>
@@ -238,13 +238,14 @@ async function pPicked(){
 async function pUpload(form){
   if(pBusy)return;
   const err=$('#p-err'), st=$('#p-state'), btn=form.querySelector('button[type=submit]');
-  const files=[...$('#p-file').files], date=$('#p-date').value, pick=$('#p-pose').value, note=$('#p-note').value.trim();
+  const files=[...$('#p-file').files], date=$('#p-date').value, pick=$('#p-pose')?$('#p-pose').value:'other', note=$('#p-note').value.trim();
   const byAi=pick==='ai', pose=byAi?'other':pick, useExif=pUseExif;
+  const unset=byAi||!$('#p-pose');                  /* no pose picked (AI off: they go in as Other) – not set by hand, so "Tag poses with AI" takes them later */
   err.hidden=true;
   if(!files.length){err.textContent='Pick one or more photos.';err.hidden=false;return;}
   if(!isDate(date)){err.textContent=useExif?'Pick a date for any photos without one of their own.':'Pick the date the photos were taken.';err.hidden=false;return;}
   const bad=pTooMany(files);if(bad){err.textContent=bad;err.hidden=false;return;}
-  pBusy=true;btn.disabled=true;pDate=date;pUpPose=pick;
+  pBusy=true;btn.disabled=true;pDate=date;if(pAi)pUpPose=pick;
   const n=files.length, many=n>1, fails=[], dates=new Set();
   let done=0, started=0, aiMiss=0, own=0, stop=null;
   const say=t=>{st.textContent=t;};
@@ -257,7 +258,7 @@ async function pUpload(form){
       try{
         const big=await pShrink(f,P_MAX,0.86), small=await pShrink(f,P_THUMB,0.8);
         if(stop)return;
-        let p=await pSend('POST',`/api/photos?${new URLSearchParams({date:d,pose,note,...(byAi?{ai:'1'}:{})})}`,big);
+        let p=await pSend('POST',`/api/photos?${new URLSearchParams({date:d,pose,note,...(unset?{ai:'1'}:{})})}`,big);
         try{p=await pSend('PUT',`/api/photos/${p.id}/thumb`,small);}catch(e){if(e.signedOut)throw e;}   /* the catalog falls back to the full picture */
         PHOTOS.push(p);done++;dates.add(d);if(when[i].own)own++;
         if(byAi){
@@ -287,7 +288,7 @@ async function pUpload(form){
   }finally{pBusy=false;}
   pSort();
   if(view!=='photos'||location.hash.replace(/^#/,'').split('/')[1])return;
-  if(err.hidden){form.reset();$('#p-date').value=pDate;$('#p-pose').value=pUpPose;$('#p-exif').checked=pUseExif;$('#p-pick').textContent='';}
+  if(err.hidden){form.reset();$('#p-date').value=pDate;if($('#p-pose'))$('#p-pose').value=pUpPose;$('#p-exif').checked=pUseExif;$('#p-pick').textContent='';}
   st.textContent='';btn.disabled=false;renderPhotoList();
 }
 

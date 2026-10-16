@@ -149,7 +149,9 @@ test('progress photos: upload, catalog by date, edit, private to their owner, fi
 test('progress photos: removing an account removes its pictures', async () => {
   const admin = await signIn('admin@example.com'), bob = await signIn('bob@example.com');
   const before = files().length;
-  assert.strictEqual((await bob('POST', '/api/photos?date=2026-10-10', jpeg('bob'))).status, 200);
+  const up = await bob('POST', '/api/photos?date=2026-10-10', jpeg('bob'));
+  assert.strictEqual(up.status, 200);
+  assert.strictEqual(up.body.pose, 'other', 'no pose given goes in as other, not front');
   assert.strictEqual(files().length, before + 1);
   const db = new DatabaseSync(env.DB_PATH);
   const { id } = db.prepare("SELECT id FROM users WHERE email = 'bob@example.com'").get();

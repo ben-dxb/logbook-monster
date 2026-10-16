@@ -38,19 +38,27 @@ or Google.
   the name, type and recipe (OpenRouter, the super admin's key, 40 an hour per account); those values
   are flagged ⚑ and tapping a flag shows the source, workings, confidence and model. Typing your
   own number removes its flag.
-- **Account admin** (everyone) – your own baseline: upload a meal plan (CSV or JSON) or edit it
-  in place, download it, choose which weekdays are training or rest, set day targets, and edit or
-  add foods. Only what you change is stored; everything else follows the app defaults, and
-  **Go back to the app defaults** drops your changes. Each change takes effect from a date you pick
-  (today by default, or a later date to schedule it); days before it keep the plan they had, and
-  **Plan changes** lists them to edit or delete. Days already saved keep their own amounts.
+- **Account admin** (everyone) – your own meal plan; nothing in it comes from anyone else's. A new
+  account starts with no plan. A plan is a set of **day templates** (training day, rest day, a refeed
+  day – up to 12, named as you like), each with its own meals and targets, plus your foods, which
+  template each weekday uses, and whether sauces / green veg count. Add, rename, duplicate or delete
+  templates and edit everything in place, or upload a plan (CSV or JSON) and download it again. Each
+  change takes effect from a date you pick (today by default, or a later date to schedule it); days
+  before it keep the plan they had, and **Plan changes** lists them to edit or delete. Days already
+  saved keep their own amounts. On the Daily Tracker any one day can follow another template.
   **Read a PDF with AI** sends your coach's plan PDF (or a photo) to a model on OpenRouter and
-  loads the meals, amounts, new foods and targets into the page for you to check and save
-  (12 reads an hour per account, using the super admin's key).
-- **Super admin** (`ADMIN_EMAILS` only; if that's empty, the first account created) – changes
-  that affect how the app works for everyone: the same editor for the **app defaults** every
-  account starts from, the OpenRouter API key (kept on the server, never shown again; or set
-  `OPENROUTER_API_KEY` in `.env`), **People** and **Email**.
+  loads its day templates, meals, amounts, new foods and targets into the page for you to check and
+  save (12 reads an hour per account, using the super admin's key).
+  **Share with your coach** makes a link your coach opens with no password or account: your
+  recent days (calories against target, macros, weight) and the Timeline – trends and each day's
+  food, weight, photos, supplements and gym sets – read only. Pick how long it stays live (an hour
+  to a year, or until a date); it stops at once when it runs out or you **Switch off** it.
+- **Super admin** (`ADMIN_EMAILS` only; if that's empty, the first account created) – settings for
+  the whole app, in tabs: **AI** (the OpenRouter API key – kept on the server, never shown again; or
+  set `OPENROUTER_API_KEY` in `.env` – and a model for each kind of AI task), **People** and **Email**.
+  There are no app-wide meal plan defaults: when this version first starts, every account that had
+  used the app gets the plan it was using (the old built-in plan, the old app defaults and its own
+  changes) as its own, so nothing changes for it.
 - **Account menu** – download all your data as JSON, set/change password, sign out.
 
 ## Run it locally
@@ -172,6 +180,16 @@ also download their own data from the account menu.
 - All data is scoped to the signed-in user; input is validated on the server.
 - Invite links carry a random token (only its SHA-256 is stored), run out after 7 days and are
   void once used or replaced. The SMTP password is kept on the server and never sent back.
+- Coach links carry a random 256-bit secret (only its SHA-256 is stored, so the link is shown once),
+  answer only reads of that account's day summaries, weights, Timeline and photos, are checked on
+  every request against their expiry, and send `no-store`, `noindex` and `no-referrer`.
+
+## Working on it
+
+Changes come in as pull requests into `main`. One Claude Code session, the merge master
+(`session_01Esfggck8VJzAvQMTdXhUdR`, "Logbook-monster Merge Master – Do Not Archive"), is in charge of
+`main`: it checks every PR for conflicts, reviews it, runs `npm run check` on the merged result and merges.
+Other sessions send their PRs to it rather than merging themselves – see `CLAUDE.md`.
 
 ## Layout
 

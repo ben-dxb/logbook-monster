@@ -13,7 +13,6 @@ const isDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||'')&&!isNaN(parse(s));
 const fmtLong=s=>parse(s).toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 const fmtShort=s=>parse(s).toLocaleDateString(undefined,{day:'numeric',month:'short'});
 const fmtMonth=s=>parse(s).toLocaleDateString(undefined,{month:'long',year:'numeric'});
-const TYPE_NAME={T:'Training day',R:'Rest day',S:'Saturday training'};
 
 /* ---------- state ---------- */
 let S={days:{},cur:todayStr()};            /* days: loaded day documents by date; pud & snackOv are account settings */
@@ -66,7 +65,7 @@ function migrate(D){
 }
 const pending=new Map(); let saveTimer=null, saveState='idle', saveErr='', inFlight=false;
 const settingsJson=()=>JSON.stringify({pud:S.pud,snackOv:S.snackOv||{},pBasis:S.pBasis||'total'});
-function summaryOf(date,D){useDefs(date);const t=dayTotals(D);return {...t,targets:{...D.targets},type:typeOn(date)};}
+function summaryOf(date,D){useDefs(date);const t=dayTotals(D),type=D.type||typeOn(date);return {...t,targets:{...D.targets},type,tname:templateName(type)};}
 
 /* Called after every render: anything that differs from what the server has gets queued. */
 function persist(){
@@ -142,6 +141,8 @@ const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const r0=x=>Math.round(x), r1=x=>(Math.round(x*10)/10).toFixed(1);
 function day(){useDefs(S.cur);if(!S.days[S.cur])S.days[S.cur]=freshDay(wdOf(S.cur));return S.days[S.cur];}
+/* a day's template name, short enough for the week strip and the calendar */
+function tplLabel(d){const D=S.days[d],s=SUMS[d];return (s&&s.tname)||tnameOn(d,(D&&D.type)||(s&&s.type)||typeOn(d));}
 const wd=()=>wdOf(S.cur);
 function showLoading(on){$('#loading').hidden=!on;}
 
@@ -181,7 +182,7 @@ function boxHtml(D,mi,box,label){
   return `<div class="box"><div class="bh"><span class="lbl">${label}</span>${items.length?macLine(t):''}</div>
     ${items.map((i,ii)=>itemRow(D,mi,box,ii,i)).join('')||'<p class="empty">Nothing here</p>'}
     ${box==='p'?items.filter(i=>i.g>0&&FOODS[i.f].order!=null).map(i=>packHtml(D,mi,i)).join(''):''}
-    ${D.meals[mi].eaten?'':`<div class="add"><select id="a-${S.cur}-${mi}-${box}" data-add="${box}" data-m="${mi}" aria-label="Add a food"><option value="">+ Add a food…</option>${(box==='x'?FAT_SWAPS:Object.keys(FOODS).filter(f=>!FAT_SWAPS.includes(f)&&!isLib(f))).map(f=>`<option value="${f}">${esc(FOODS[f].n)}</option>`).join('')}${libOptions()}</select></div>`}
+    ${D.meals[mi].eaten?'':`<div class="add"><select id="a-${S.cur}-${mi}-${box}" data-add="${box}" data-m="${mi}" aria-label="Add a food"><option value="">+ Add a food…</option>${(box==='x'?FAT_SWAPS:Object.keys(FOODS).filter(f=>!FAT_SWAPS.includes(f)&&planFood(f))).map(f=>`<option value="${f}">${esc(FOODS[f].n)}</option>`).join('')}${libOptions()}</select></div>`}
   </div>`;
 }
 function chip(m,val,tgt){
@@ -197,7 +198,7 @@ function chip(m,val,tgt){
 function renderWeek(){
   const mon=addDays(S.cur,-wd()), t=todayStr();
   $('#tabs').innerHTML=DAYS.map((n,i)=>{const d=addDays(mon,i);
-    return `<button class="tab${d===S.cur?' on':''}${d===t?' today':''}${LOGGED.has(d)?' logged':''}" data-act="day" data-d="${d}" aria-pressed="${d===S.cur}" aria-label="${esc(fmtLong(d))}${LOGGED.has(d)?', saved':''}"><small>${n}</small><b>${parse(d).getDate()}</b><small>${typeOn(d)==='R'?'Rest':'Train'}</small></button>`;}).join('');
+    return `<button class="tab${d===S.cur?' on':''}${d===t?' today':''}${LOGGED.has(d)?' logged':''}" data-act="day" data-d="${d}" aria-pressed="${d===S.cur}" aria-label="${esc(fmtLong(d))}${LOGGED.has(d)?', saved':''}"><small>${n}</small><b>${parse(d).getDate()}</b><small class="tn">${esc(tplLabel(d))}</small></button>`;}).join('');
 }
 function renderStatus(){
   if(view!=='day')return;
@@ -217,9 +218,9 @@ function renderWeightInline(){
 }
 function render(){
   if(view!=='day')return;
-  const D=day(), T=dayTotals(D), tg=D.targets, t=TYPE[wd()], td=todayStr();
+  const D=day(), T=dayTotals(D), tg=D.targets, t=D.type||TYPE[wd()], td=todayStr();
   $('#dtitle').textContent=S.cur===td?'Today':S.cur===addDays(td,-1)?'Yesterday':S.cur===addDays(td,1)?'Tomorrow':parse(S.cur).toLocaleDateString(undefined,{weekday:'long'});
-  $('#dsub').textContent=`${fmtLong(S.cur)} · ${TYPE_NAME[t]}`;
+  $('#dsub').textContent=fmtLong(S.cur)+(templateName(t)?` · ${templateName(t)}`:'');
   $('#todaybtn').hidden=S.cur===td;
   $('#datepick').value=S.cur;
   renderWeek();
@@ -236,14 +237,15 @@ function render(){
   $('#left').hidden=D.auto;
   const w=warnings(D);
   $('#warn').innerHTML=w.map(x=>`<li>${esc(x)}</li>`).join(''); $('#warn').hidden=!w.length;
+  /* the day template this day follows: the weekday's, or another one picked for this day */
   $('#opts').innerHTML=`
-    ${CUSTOM_PLAN&&CUSTOM_PLAN[t]?'':`<div class="seg" role="group" aria-label="Breakfast"><span class="lbl">Breakfast</span>
-      <button data-act="bf" data-v="omelette" aria-pressed="${D.bf==='omelette'}">Omelette</button>
-      <button data-act="bf" data-v="eggs" aria-pressed="${D.bf==='eggs'}">Egg &amp; egg white</button></div>`}
-    ${t==='S'&&!(CUSTOM_PLAN&&CUSTOM_PLAN.S)?`<label class="tog"><input type="checkbox" id="pie" data-act="pie"${D.pie?' checked':''}> Lemon pie Saturday</label>`:''}
+    ${TEMPLATES.length>1?`<label class="tog dtpl"><span class="lbl">Day template</span><select id="dtpl" data-act="dtpl" aria-label="Day template">${TEMPLATES.map(x=>`<option value="${esc(x.id)}"${x.id===t?' selected':''}>${esc(x.name)}${x.id===TYPE[wd()]?' (this weekday)':''}</option>`).join('')}${hasTemplate(t)?'':'<option value="" selected>(no longer in your plan)</option>'}</select></label>`:''}
     <label class="tog"><input type="checkbox" id="auto" data-act="auto"${D.auto?' checked':''}> Auto-balance the day</label>
     <button class="ghost" data-act="reset">${resetArmed?'Tap again to reset':'Reset day to plan'}</button>`;
-  $('#meals').innerHTML=D.meals.map((m,mi)=>{
+  $('#meals').innerHTML=(!TEMPLATES.length&&!D.meals.length?`<section class="panel noplan"><h2>No meal plan yet</h2>
+      <p>Your meal plan is your own: your foods, day templates (training day, rest day…), targets and which days you train. Set it up on the
+      <a href="#account">Account admin</a> page – upload your coach's plan (CSV, JSON or a PDF read with AI) or build it there. Until then you can still log food below.</p>
+      <p><a class="btn" href="#account">Set up my meal plan</a></p></section>`:'')+D.meals.map((m,mi)=>{
     const mt=sum([...m.p,...m.c,...(m.x||[])].map(i=>macOf(i.f,i.g)));
     const all=[...m.p,...m.c,...(m.x||[])];const saved=!m.dirty&&all.length&&all.every(i=>i.lock);
     const eat=m.eaten?`<span class="chip ok">✓ Eaten</span><button class="ghost" data-act="uneat" data-m="${mi}">Undo eaten</button>`
@@ -353,7 +355,7 @@ function renderHistory(){
     const st=s?dayStatus(s):null;
     const label=[fmtLong(d), s?`${r0(s.k)} kcal, ${r0(s.p)}g protein${st.txt?', '+st.txt:''}`:'not logged', w!=null?`weight ${w} kg`:''].filter(Boolean).join(', ');
     h+=`<button class="cell${out?' out':''}${d===t?' today':''}${s?' logged':''}" data-act="open" data-d="${d}" aria-label="${esc(label)}">
-      <span class="dn">${parse(d).getDate()}<small>${((s&&s.type)||typeOn(d))==='R'?'Rest':'Train'}</small></span>
+      <span class="dn">${parse(d).getDate()}<small>${esc(tplLabel(d))}</small></span>
       ${s?`<span class="kc"><i class="dot ${st.cls}">${st.sym}</i>${r0(s.k)}</span><span class="pr">P ${r0(s.p)}g</span>`:''}
       ${w!=null?`<span class="wg">${w} kg</span>`:''}
     </button>`;
@@ -457,8 +459,6 @@ document.addEventListener('click',e=>{
   else if(a==='savenow'){saveNow();}
   else if(a==='unlog'){unlogDay();}
   else if(a==='retry'){clearTimeout(saveTimer);saveState='pending';flush();}
-  else if(a==='bf'){if(day().meals[0].eaten){alert('Breakfast is marked eaten – undo that first to change it.');return;}
-    act(D=>{if(D.bf===b.dataset.v)return;D.bf=b.dataset.v;const p=planFor(wd(),D.bf,D.pie);D.meals[0]=p[0];D.base[0]=clone(p[0]);});}
   else if(a==='del'){editMeal(+b.dataset.m,b.dataset.b,(D,m)=>{m[b.dataset.b].splice(+b.dataset.i,1);});}
   else if(a==='save'){saveMeal(+b.dataset.m);}
   else if(a==='undo'){undoMeal(+b.dataset.m);}
@@ -468,7 +468,7 @@ document.addEventListener('click',e=>{
   else if(a==='pbasis'){if(S.pBasis!==b.dataset.v){S.pBasis=b.dataset.v;act(()=>{});}}
   else if(a==='reset'){if(!resetArmed){resetArmed=true;render();return;}resetArmed=false;
     if(anyEaten(day())&&!confirm('Some meals are marked eaten. Reset the whole day to the plan anyway? That undoes them.')){render();return;}
-    S.days[S.cur]=freshOn(S.cur);render();}
+    S.days[S.cur]=freshOn(S.cur,day().type);render();}
 });
 /* pack weights: update the portion as you type, without re-rendering under your fingers */
 function setPack(el){const D=day(),f=el.dataset.f;D.packs=D.packs||{};const p=D.packs[f]=D.packs[f]||{};
@@ -487,8 +487,11 @@ document.addEventListener('change',e=>{
   else if(a==='amt'){editMeal(+el.dataset.m,el.dataset.b,D=>{const i=get(D);i.g=Math.max(0,+el.value||0);i.a=i.g;i.ed=true;});}
   else if(a==='swap'){editMeal(+el.dataset.m,el.dataset.b,D=>{const h=new Set();const i=get(D),box=D.meals[+el.dataset.m][el.dataset.b];const mac=el.dataset.b==='p'?'p':el.dataset.b==='x'?'f':'c';
       const need=FOODS[i.f][mac]*i.g/100;placeMatched(box,el.value,mac,need,h,i);h.forEach(x=>{x.ed=true;});});}
-  else if(a==='pie'){if(anyEaten(day())){alert('Some meals are marked eaten – undo them first to switch the Saturday plan.');el.checked=!el.checked;return;}
-    act(D=>{D.pie=el.checked;D.meals=planFor(wd(),D.bf,D.pie);D.base=clone(D.meals);D.targets={...(D.pie?PIE_TARGETS:COACH.S)};});}
+  else if(a==='dtpl'){const D=day();if(!el.value||el.value===D.type)return;
+    if(anyEaten(D)){alert('Some meals are marked eaten – undo them first to switch this day to another template.');render();return;}
+    if(D.meals.some(m=>m.dirty)&&!confirm('This day has unsaved meal changes. Switch template anyway? They’re dropped.')){render();return;}
+    /* start the day again from that template; off-plan food and pack weights stay */
+    const N=freshDay(wd(),el.value);N.off=D.off;if(D.packs)N.packs=D.packs;S.days[S.cur]=N;render();}
   else if(a==='auto'){act(D=>{D.auto=el.checked;});}
   else if(a==='mcalc'){calcMeal(+el.dataset.m,el.checked);}
   else if(el.dataset.add){const mi=+el.dataset.m,box=el.dataset.add,f=el.value;if(!f||!FOODS[f])return;
@@ -530,7 +533,7 @@ $('#offform').addEventListener('submit',async e=>{
   act(D=>{if(food)libAdd(D,food,1);else D.off.push(o);});
   ['o-n','o-k','o-p','o-c','o-f'].forEach(id=>$('#'+id).value='');$('#o-save').checked=false;
 });
-$('#coach').addEventListener('click',()=>act(D=>{D.targets={...(D.pie?PIE_TARGETS:COACH[TYPE[wd()]])};}));
+$('#coach').addEventListener('click',()=>act(D=>{const t=hasTemplate(D.type)?D.type:TYPE[wd()];D.targets={...(t?COACH[t]:{k:0,p:0,c:0,f:0})};}));
 
 /* ---------- account ---------- */
 window.addEventListener('hashchange',route);

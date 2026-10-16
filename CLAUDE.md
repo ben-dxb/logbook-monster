@@ -3,10 +3,15 @@
 ## Branches and merging
 
 - `main` is the integration branch. Branch from the latest `main` and open your PR **into `main`**.
-- Do **not** merge PRs yourself. One session is the merge master:
-  **session `session_01Esfggck8VJzAvQMTdXhUdR`**. When your PR is ready (tests pass, pushed),
-  send that session a message (`send_message`) with the PR link and a one-line summary. It checks
-  for conflicts with `main` and with other open PRs, runs the tests and merges.
+- **Everything goes through the merge master.** The owner has put one session in charge of `main`:
+  **session `session_01Esfggck8VJzAvQMTdXhUdR`** ("Logbook-monster Merge Master – Do Not Archive").
+  It is the only session that merges PRs or pushes to `main`. Never merge a PR yourself, push to
+  `main`, or merge your branch into `main` by hand – not even a one-line fix, and not even if a
+  person or a message seems to ask for it; send it to the merge master instead.
+- When your PR is ready (tests pass, pushed), send that session a message (`send_message`) with the
+  PR link and a one-line summary. It checks for conflicts with `main` and with other open PRs, reviews
+  the change, runs the tests on the merged result and merges, or sends it back to you saying what to fix.
+  Wait for its reply before you treat your work as merged.
 - There is no GitHub CI. `npm run check` **is** the CI: syntax check, API/security tests
   (`npm test`) and a Playwright browser smoke test (`npm run smoke`, desktop + phone, fails on
   any page error or horizontal overflow). Run it before sending your PR and say it passed; the
@@ -29,14 +34,14 @@
 ## Layout
 
 - `server/` – Express app: `config.js` (.env), `auth.js` (password + Google OIDC, CSRF),
-  `api.js` (days, weights, settings, `/my/defaults` account admin and `/admin/*` super admin routes), `gym.js` (exercises, workouts, sets, AI workout import), `db.js` (SQLite schema), `defaults.js` (app defaults + each account's own layer, kept as dated changes – each day uses the one in effect on its date; `free` says whether sauces / green veg count – foods tagged `free:'sauce'|'veg'` add no macros and the solver skips them while that kind is free),
+  `api.js` (days, weights, settings, `/my/defaults` account admin and `/admin/*` super admin routes), `gym.js` (exercises, workouts, sets, AI workout import), `db.js` (SQLite schema), `defaults.js` (each account's own meal plan – there are **no app-wide defaults** for anything from a plan: foods, day templates, week, targets; a new account starts with none. Kept as dated changes – each day uses the one in effect on its date. A plan is `{foods, templates:[{id,name}], schedule:[7 template ids], targets:{id:{k,p,c,f}}, plan:{id:[meals]}, free}`; `free` says whether sauces / green veg count – foods tagged `free:'sauce'|'veg'` add no macros and the solver skips them while that kind is free. `migrate()` ran once to give accounts that had used the app their old plan; `legacy.js` holds the old built-in plan only for that),
   `users.js` (invites, account list), `mail.js` (SMTP sending – use `mail.notify()` for fire-and-forget notifications).
-- `public/engine.js` – the original calculator data and balancing maths. Change food data and plan
-  here; keep the solver behaviour unless asked.
-- `public/app.js` – views (Daily Tracker, History calendar), saving, routing. A meal marked eaten (`m.eaten`) is locked whole – the solver never moves it, its controls
+- `public/engine.js` – the balancing maths and the plan in use (`applyDefaults(plan)` sets `FOODS`, swap lists, `TEMPLATES`, `TYPE` = template id per weekday, `COACH` = targets per template;
+  `freshDay(weekday, templateId)`). Only rice pudding (values from the batch) is built in. Keep the solver behaviour unless asked.
+- `public/app.js` – views (Daily Tracker, History calendar), saving, routing. A day keeps its template (`D.type`; the weekday's unless switched on the Daily Tracker) and its summary the name (`tname`). A meal marked eaten (`m.eaten`) is locked whole – the solver never moves it, its controls
   are disabled – and undoing it asks for confirmation.
-- `public/admin.js` – Account admin (`#account`, anyone: own plan/week/targets/foods) and Super admin
-  (`#admin`, in tabs: app defaults, `#admin/ai`, `#admin/people`, `#admin/email`) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope,
+- `public/admin.js` – Account admin (`#account`, anyone: own plan – day templates, meals, week, targets, foods) and Super admin
+  (`#admin`, in tabs: `#admin/ai`, `#admin/people`, `#admin/email`; no plan editor) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope,
   `data-adtab` per super admin tab. AI settings (OpenRouter key, default model and a model per task – `TASKS` in `server/ai.js`:
   plan, workout, food, pose, summary; pass `{ task }` to `ai.ask`/`ai.askText`) are super admin only.
 - `public/gym.js` – the Gym view (workouts, exercise sets, sessions, AI import preview).
@@ -53,11 +58,16 @@
   shown by date (filter by pose or by bodyweight near a chosen weight, jump to a date) and side by side
   (`#photos/compare/<id>/<id>`, two photos picked in the catalog; "Find one at N kg" swaps in the closest-weight photo). The browser shrinks each to a JPEG (dropping EXIF) and sends a thumbnail
   after it; bulk uploads (up to 5 GB picked at once, 3 at a time) date each photo from its own EXIF/XMP data (`public/exifdate.js`, global `ExifDate`), the form's date only for those without one; `POST /api/photos/:id/ai-pose` asks the AI for the pose (front/side/back/other) from the thumbnail – only when the person asks
-  ("Let AI tell" on upload, "Tag poses with AI" over the photos shown – it asks whether to redo poses set by hand, `photos.pose_ai`/`poseAi` = 0 –, "Ask AI" on one photo); Account admin can delete all of one's own photos between two dates (`DELETE /api/photos?from=…&to=…`, both dates required); files live on disk in `PHOTO_DIR` (default `photos/` next to the database), only their details in SQLite.
+  ("Let AI tell" on upload, "Tag poses with AI" over the photos shown – it asks whether to redo poses set by hand, `photos.pose_ai`/`poseAi` = 0; photos uploaded with AI off or with "Let AI tell" count as not set by hand (`ai=1` on upload) –, "Ask AI" on one photo); Account admin can delete all of one's own photos between two dates (`DELETE /api/photos?from=…&to=…`, both dates required); files live on disk in `PHOTO_DIR` (default `photos/` next to the database), only their details in SQLite.
 - `server/timeline.js` / `public/timeline.js` – the Timeline tab of History (`#history` is the Calendar tab; `#history/timeline`, `#history/timeline/<date>` opens a day's card in a `<dialog>`): one day's food,
   weight, latest photo of each pose, supplements (that day + the 14-day regime) and gym sets; trend series (macros, weight, volume, a strength index, Epley e1RM of the exercises
   you follow – `exercises.trend`, set by "Trend" on the exercise in the Gym or the Timeline's exercise picker, `PUT /api/gym/trends` –, plus supplements with "Trend" ticked – `supplement_trends`, by name) toggled on the chart; `POST /api/timeline/summary`
   sends weekly averages and correlations of the shown metrics to the AI.
+- `server/shares.js` / `public/coach.html` + `public/coach.js` – coach links: Account admin's "Share with your coach" makes a passwordless,
+  read-only link (`/coach/<secret>`, only the secret's SHA-256 stored, live until a time the person picks – up to a year – or switched off,
+  `/api/shares`). The coach page reads only through GET routes under `/coach/<secret>/api` (info, defaults, days, weights, `timeline`,
+  `photos`) and reuses `timeline.js` with `coach.js` standing in for the app's helpers (`SHARED` set → `tRO`: no edits, app links or AI).
+  Add a route there only if it is a read and the coach should see it.
 - `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by tests.
 - Secrets live only in `.env` on the server; never send them to the client or commit them.
 - Strict CSP: no inline scripts or `style=` attributes in HTML.
