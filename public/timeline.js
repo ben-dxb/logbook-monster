@@ -4,7 +4,7 @@
    (Epley estimated one-rep max, plus the exercises you pick), volume and the supplements you follow ("Trend" in the supplements module),
    each metric switched on and off, with an AI read of how they relate.
    The Timeline tab of History: #history/timeline, #history/timeline/2026-10-15 (that day's card). The numbers come from /api/timeline (server/timeline.js).
-   Uses helpers from app.js, gym.js (gEmpty) and photos.js (pThumb, pPoseName).
+   Uses helpers from app.js, gym.js (gEmpty) and photos.js (pThumb, pLabel).
    A coach link (coach.html) runs this too, read only: coach.js stands in for those helpers and sets SHARED. */
 
 const T_KEY='logbook-monster-timeline';
@@ -232,7 +232,7 @@ function tCardBody(r){
   const weight=w?`<p class="tbig">${w.kg.toFixed(1)}<i>kg</i></p><p class="sub">${w.ago?`Last weigh-in, ${esc(fmtShort(w.date))} (${tAgo(w.ago)})`:'Weighed in that day'}${w.avg7!=null&&!w.ago?` · 7-day average ${w.avg7.toFixed(1)} kg`:''}</p>`
     :gEmpty('No weigh-ins up to this day.');
   /* photos: the latest of each pose up to this day */
-  const photos=r.photos.length?`<div class="tcphotos">${r.photos.map(p=>`<a class="ptile" href="${tRO?pSrc(p):'#photos/'+p.id}"${tRO?' target="_blank" rel="noopener"':''}><img src="${pThumb(p)}" alt="${esc(pPoseName(p.pose)+' photo, '+fmtLong(p.date))}" loading="lazy" decoding="async"><span>${esc(pPoseName(p.pose))} · ${esc(p.ago?fmtShort(p.date):'that day')}</span></a>`).join('')}</div>`
+  const photos=r.photos.length?`<div class="tcphotos">${r.photos.map(p=>`<a class="ptile" href="${tRO?pSrc(p):'#photos/'+p.id}"${tRO?' target="_blank" rel="noopener"':''}><img src="${pThumb(p)}" alt="${esc(pLabel(p)+' photo, '+fmtLong(p.date))}" loading="lazy" decoding="async"><span>${esc(pLabel(p))} · ${esc(p.ago?fmtShort(p.date):'that day')}</span></a>`).join('')}</div>`
     :gEmpty('No progress photos up to this day.');
   /* supplements */
   const sp=r.supps;
