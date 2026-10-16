@@ -14,10 +14,12 @@ let adAi=null, adAiBusy=false, adNotes=[];
 const adOpen=new Set();                      /* food editors left open */
 
 /* ---------- defaults from the server: the app's, with this account's own layer on top ---------- */
-function setDefaults(d){DEFS=d||{mine:null};applyDefaults(layerDefaults(DEFS,DEFS.mine));}
+/* applyDefaults resets FOODS, so the food library goes back in after it */
+function adApplyInUse(){applyDefaults(layerDefaults(DEFS,DEFS.mine));libRegister();}
+function setDefaults(d){DEFS=d||{mine:null};adApplyInUse();}
 
 /* ---------- draft ---------- */
-function adEditable(id){return id!=='pudding';}       /* pudding values come from the batch on the Day page */
+function adEditable(id){return id!=='pudding'&&!isLib(id);}   /* pudding values come from the batch on the Day page; library foods belong to people */
 /* the editable values a defaults layer gives (applies it for a moment, then puts what's in use back) */
 function adSnap(cfg){
   applyDefaults(cfg);
@@ -30,7 +32,7 @@ function adLoad(){
   AD_BASE=adSnap(adScope==='app'?{}:app);
   AD={...adSnap(adScope==='app'?app:layerDefaults(DEFS,DEFS.mine)),
     custom:!!(adScope==='app'?DEFS.plan:DEFS.mine&&DEFS.mine.plan)};
-  applyDefaults(layerDefaults(DEFS,DEFS.mine));
+  adApplyInUse();
   adSaved=JSON.stringify(adPayload());
 }
 const adBaseRecord=id=>clone(AD_BASE.foods[id]);

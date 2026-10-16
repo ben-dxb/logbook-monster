@@ -87,6 +87,24 @@ CREATE TABLE IF NOT EXISTS sets (
 );
 CREATE INDEX IF NOT EXISTS sets_exercise ON sets(user_id, exercise_id, at);
 CREATE INDEX IF NOT EXISTS sets_at ON sets(user_id, at);
+/* The food library: foods people enter themselves, per 100 g, per 100 ml or per item, with an optional
+   recipe. public = 1 shares it with every account (read-only for everyone but its owner). */
+CREATE TABLE IF NOT EXISTS foods (
+  id         INTEGER PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name       TEXT NOT NULL,
+  unit       TEXT NOT NULL DEFAULT 'g',
+  k          REAL NOT NULL,
+  p          REAL NOT NULL,
+  c          REAL NOT NULL,
+  f          REAL NOT NULL,
+  recipe     TEXT NOT NULL DEFAULT '',
+  public     INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS foods_user ON foods(user_id);
+CREATE INDEX IF NOT EXISTS foods_public ON foods(public);
 /* An account's own plan, week, targets and food values, layered over the app defaults (app_config 'defaults'). */
 CREATE TABLE IF NOT EXISTS user_defaults (
   user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

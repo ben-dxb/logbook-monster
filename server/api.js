@@ -9,6 +9,7 @@ const config = require('./config');
 const mail = require('./mail');
 const users = require('./users');
 const gym = require('./gym');
+const foods = require('./foods');
 
 const q = {
   getSettings: db.prepare('SELECT data FROM settings WHERE user_id = ?'),
@@ -174,6 +175,7 @@ router.delete('/weights/:date', (req, res) => {
 });
 
 router.use('/gym', gym.router);
+router.use('/foods', foods.router);
 
 /* Everything you've stored, as one JSON file. */
 router.get('/export', (req, res) => {
@@ -187,6 +189,7 @@ router.get('/export', (req, res) => {
     days: q.allDays.all(req.user.id).map(r => ({ date: r.date, data: JSON.parse(r.data) })),
     weights: q.listWeights.all(req.user.id, '0000-01-01', '9999-12-31'),
     gym: gym.exportFor(req.user),
+    foods: foods.exportFor(req.user),
   });
 });
 

@@ -15,10 +15,11 @@
   <header class="top">
     <h1>Logbook Monster</h1>
     <nav class="views" aria-label="Views">
-      <a href="#day" data-view="day">Day</a>
+      <a href="#day" data-view="day">Food Tracker</a>
       <a href="#history" data-view="history">History</a>
       <a href="#weight" data-view="weight">Weight</a>
       <a href="#gym" data-view="gym">Gym</a>
+      <a href="#foods" data-view="foods">Meal Planner</a>
     </nav>
     <details class="acct" id="acct">
       <summary><span id="who">Account</span></summary>
@@ -84,6 +85,13 @@
         <button class="btn" type="submit">Add</button>
       </form>
       <details id="snackedit"><summary>Snack values (tap to check or correct)</summary><div id="snackvals"></div></details>
+      <h3 class="lbl">From the food library</h3>
+      <form id="libform" class="snackf" hidden>
+        <label class="f sn"><span class="lbl">Food</span><select id="ln"></select></label>
+        <label class="f sq"><span class="lbl" id="lu">Grams</span><input id="lq" type="number" inputmode="decimal" min="0" step="1" value="100"></label>
+        <button class="btn" type="submit">Add</button>
+      </form>
+      <p id="libnone" class="empty">Nothing in the food library yet. <a href="#foods/new">Add a food</a>, or tick “Save to my food library” below.</p>
       <h3 class="lbl">Something else</h3>
       <form id="offform" class="grid5">
         <label class="f"><span class="lbl">Food</span><input id="o-n" placeholder="e.g. Krispy Kreme"></label>
@@ -92,12 +100,17 @@
         <label class="f"><span class="lbl">Carbs</span><input id="o-c" type="number" inputmode="decimal" min="0" step="0.1"></label>
         <label class="f"><span class="lbl">Fat</span><input id="o-f" type="number" inputmode="decimal" min="0" step="0.1"></label>
         <button class="btn" type="submit">Add</button>
+        <label class="tog osave"><input type="checkbox" id="o-save"> Save to my food library</label>
       </form>
       <div id="offlist"></div>
     </section>
     <section class="panel" aria-labelledby="th">
       <h2 id="th">Day targets</h2>
       <p>Change these for this day only. Protein is a minimum and fat a maximum; calories and carbs are matched.</p>
+      <div class="seg pbasis" role="group" aria-label="Protein target counts"><span class="lbl">Protein target counts</span>
+        <button type="button" data-act="pbasis" data-v="total" aria-pressed="true">Total protein</button>
+        <button type="button" data-act="pbasis" data-v="direct" aria-pressed="false">Direct protein</button></div>
+      <p>Auto-balance drives protein from this. Direct protein is meat, eggs, dairy and whey only; total also counts carbs and off-plan food. Applies to every day.</p>
       <div class="grid4">
         <label class="f"><span class="lbl">kcal</span><input id="t-k" type="number" inputmode="decimal" min="0"></label>
         <label class="f"><span class="lbl">Protein g</span><input id="t-p" type="number" inputmode="decimal" min="0"></label>
@@ -106,7 +119,7 @@
         <button class="btn" id="coach" type="button">Plan targets</button>
       </div>
     </section>
-    <footer>Health Road food in cooked weights, home cooking in raw weights. Rice pudding is weighed in grams from the batch. Every change saves to your account automatically. Green/red amounts show the change from the plan.</footer>
+    <footer>Health Road food in cooked weights, home cooking in raw weights. Rice pudding is weighed in grams from the batch. Every change saves to your account automatically. Green/red amounts show the change from the plan. Health Road meat comes in sauce: weigh the pack and the box under the meat tells you how much of it to eat.</footer>
   </section>
 
   <!-- ===================== HISTORY ===================== -->
@@ -164,6 +177,11 @@
       <a href="#gym/x" data-g="x">Exercises</a>
     </nav>
     <div id="g-body" class="gbody"></div>
+  </section>
+
+  <!-- ===================== FOODS ===================== -->
+  <section id="v-foods" class="view" hidden>
+    <div id="f-body" class="gbody"></div>
   </section>
 
   <!-- ===================== ADMIN =====================
@@ -287,5 +305,6 @@
 <script src="/admin.js"></script>
 <script src="/gymcsv.js"></script>
 <script src="/gym.js"></script>
+<script src="/foods.js"></script>
 </body>
 </html>
