@@ -49,6 +49,10 @@ or Google.
   **Read a PDF with AI** sends your coach's plan PDF (or a photo) to a model on OpenRouter and
   loads its day templates, meals, amounts, new foods and targets into the page for you to check and
   save (12 reads an hour per account, using the super admin's key).
+  **Share with your coach** makes a link your coach opens with no password or account: your
+  recent days (calories against target, macros, weight) and the Timeline – trends and each day's
+  food, weight, photos, supplements and gym sets – read only. Pick how long it stays live (an hour
+  to a year, or until a date); it stops at once when it runs out or you **Switch off** it.
 - **Super admin** (`ADMIN_EMAILS` only; if that's empty, the first account created) – settings for
   the whole app, in tabs: **AI** (the OpenRouter API key – kept on the server, never shown again; or
   set `OPENROUTER_API_KEY` in `.env` – and a model for each kind of AI task), **People** and **Email**.
@@ -176,6 +180,9 @@ also download their own data from the account menu.
 - All data is scoped to the signed-in user; input is validated on the server.
 - Invite links carry a random token (only its SHA-256 is stored), run out after 7 days and are
   void once used or replaced. The SMTP password is kept on the server and never sent back.
+- Coach links carry a random 256-bit secret (only its SHA-256 is stored, so the link is shown once),
+  answer only reads of that account's day summaries, weights, Timeline and photos, are checked on
+  every request against their expiry, and send `no-store`, `noindex` and `no-referrer`.
 
 ## Working on it
 

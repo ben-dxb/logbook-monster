@@ -103,6 +103,7 @@ function renderAdmin(){
   if(!adAi)adAiLoad();
   if(!mine){if(!adSuper){adSuper=true;auLoad();amLoad();}adTabs();return;}
   if(!AD){adPick();adLoad();}
+  if(!SH)shLoad();
   adVersions();
   const numIn=(id,val,attrs,label)=>`<input id="${id}" type="number" inputmode="decimal" min="0" value="${val==null?'':val}" ${attrs} aria-label="${esc(label)}">`;
   const has=AD.templates.length>0;
@@ -538,6 +539,46 @@ $('#ad-pdel').addEventListener('submit',async e=>{
     $('#ad-pd-from').value=$('#ad-pd-to').value='';pdN=0;++pdTok;
     $('#ad-pdmsg').textContent=`Deleted ${r.deleted} photo${r.deleted===1?'':'s'}.`;}
   catch(err){if(!err.signedOut)$('#ad-pdmsg').textContent=err.message;btn.disabled=!pdN;}
+});
+
+/* ---------- Share with your coach: read-only links with no password, live until a time you pick (server/shares.js) ---------- */
+let SH=null, shNew=null;
+const shWhen=iso=>new Date(iso).toLocaleString(undefined,{day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'});
+async function shLoad(){try{SH=(await api('GET','/api/shares')).shares;}catch(e){SH=null;}shRender();}
+function shRender(){
+  $('#ad-shnew').innerHTML=shNew?`<p class="admsg">Link made – copy it now and send it to your coach. For your safety it isn’t shown again; make a new one if you lose it.</p>
+    <div class="adlink"><input id="ad-sh-link" readonly value="${esc(shNew.url)}" aria-label="Coach link"><button type="button" class="ghost" data-sh="copy">Copy link</button>${navigator.share?'<button type="button" class="ghost" data-sh="send">Send…</button>':''}</div>`:'';
+  if(!SH){$('#ad-shares').innerHTML='';return;}
+  $('#ad-shares').innerHTML=SH.length?SH.map(x=>`<div class="aduser"><span class="who"><b>${esc(x.label||'Coach link')}</b>
+      <span class="sub">${x.live?`Live until ${esc(shWhen(x.expires))}`:`Ran out ${esc(shWhen(x.expires))}`} · made ${esc(shWhen(x.created))}${x.used?` · last opened ${esc(shWhen(x.used))}`:' · not opened yet'}</span></span>
+    <span class="chip ${x.live?'ok':'bad'}">${x.live?'Live':'Ran out'}</span>
+    <span class="acts"><button type="button" class="ghost" data-sh="${x.live?'off':'del'}" data-id="${x.id}">${x.live?'Switch off':'Remove'}</button></span></div>`).join('')
+    :'<p class="sub">No coach links yet.</p>';
+}
+/* when the link runs out: a length of time from now, or the end of a picked day (this browser's time) */
+function shExpiry(){
+  const v=$('#ad-sh-for').value;
+  if(v==='date'){const d=$('#ad-sh-until').value;if(!isDate(d))return null;const t=parse(d);t.setHours(23,59,59,0);return t;}
+  const n=+v.slice(1);return new Date(Date.now()+(v[0]==='h'?n*3600000:n*86400000));
+}
+$('#ad-sh-for').addEventListener('change',()=>{const on=$('#ad-sh-for').value==='date';$('#ad-sh-untilf').hidden=!on;
+  const i=$('#ad-sh-until');i.min=todayStr();i.max=addDays(todayStr(),365);if(on&&!i.value)i.value=addDays(todayStr(),7);});
+$('#ad-share').addEventListener('submit',async e=>{
+  e.preventDefault();const msg=$('#ad-shmsg'), btn=$('#ad-sh-btn'), t=shExpiry();
+  if(!t){msg.textContent='Pick the day the link runs out.';return;}
+  btn.disabled=true;msg.textContent='';
+  try{shNew=await api('POST','/api/shares',{label:$('#ad-sh-label').value.trim(),expires:t.toISOString()});$('#ad-sh-label').value='';await shLoad();}
+  catch(err){if(!err.signedOut)msg.textContent=err.message;}
+  btn.disabled=false;
+});
+document.addEventListener('click',async e=>{
+  const b=e.target.closest('[data-sh]');if(!b)return;const a=b.dataset.sh;
+  if(a==='copy'){const i=$('#ad-sh-link');i.select();try{await navigator.clipboard.writeText(i.value);b.textContent='Copied';}catch{document.execCommand&&document.execCommand('copy');}return;}
+  if(a==='send'){try{await navigator.share({title:'My Logbook Monster',url:$('#ad-sh-link').value});}catch{}return;}
+  const x=SH&&SH.find(s=>String(s.id)===b.dataset.id);if(!x)return;
+  if(a==='off'&&!confirm(`Switch off ${x.label?`“${x.label}”`:'this link'}? It stops working straight away.`))return;
+  b.disabled=true;
+  try{await api('DELETE','/api/shares/'+x.id);shNew=null;await shLoad();}catch(err){b.disabled=false;if(!err.signedOut)alert(err.message);}
 });
 
 /* ---------- People: invites and accounts ---------- */

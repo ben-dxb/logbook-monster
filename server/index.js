@@ -8,6 +8,7 @@ const db = require('./db');
 const SqliteStore = require('./sessionStore');
 const auth = require('./auth');
 const api = require('./api');
+const shares = require('./shares');
 
 const app = express();
 app.disable('x-powered-by');
@@ -51,6 +52,8 @@ app.use(session({
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 app.use('/auth', auth.router);
 app.use('/api', api);
+/* Coach links: read only, no sign-in – the secret in the path is the key (server/shares.js). */
+app.use('/coach/:token/api', shares.coach);
 
 const pub = path.join(__dirname, '..', 'public');
 const page = file => (req, res) => res.set('Cache-Control', 'no-store').sendFile(path.join(pub, file));
@@ -58,6 +61,7 @@ const signedIn = req => !!(req.session && req.session.userId);
 
 app.get('/login', (req, res, next) => (signedIn(req) ? res.redirect('/') : page('login.html')(req, res, next)));
 app.get('/invite', page('invite.html'));
+app.get('/coach/:token', (req, res, next) => { res.set('X-Robots-Tag', 'noindex, nofollow'); page('coach.html')(req, res, next); });
 app.get(['/', '/index.html'], (req, res, next) => (signedIn(req) ? page('index.html')(req, res, next) : res.redirect('/login')));
 app.use(express.static(pub, { index: false, maxAge: config.isProd ? '1h' : 0 }));
 

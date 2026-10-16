@@ -13,6 +13,7 @@ const foods = require('./foods');
 const supps = require('./supps');
 const photos = require('./photos');
 const timeline = require('./timeline');
+const shares = require('./shares');
 
 const q = {
   getSettings: db.prepare('SELECT data FROM settings WHERE user_id = ?'),
@@ -185,6 +186,7 @@ router.use('/foods', foods.router);
 router.use('/supps', supps.router);
 router.use('/photos', photos.router);
 router.use('/timeline', timeline.router);
+router.use('/shares', shares.mine);
 
 /* Everything you've stored, as one JSON file. */
 router.get('/export', (req, res) => {
