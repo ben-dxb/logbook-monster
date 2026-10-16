@@ -307,7 +307,7 @@ function pOnePage(p){
   const newer=i>0?list[i-1]:null, older=i>=0&&i<list.length-1?list[i+1]:null;
   const nav=`<span class="pnav">${older?`<a class="nav" href="#photos/${older.id}" aria-label="Older photo">‹</a>`:''}${newer?`<a class="nav" href="#photos/${newer.id}" aria-label="Newer photo">›</a>`:''}</span>`;
   return gHead('#photos',`${pLabel(p)} · ${fmtShort(p.date)}`,nav)+`
-    <figure class="pbig"><a href="${pSrc(p)}" target="_blank" rel="noopener"><img src="${pSrc(p)}" alt="${esc(pLabel(p)+' photo, '+fmtLong(p.date))}"></a>
+    <figure class="pbig"><a class="pzoom" href="${pSrc(p)}" target="_blank" rel="noopener" title="Scroll to zoom, drag to move around, double-click to reset"><img src="${pSrc(p)}" alt="${esc(pLabel(p)+' photo, '+fmtLong(p.date))}"></a>
       <figcaption>${esc(fmtLong(p.date))}${pKg(p.date)?' · '+esc(pKg(p.date)):''}${p.note?' · '+esc(p.note):''}</figcaption></figure>
     <form id="p-eform" class="panel sform" data-id="${p.id}">
       <label class="f"><span class="lbl">Date taken</span><input id="p-edate" type="date" required value="${p.date}"></label>
@@ -423,9 +423,58 @@ function pMatch(keepId,dropId){
   pMsg='';go(`photos/compare/${keepId}/${best.p.id}`);
 }
 
+/* ---------- zoom on one photo ----------
+   The mouse wheel zooms in and out around the pointer (1× to 8×); while zoomed in, dragging moves the view and
+   a double-click goes back to the whole photo. Clicking the photo opens it full size only when it isn't zoomed. */
+let pZ=null;    /* {box, img, s, x, y} for the photo on screen; a new page makes a new one */
+const P_ZMAX=8;
+function pZoomOf(box){
+  if(!pZ||pZ.box!==box)pZ={box,img:box.querySelector('img'),s:1,x:0,y:0,drag:null,moved:false};
+  return pZ;
+}
+function pZoomSet(z,s,x,y){
+  const w=z.box.clientWidth, h=z.box.clientHeight;
+  s=Math.min(P_ZMAX,Math.max(1,s));
+  z.s=s;z.x=Math.min(0,Math.max(w-w*s,x));z.y=Math.min(0,Math.max(h-h*s,y));   /* the photo always fills the frame */
+  z.img.style.transform=s===1?'':`translate(${z.x}px,${z.y}px) scale(${s})`;
+  z.box.classList.toggle('zoomed',s>1);
+}
+document.addEventListener('wheel',e=>{
+  const box=view==='photos'&&e.target.closest('.pzoom');if(!box||e.ctrlKey)return;   /* ctrl+wheel stays the browser's page zoom */
+  e.preventDefault();
+  const z=pZoomOf(box), r=box.getBoundingClientRect(), cx=e.clientX-r.left, cy=e.clientY-r.top;
+  const dy=e.deltaMode===1?e.deltaY*16:e.deltaMode===2?e.deltaY*r.height:e.deltaY;
+  const s=Math.min(P_ZMAX,Math.max(1,z.s*Math.exp(-dy/300)));
+  pZoomSet(z,s,cx-(cx-z.x)*s/z.s,cy-(cy-z.y)*s/z.s);    /* the point under the pointer stays put */
+},{passive:false});
+document.addEventListener('pointerdown',e=>{
+  const box=view==='photos'&&e.target.closest('.pzoom');if(!box||e.button!==0)return;
+  const z=pZoomOf(box);z.moved=false;
+  if(z.s===1)return;
+  e.preventDefault();
+  z.drag={id:e.pointerId,px:e.clientX,py:e.clientY,x:z.x,y:z.y};
+  box.setPointerCapture(e.pointerId);box.classList.add('grab');
+});
+document.addEventListener('pointermove',e=>{
+  const z=pZ;if(!z||!z.drag||z.drag.id!==e.pointerId)return;
+  const dx=e.clientX-z.drag.px, dy=e.clientY-z.drag.py;
+  if(Math.abs(dx)+Math.abs(dy)>3)z.moved=true;
+  pZoomSet(z,z.s,z.drag.x+dx,z.drag.y+dy);
+});
+const pDragEnd=e=>{const z=pZ;if(!z||!z.drag||z.drag.id!==e.pointerId)return;z.drag=null;z.box.classList.remove('grab');};
+document.addEventListener('pointerup',pDragEnd);
+document.addEventListener('pointercancel',pDragEnd);
+document.addEventListener('dblclick',e=>{
+  const box=view==='photos'&&e.target.closest('.pzoom');if(!box)return;
+  e.preventDefault();pZoomSet(pZoomOf(box),1,0,0);
+});
+document.addEventListener('dragstart',e=>{if(view==='photos'&&e.target.closest('.pzoom'))e.preventDefault();});
+
 /* ---------- events ---------- */
 document.addEventListener('click',e=>{
   if(view!=='photos')return;
+  const zb=e.target.closest('.pzoom');
+  if(zb){const z=pZoomOf(zb);if(z.s>1||z.moved||e.detail>1){e.preventDefault();z.moved=false;}return;}   /* zoomed, dragged or a double-click: don't open it */
   const t=pSel&&e.target.closest('#p-list .ptile');
   if(t){e.preventDefault();pToggle(+t.dataset.pid);return;}
   const b=e.target.closest('[data-pa]');if(!b)return;

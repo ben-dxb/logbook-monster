@@ -356,6 +356,22 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       expect(pscroll <= 1, `horizontal overflow of ${pscroll}px on the photos page at ${w}px wide`);
       await pg.click('#p-d-2026-09-01 .ptile >> nth=0'); await pg.waitForSelector('#p-eform');
       await pg.waitForFunction(() => { const i = document.querySelector('.pbig img'); return i && i.complete && i.naturalWidth > 0; }, null, { timeout: 5000 });
+      if (w > 600) {
+        /* the mouse wheel zooms in on the photo, dragging moves the zoomed view, a double-click goes back */
+        const zb = await pg.locator('.pzoom').boundingBox(), zx = zb.x + zb.width / 2, zy = zb.y + zb.height / 2;
+        const zt = () => pg.evaluate(() => document.querySelector('.pzoom img').style.transform);
+        const tabs = pg.context().pages().length;
+        await pg.mouse.move(zx, zy); await pg.mouse.wheel(0, -400);
+        await pg.waitForFunction(() => /scale\((?!1\))/.test(document.querySelector('.pzoom img').style.transform));
+        const z1 = await zt();
+        await pg.mouse.down(); await pg.mouse.move(zx + 40, zy + 30, { steps: 4 }); await pg.mouse.up();
+        const z2 = await zt();
+        expect(z2 !== z1 && /scale/.test(z2), `dragging the zoomed photo should move it: ${z1} → ${z2}`);
+        expect(pg.context().pages().length === tabs, 'dragging the zoomed photo should not open it in a new tab');
+        await pg.mouse.dblclick(zx, zy);
+        expect(await zt() === '', 'a double-click should show the whole photo again');
+        await pg.mouse.move(0, 0);
+      }
       if (!first) {
         /* AI is set up by now (the key saved on the Admin page in the first pass); the AI's answer is faked here */
         await pg.route('**/api/photos/*/ai-pose', r => r.fulfill({ json: { pose: 'left', style: 'relaxed', model: 'test/vision', photo: {} } }));
