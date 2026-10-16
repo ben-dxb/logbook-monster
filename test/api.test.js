@@ -391,6 +391,39 @@ test('gym: exercises, workouts and sets belong to one account and are checked', 
   assert.ok(Array.isArray((await me.req('GET', '/api/export')).body.gym.sets));
 });
 
+test('gym: history import matches exercises by name, keeps set order and skips sets already there', async () => {
+  const me = client();
+  await me.req('GET', '/auth/config');
+  await me.req('POST', '/auth/login', { email: 'friend@example.com', password: 'longenough2' });
+  await me.req('GET', '/api/me');
+  const mine = await me.req('POST', '/api/gym/exercises', { name: 'Leg press' });
+  const sets = [
+    { name: 'leg press', reps: 10, kg: 200, note: '', at: '2026-01-02T10:00:00' },
+    { name: 'leg press', reps: 8, kg: 200, note: '', at: '2026-01-02T10:00:00' },
+    { name: 'leg press', reps: 10, kg: 200, note: 'last', at: '2026-01-02T10:00:00' },
+    { name: 'Chest fly', reps: 12, kg: 30.5, note: '', at: '2026-01-02T10:20:00' },
+  ];
+  const r = await me.req('POST', '/api/gym/import-sets', { sets });
+  assert.deepStrictEqual(r.body, { added: 4, skipped: 0, newExercises: 1 });
+  const lp = (await me.req('GET', '/api/gym/sets?exercise=' + mine.body.id)).body;
+  assert.deepStrictEqual(lp.map(s => [s.reps, s.note]), [[10, ''], [8, ''], [10, 'last']]);   /* same order as the file */
+  assert.deepStrictEqual((await me.req('POST', '/api/gym/import-sets', { sets })).body, { added: 0, skipped: 4, newExercises: 0 });
+  assert.deepStrictEqual((await me.req('POST', '/api/gym/import-sets', { sets: [...sets, { ...sets[0], at: '2026-01-03T09:00:00' }] })).body,
+    { added: 1, skipped: 4, newExercises: 0 });
+  /* one bad set and nothing in the batch is saved */
+  const bad = await me.req('POST', '/api/gym/import-sets', { sets: [{ ...sets[0], at: '2026-01-04T09:00:00' }, { ...sets[0], reps: 2.5 }] });
+  assert.strictEqual(bad.status, 400);
+  assert.match(bad.body.error, /leg press/);
+  assert.strictEqual((await me.req('GET', '/api/gym/sets?date=2026-01-04')).body.length, 0);
+  assert.strictEqual((await me.req('POST', '/api/gym/import-sets', { sets: [] })).status, 400);
+  /* the other account's history is untouched */
+  const other = client();
+  await other.req('GET', '/auth/config');
+  await other.req('POST', '/auth/login', { email: 'me@example.com', password: 'longenough1' });
+  await other.req('GET', '/api/me');
+  assert.strictEqual((await other.req('GET', '/api/gym/sets?date=2026-01-02')).body.length, 0);
+});
+
 test('security headers are set', async () => {
   const r = await fetch(BASE + '/login');
   assert.match(r.headers.get('content-security-policy'), /script-src 'self'/);

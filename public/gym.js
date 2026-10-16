@@ -7,6 +7,7 @@ let GY=null;                     /* {exercises:[{id,name,notes,sets,last}], work
 const GSETS={};                  /* exercise id -> its sets, oldest first */
 const GDAY={};                   /* date -> sets that day */
 let gSessions=null, gArgs=[], gTok=0, gTimer=null, gBackE='#gym';
+let gCsv=null;                    /* a history CSV being checked: {file, text, res, dateOrder, unit, busy, done, total} */
 let gDraft=null, gAi=null, gAiBusy=false, gMsg='', gReorder=false, gTab='sets', gShow=30, gQuick=null;
 
 /* ---------- helpers ---------- */
@@ -78,6 +79,7 @@ function gHomePage(){
     <div class="glist">
       <a class="grow gadd" href="#gym/new"><span>+ New workout…</span></a>
       ${aiRow}
+      ${gCsvRow()}
       <a class="grow" href="#gym/x"><span class="gt"><b>My exercises</b></span><span class="gc">${GY.exercises.length}</span><i class="gch">›</i></a>
       ${ws.map((w,i)=>gReorder
         ?`<div class="grow"><span class="gt"><b>${esc(w.name)}</b></span><span class="gmv"><button class="ghost" type="button" data-g="wup" data-i="${i}" aria-label="Move ${esc(w.name)} up"${i?'':' disabled'}>↑</button><button class="ghost" type="button" data-g="wdown" data-i="${i}" aria-label="Move ${esc(w.name)} down"${i<ws.length-1?'':' disabled'}>↓</button></span></div>`
@@ -85,7 +87,7 @@ function gHomePage(){
     </div>
     ${ws.length?'':'<p class="note">Make a workout for each training day – or read your coach’s plan with AI – then tap an exercise to log your sets.</p>'}
     <div id="g-msg" role="status">${gMsg?`<p class="admsg">${esc(gMsg)}</p>`:''}</div>
-    ${gAi?gAiPreview():''}`;
+    ${gAi?gAiPreview():''}${gCsvPanel()}`;
 }
 function gAiPreview(){
   const n=gAi.workouts.filter(w=>w.on).length;
@@ -267,8 +269,57 @@ async function gDayPage(d){
 function gExercisesPage(){
   return `<div class="gbar"><h2>My exercises</h2></div>
     <form id="g-newex" class="gaddex"><label class="f"><span class="lbl">Find or add</span><input id="g-find" maxlength="80" autocomplete="off" placeholder="e.g. Hack squat"></label><button class="btn" type="submit">Add</button></form>
+    <div class="glist">${gCsvRow()}</div>${gCsvPanel()}
     <div class="glist" id="g-exlist">${GY.exercises.map(e=>`<a class="grow" href="#gym/e/${e.id}" data-n="${esc(e.name.toLowerCase())}"><span class="gt"><b>${esc(e.name)}</b><small>${e.sets?`${e.sets} set${e.sets===1?'':'s'}`:'No sets yet'}</small></span><span class="gwhen">${esc(ago(e.last&&e.last.slice(0,10)))}</span><i class="gch">›</i></a>`).join('')
       ||'<p class="empty grow">No exercises yet. Add one above, or make a workout.</p>'}</div>`;
+}
+
+/* ---------- history from Setgraph (or another tracker) as CSV ---------- */
+function gCsvRow(){
+  const busy=gCsv&&gCsv.busy;
+  return `<label class="grow gadd gfile${busy?' off':''}"><span>⇪ ${busy?'Importing…':'Import history from Setgraph (CSV)…'}</span>
+    <input id="g-csvfile" type="file" accept=".csv,.txt,text/csv,text/plain"${busy?' disabled':''}></label>`;
+}
+function gCsvRead(){
+  try{gCsv.res=GymCsv.readHistory(gCsv.text,{dateOrder:gCsv.dateOrder,unit:gCsv.unit});gCsv.err='';
+    gCsv.dateOrder=gCsv.res.dateOrder;gCsv.unit=gCsv.res.unit;}
+  catch(e){gCsv.res=null;gCsv.err=e.message;}
+}
+function gCsvPanel(){
+  if(!gCsv)return '';
+  const C=gCsv, R=C.res;
+  if(C.done)return `<section class="panel gai" aria-labelledby="g-csvh"><h2 id="g-csvh">Imported ${esc(C.file)}</h2><p class="admsg" role="status">${esc(C.done)}</p>
+    <div class="gactions"><button class="ghost" type="button" data-g="csvdrop">Close</button></div></section>`;
+  if(!R)return `<section class="panel gai" aria-labelledby="g-csvh"><h2 id="g-csvh">${esc(C.file)}</h2><ul class="aderr" role="alert"><li>${esc(C.err)}</li></ul>
+    <div class="gactions"><button class="ghost" type="button" data-g="csvdrop">Close</button></div></section>`;
+  const mine=new Set(GY.exercises.map(e=>e.name.toLowerCase())), fresh=R.names.filter(n=>!mine.has(n.toLowerCase()));
+  const colNames={exercise:'Exercise',date:'Date',time:'Time',reps:'Reps',weight:'Weight',unit:'Unit',note:'Notes',label:'Label',order:'Set order'};
+  const fmtAt=a=>`${fmtShort(a.slice(0,10))} ${a.slice(0,4)} ${a.slice(11,16)}`;
+  return `<section class="panel gai" aria-labelledby="g-csvh"><h2 id="g-csvh">From ${esc(C.file)}</h2>
+    <p><b>${R.sets.length.toLocaleString()} sets</b> of ${R.names.length} exercise${R.names.length===1?'':'s'}${R.from?`, ${esc(fmtShort(R.from))} ${R.from.slice(0,4)} to ${esc(fmtShort(R.to))} ${R.to.slice(0,4)}`:''}.
+      ${R.names.length-fresh.length} match${R.names.length-fresh.length===1?'es':''} exercises you have; ${fresh.length} will be added. Sets you already have are skipped, so importing the same file again is safe.</p>
+    <p class="sub">Columns used: ${Object.entries(R.columns).map(([k,v])=>`${colNames[k]} ← “${esc(v)}”`).join(' · ')}</p>
+    ${R.dateOrderAsk||C.dateOrderAsked?`<label class="f gcsvopt"><span class="lbl">Dates like 03/04/2026 are</span><select id="g-csvorder"><option value="dmy"${C.dateOrder==='dmy'?' selected':''}>day/month (3 April)</option><option value="mdy"${C.dateOrder==='mdy'?' selected':''}>month/day (March 4)</option></select></label>`:''}
+    ${R.unitAsk||C.unitAsked?`<label class="f gcsvopt"><span class="lbl">The file doesn’t say – weights are in</span><select id="g-csvunit"><option value="kg"${C.unit==='kg'?' selected':''}>kg</option><option value="lb"${C.unit==='lb'?' selected':''}>lb (converted to kg)</option></select></label>`:''}
+    ${R.noTime?'<p class="sub">The file has dates but no times, so sets are placed at midday in file order.</p>':''}
+    ${R.sets.length?`<div class="gcsvtab" role="table" aria-label="Latest sets in the file">${R.sets.slice(-6).reverse().map(s=>`<span role="cell">${esc(fmtAt(s.at))}</span><b role="cell">${esc(s.name)}</b><span role="cell">${s.reps} × ${kgTxt(s.kg)} kg</span>`).join('')}</div><p class="sub">The latest ${Math.min(6,R.sets.length)} sets, as they will be saved.</p>`:''}
+    ${R.skipped.length?`<details class="adnotes"><summary>${R.skipped.length} row${R.skipped.length===1?'':'s'} left out</summary><ul>${R.skipped.slice(0,30).map(x=>`<li>Line ${x.line}: ${esc(x.why)}</li>`).join('')}${R.skipped.length>30?`<li>…and ${R.skipped.length-30} more</li>`:''}</ul></details>`:''}
+    <div class="gactions">${C.busy?`<span class="chip info" role="status">Importing ${C.sent.toLocaleString()} of ${R.sets.length.toLocaleString()}…</span>`
+      :`<button class="btn" type="button" data-g="csvgo"${R.sets.length?'':' disabled'}>Import ${R.sets.length.toLocaleString()} sets</button><button class="ghost" type="button" data-g="csvdrop">Discard</button>`}</div>
+    ${C.err?`<ul class="aderr" role="alert"><li>${esc(C.err)}</li></ul>`:''}
+  </section>`;
+}
+async function gCsvImport(){
+  const C=gCsv, batches=GymCsv.importBatches(C.res.sets);
+  C.busy=true;C.sent=0;C.err='';renderGym();
+  let added=0,skipped=0,fresh=0;
+  try{
+    for(const b of batches){const r=await api('POST','/api/gym/import-sets',{sets:b});added+=r.added;skipped+=r.skipped;fresh+=r.newExercises;C.sent+=b.length;renderGym();}
+    C.done=`Added ${added.toLocaleString()} set${added===1?'':'s'}${skipped?` (${skipped.toLocaleString()} you already had were skipped)`:''}${fresh?` and ${fresh} new exercise${fresh===1?'':'s'}`:''}.`;
+  }catch(e){if(e.signedOut)return;C.err=`Stopped after ${C.sent.toLocaleString()} sets: ${e.message}. Import the file again to carry on – sets already added are skipped.`;}
+  C.busy=false;Object.keys(GSETS).forEach(k=>delete GSETS[k]);gChanged();
+  try{await gLoad();}catch{}
+  renderGym();
 }
 
 /* ---------- actions ---------- */
@@ -327,6 +378,8 @@ document.addEventListener('click',async e=>{
   else if(g==='exdel'){const id=+gArgs[1],ex=exById(id);if(!ex||!confirm(`Delete ${ex.name} and all ${ex.sets} of its sets? This can’t be undone.`))return;
     try{await api('DELETE','/api/gym/exercises/'+id);delete GSETS[id];gChanged();await gLoad();go('gym/x');}catch(err){if(!err.signedOut)alert(err.message);}}
   else if(g==='aiadd'){gAiAdd();}
+  else if(g==='csvgo'){if(gCsv&&!gCsv.busy)gCsvImport();}
+  else if(g==='csvdrop'){gCsv=null;renderGym();}
   else if(g==='aidrop'){gAi=null;gMsg='';renderGym();}
 });
 document.addEventListener('input',e=>{
@@ -340,7 +393,12 @@ document.addEventListener('input',e=>{
 });
 document.addEventListener('change',e=>{
   const el=e.target;if(view!=='gym')return;
-  if(el.id==='g-aifile'){const f=el.files&&el.files[0];el.value='';if(f&&!gAiBusy)gAiRead(f);}
+  if(el.id==='g-csvfile'){const f=el.files&&el.files[0];el.value='';if(!f||(gCsv&&gCsv.busy))return;
+    if(f.size>20*1024*1024){gCsv={file:f.name,res:null,err:'That file is over 20 MB.'};renderGym();return;}
+    f.text().then(t=>{gCsv={file:f.name,text:t};gCsvRead();renderGym();},()=>{gCsv={file:f.name,res:null,err:'Couldn’t read that file.'};renderGym();});}
+  else if(el.id==='g-csvorder'&&gCsv){gCsv.dateOrder=el.value;gCsv.dateOrderAsked=true;gCsvRead();renderGym();}
+  else if(el.id==='g-csvunit'&&gCsv){gCsv.unit=el.value;gCsv.unitAsked=true;gCsvRead();renderGym();}
+  else if(el.id==='g-aifile'){const f=el.files&&el.files[0];el.value='';if(f&&!gAiBusy)gAiRead(f);}
   else if(el.dataset.g==='aion'&&gAi){gAi.workouts[+el.dataset.i].on=el.checked;renderGym();}
 });
 document.addEventListener('submit',async e=>{

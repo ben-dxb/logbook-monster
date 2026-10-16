@@ -35,6 +35,7 @@ const q = {
   sessions: db.prepare(`SELECT substr(at, 1, 10) AS date, COUNT(*) AS sets, SUM(reps * kg) AS volume,
     MIN(at) AS first, MAX(at) AS last, group_concat(DISTINCT exercise_id) AS ex
     FROM sets WHERE user_id = ? GROUP BY date ORDER BY date DESC LIMIT ?`),
+  sameSets: db.prepare('SELECT COUNT(*) AS n FROM sets WHERE user_id = ? AND exercise_id = ? AND at = ? AND reps = ? AND kg = ?'),
   allSets: db.prepare('SELECT id, exercise_id AS e, reps, kg, note, at FROM sets WHERE user_id = ? ORDER BY at, id'),
 };
 
@@ -248,6 +249,36 @@ router.post('/import', send(req => {
     }
   });
   return overview(req.user);
+}));
+
+/* History from another app's CSV (read in the browser): exercises are matched by name, new ones are created.
+   Sets already here – same exercise, time, reps and weight – are skipped, so importing a file twice is safe. */
+router.post('/import-sets', send(req => {
+  const list = isObj(req.body) && Array.isArray(req.body.sets) ? req.body.sets : null;
+  if (!list || !list.length) throw fail('Nothing to import');
+  if (list.length > 3000) throw fail('Send 3000 sets at most at a time');
+  const before = q.countExercises.get(req.user.id).n;
+  return tx(() => {
+    const ids = new Map(), clean = [];
+    list.forEach((b, i) => {
+      if (!isObj(b)) throw fail(`Set ${i + 1} isn’t an object`);
+      const key = text(b.name, 80, 'Exercise name', true).toLowerCase();
+      if (!ids.has(key)) ids.set(key, exerciseCreate(req.user, b.name));
+      try { clean.push(cleanSet({ ...b, exercise: ids.get(key) }, req.user)); }
+      catch (e) { throw fail(`${String(b.name).slice(0, 40)} on ${String(b.at).slice(0, 19)}: ${e.message}`); }
+    });
+    if (q.countSets.get(req.user.id).n + clean.length > MAX.sets) throw fail('That would be more sets than this app keeps');
+    /* in file order; for each identical set, skip as many as are already stored */
+    const have = new Map();
+    let added = 0, skipped = 0;
+    for (const s of clean) {
+      const k = [s.e, s.at, s.reps, s.kg].join('|');
+      if (!have.has(k)) have.set(k, q.sameSets.get(req.user.id, s.e, s.at, s.reps, s.kg).n);
+      if (have.get(k) > 0) { have.set(k, have.get(k) - 1); skipped++; continue; }
+      q.addSet.run(req.user.id, s.e, s.reps, s.kg, s.note, s.at); added++;
+    }
+    return { added, skipped, newExercises: q.countExercises.get(req.user.id).n - before };
+  });
 }));
 
 /* For the data export. */

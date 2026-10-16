@@ -21,6 +21,11 @@ or Google.
   or a photo/screenshot to OpenRouter (the admin's key) and shows the workouts it found to check
   before adding them; exercises with the same name as yours keep their history. Each account can
   run 12 AI reads an hour.
+  **Import history from Setgraph (CSV)** (on Workouts and Exercises) reads a history export from
+  Setgraph – or Strong, Hevy and most trackers, as columns are found by their headings – in the
+  browser, shows what it found (sets, exercises, date range, rows it couldn't read, and asks
+  day/month order or kg/lb when the file doesn't say), then imports it. Exercises are matched to
+  yours by name; sets you already have are skipped, so importing a newer export later is safe.
 - **Admin** (admins only) – the baseline every new day starts from: upload a meal plan (CSV or
   JSON) or edit it in place, download it, choose which weekdays are training or rest, set day
   targets, and edit or add foods. Days already saved keep their own amounts. Admins are the

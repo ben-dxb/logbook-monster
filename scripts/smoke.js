@@ -76,6 +76,20 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.click('#g-tabs a[data-g=sessions]'); await pg.waitForSelector('#g-body a.grow[href^="#gym/d/"]');
       await pg.click('#g-body a.grow[href^="#gym/d/"]'); await pg.waitForSelector('#g-body .gday');
       await pg.click('#g-tabs a[data-g=x]'); await pg.waitForSelector('#g-exlist a.grow');
+      /* history CSV: preview, import, then the same file again only skips */
+      const csv = Buffer.from('Exercise,Date,Time,Reps,Weight,Unit,Notes\nAtlantis hack squat,01/02/2025,17:43:38,10,140,kg,"deep, slow"\nCable row,01/02/2025,18:00:00,12,60,kg,\nPlank,01/02/2025,18:10:00,,,kg,\n');
+      await pg.setInputFiles('#g-csvfile', { name: 'setgraph.csv', mimeType: 'text/csv', buffer: csv });
+      await pg.waitForSelector('#g-csvorder');
+      expect(/2 sets/.test(await pg.textContent('.gai')) && /1 row left out/.test(await pg.textContent('.gai')), 'CSV preview should count sets and skipped rows');
+      await pg.selectOption('#g-csvorder', 'mdy'); await pg.waitForFunction(() => /Jan/.test(document.querySelector('.gcsvtab').textContent));
+      await pg.click('[data-g=csvgo]'); await pg.waitForFunction(() => /^Added /.test((document.querySelector('.gai .admsg') || {}).textContent || ''), null, { timeout: 5000 });
+      expect(/Cable row/.test(await pg.textContent('#g-exlist')), 'imported exercise should be listed');
+      await pg.setInputFiles('#g-csvfile', { name: 'setgraph.csv', mimeType: 'text/csv', buffer: csv });
+      await pg.waitForSelector('#g-csvorder'); await pg.selectOption('#g-csvorder', 'mdy'); await pg.waitForFunction(() => /Jan/.test(document.querySelector('.gcsvtab').textContent));
+      await pg.click('[data-g=csvgo]'); await pg.waitForFunction(() => /Added 0 sets \(2 you already had/.test((document.querySelector('.gai .admsg') || {}).textContent || ''), null, { timeout: 5000 });
+      const cscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(cscroll <= 1, `horizontal overflow of ${cscroll}px on the exercises page at ${w}px wide`);
+      await pg.click('[data-g=csvdrop]');
       /* admin (the only account is the first one, so it is the admin) */
       await pg.click('#acct>summary'); await pg.click('#adminlink'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-meals .admeal');
       if (first) {

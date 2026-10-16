@@ -33,5 +33,6 @@
   here; keep the solver behaviour unless asked.
 - `public/app.js` – views (Day, History calendar, Weight), saving, routing.
 - `public/gym.js` – the Gym view (workouts, exercise sets, sessions, AI import preview).
+- `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by tests.
 - Secrets live only in `.env` on the server; never send them to the client or commit them.
 - Strict CSP: no inline scripts or `style=` attributes in HTML.
