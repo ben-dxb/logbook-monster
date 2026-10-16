@@ -20,34 +20,29 @@ const fWt=new Map();                                       /* raw/cooked chosen 
 if(!['raw','cooked'].includes(fF.wt))fF.wt='raw';
 
 /* ---------- your meal plan, as library entries ---------- */
-const F_TYPES={T:'training',R:'rest',S:'Saturday training'};
 function fHash(s){let h=5381;for(const ch of s)h=(h*33+ch.charCodeAt(0))>>>0;return h.toString(36);}
 const fRound=x=>Math.round(x*10)/10;
 function fPlanFoods(){
   const out=[], used=new Set(), meals=new Map();
-  const ing=(id)=>{const F=FOODS[id];if(!F||isLib(id)||used.has(id))return;used.add(id);
+  const ing=(id)=>{const F=FOODS[id];if(!planFood(id)||used.has(id))return;used.add(id);
     out.push({id:'plan:f:'+id,fid:id,plan:true,mine:false,public:false,ai:null,by:null,kind:'ingredient',
       name:F.n,unit:F.unit==='ml'?'ml':'g',group:SWAP_LISTS.x.includes(id)?'Fats':guessGroup(F.n),k:fRound(F.k),p:fRound(F.p),c:fRound(F.c),f:fRound(F.f),free:F.free||'',
       recipe:id==='pudding'?'Values from your rice pudding batch on the Daily Tracker page.':''});};
-  /* every meal of every day of the week, with both built-in breakfasts and the Saturday pie */
-  for(let d=0;d<7;d++){
-    const t=TYPE[d], opts=CUSTOM_PLAN&&CUSTOM_PLAN[t]?[['omelette',false]]:[['omelette',false],['eggs',false],...(t==='S'?[['omelette',true]]:[])];
-    for(const [bf,pie] of opts){
-      let list;try{list=planFor(d,bf,pie);}catch{continue;}
-      for(const m of list){
-        const items=['p','c','x'].flatMap(b=>m[b]||[]).filter(i=>FOODS[i.f]&&+i.g>0);
-        if(!items.length)continue;
-        const key=m.name+'|'+items.map(i=>i.f+':'+i.g).join(',');
-        const e=meals.get(key)||{m,items,types:new Set()};e.types.add(t);meals.set(key,e);
-      }
+  /* every meal of every day template */
+  for(const {id:t} of TEMPLATES){
+    for(const m of planOf(t)){
+      const items=['p','c','x'].flatMap(b=>m[b]||[]).filter(i=>FOODS[i.f]&&+i.g>0);
+      if(!items.length)continue;
+      const key=m.name+'|'+items.map(i=>i.f+':'+i.g).join(',');
+      const e=meals.get(key)||{m,items,types:new Set()};e.types.add(t);meals.set(key,e);
     }
   }
   const names={};for(const e of meals.values())names[e.m.name]=(names[e.m.name]||0)+1;
   for(const [key,e] of meals){
     const tot={k:0,p:0,c:0,f:0};
     e.items.forEach(i=>{const F=FOODS[i.f];for(const x in tot)tot[x]+=F[x]*i.g/100;ing(i.f);});
-    const types=['T','R','S'].filter(t=>e.types.has(t)).map(t=>F_TYPES[t]);
-    const days=types.length===3?'every day':fList(types)+' days';
+    const types=TEMPLATES.filter(t=>e.types.has(t.id)).map(t=>t.name);
+    const days=types.length===TEMPLATES.length&&types.length>1?'every day template':fList(types);
     out.push({id:'plan:m:'+fHash(key),plan:true,mine:false,public:false,ai:null,by:null,kind:'meal',unit:'each',
       name:e.m.name+(names[e.m.name]>1?` (${days})`:''),k:fRound(tot.k),p:fRound(tot.p),c:fRound(tot.c),f:fRound(tot.f),days,
       recipe:e.items.map(i=>`${r0(i.g)}${FOODS[i.f].unit==='ml'?'ml':'g'} ${FOODS[i.f].n}`).join('\n')+(e.m.note?'\n\n'+e.m.note:'')});
@@ -224,7 +219,7 @@ function fAddForm(f){
 /* the meals of that day (as saved, or as the plan would start it), plus the off-plan list */
 function fWhereOpts(date,sel){
   let meals=[];
-  if(isDate(date)){try{meals=S.days[date]?S.days[date].meals:planFor(wdOf(date),'omelette',false);}catch{meals=[];}}
+  if(isDate(date)){try{meals=S.days[date]?S.days[date].meals:freshOn(date).meals;}catch{meals=[];}}
   return `<option value="off">Off plan</option>`+meals.map((m,mi)=>`<option value="${mi}"${String(mi)===String(sel)&&!m.eaten?' selected':''}${m.eaten?' disabled':''}>Meal ${esc(m.id)} – ${esc(m.name)}${m.eaten?' (eaten)':''}</option>`).join('');
 }
 

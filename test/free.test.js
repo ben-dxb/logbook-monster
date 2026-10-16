@@ -5,38 +5,39 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const plan = require('./_plan');
 
 function engine() {
   const ctx = {};
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/engine.js'), 'utf8')
-    + ';this.E = { applyDefaults, layerDefaults, macOf, dayTotals, solve, it, FOODS, FREE };', ctx);
+    + ';this.E = { applyDefaults, macOf, dayTotals, solve, it, FOODS, FREE };', ctx);
   return ctx.E;
 }
 const day = (E, meals, off = []) => ({ auto: true, targets: { k: 2000, p: 150, c: 200, f: 60 }, meals, off });
 
 test('a sauce counts only while sauces are free', () => {
   const E = engine();
-  E.applyDefaults({});
+  E.applyDefaults(plan());
   assert.strictEqual(E.FOODS.passata.free, 'sauce');
   assert.ok(E.macOf('passata', 200).k > 60);
-  E.applyDefaults({ free: { sauce: true } });
+  E.applyDefaults({ ...plan(), free: { sauce: true } });
   assert.deepStrictEqual({ ...E.macOf('passata', 200) }, { k: 0, p: 0, c: 0, f: 0, d: 0 });
   assert.ok(E.macOf('potato', 100).k > 0);            /* untagged foods still count */
 });
 
-test('the account layer wins over the app default, kind by kind', () => {
+test('each kind is free only as the plan says', () => {
   const E = engine();
-  const cfg = E.layerDefaults({ free: { sauce: true, veg: true } }, { free: { veg: false } });
-  E.applyDefaults(cfg);
+  E.applyDefaults({ ...plan(), free: { sauce: true, veg: false } });
   assert.strictEqual(E.FREE.sauce, true);
   assert.strictEqual(E.FREE.veg, false);
 });
 
 test('a food can be tagged in the defaults, and free foods are left out of the totals and the balancing', () => {
   const E = engine();
-  E.applyDefaults({ free: { veg: true },
-    foods: { brocc: { n: 'Broccoli', k: 34, p: 2.8, c: 6.6, f: 0.4, d: 0, step: 5, group: 'c', free: 'veg' } } });
+  const base = plan();
+  E.applyDefaults({ ...base, free: { veg: true },
+    foods: { ...base.foods, brocc: { n: 'Broccoli', k: 34, p: 2.8, c: 6.6, f: 0.4, d: 0, step: 5, group: 'c', free: 'veg' } } });
   const veg = E.it('brocc', 150), pot = E.it('potato', 300);
   const D = day(E, [{ id: '1', name: 'x', p: [E.it('chicken', 200, true)], c: [pot, veg], x: [] }],
     [{ n: 'Hot sauce', k: 50, p: 0, c: 10, f: 0, free: 'sauce' }, { n: 'Spinach', k: 23, p: 3, c: 4, f: 0, free: 'veg' }]);

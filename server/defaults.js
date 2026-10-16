@@ -1,17 +1,20 @@
 'use strict';
-/* App-wide defaults the super admin sets: food values, which weekdays are training/rest, day targets
-   and an uploaded meal plan. Stored as one JSON document and layered over engine.js in the browser.
-   Each account can keep its own version of any of these (user_defaults), layered over the app's.
-   An account's own plan changes each take effect from a date (from: 'YYYY-MM-DD', null = from the start),
-   so days before a change keep the plan they had: user_defaults holds {versions:[…]}, oldest first. */
+/* Each account's own meal plan: its foods, day templates (named day types, each with its meals and targets),
+   which template each weekday uses, and whether sauces / green veg count. There are no app-wide defaults – a new
+   account starts with no plan and makes one (upload, AI read or by hand) on its Account admin page.
+   A plan is kept as dated changes (from: 'YYYY-MM-DD', null = from the start), so days before a change keep the
+   plan they had: user_defaults holds {versions:[…]}, oldest first. */
 const config = require('./config');
 const db = require('./db');
-const { FOODS, FREE_KINDS, layerDefaults } = require('../public/engine.js');
+const { FREE_KINDS } = require('../public/engine.js');
+const legacy = require('./legacy');
 
 const q = {
-  get: db.prepare("SELECT data, updated_by, updated_at FROM app_config WHERE key = 'defaults'"),
-  put: db.prepare(`INSERT INTO app_config (key, data, updated_by) VALUES ('defaults', ?, ?)
-    ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_by = excluded.updated_by, updated_at = datetime('now')`),
+  appGet: db.prepare("SELECT data FROM app_config WHERE key = 'defaults'"),
+  appDel: db.prepare("DELETE FROM app_config WHERE key = 'defaults'"),
+  flag: db.prepare("SELECT 1 AS x FROM app_config WHERE key = 'plans_own'"),
+  setFlag: db.prepare("INSERT OR IGNORE INTO app_config (key, data, updated_by) VALUES ('plans_own', '{}', 'migration')"),
+  users: db.prepare('SELECT id, (SELECT COUNT(*) FROM days WHERE days.user_id = users.id) AS days FROM users'),
   firstUser: db.prepare('SELECT MIN(id) AS id FROM users'),
   mine: db.prepare('SELECT data, updated_at FROM user_defaults WHERE user_id = ?'),
   putMine: db.prepare(`INSERT INTO user_defaults (user_id, data) VALUES (?, ?)
@@ -26,13 +29,14 @@ function isAdmin(user) {
   return q.firstUser.get().id === user.id;
 }
 
-const TYPES = ['T', 'R', 'S'];
+const TEMPLATE_ID = /^[A-Za-z][A-Za-z0-9_]{0,15}$/;
+const MAX_TEMPLATES = 12;
+const LEGACY_NAMES = { T: 'Training', R: 'Rest', S: 'Saturday training' };
 const FOOD_ID = /^[a-z][a-z0-9_]{0,31}$/;
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 
-/* Throws a readable message on anything that would break the calculator.
-   baseFoods: foods from a lower layer (the app's) that a plan may also use. */
-function clean(input, baseFoods = {}) {
+/* Throws a readable message on anything that would break the calculator. */
+function clean(input) {
   if (!isObj(input)) throw new Error('Defaults must be an object');
   const num = (v, lo, hi, what) => {
     const n = +v;
@@ -45,7 +49,7 @@ function clean(input, baseFoods = {}) {
     if (required && !s) throw new Error(`${what} is missing`);
     return s;
   };
-  const out = { foods: {}, schedule: null, targets: {}, plan: null, free: {} };
+  const out = { foods: {}, templates: [], schedule: null, targets: {}, plan: {}, free: {} };
 
   const foods = input.foods == null ? {} : input.foods;
   if (!isObj(foods)) throw new Error('Foods must be an object');
@@ -65,40 +69,56 @@ function clean(input, baseFoods = {}) {
       free: FREE_KINDS.includes(r.free) ? r.free : '',
     };
   }
-  const has = (o, id) => Object.prototype.hasOwnProperty.call(o, id);
-  const known = id => has(FOODS, id) || has(baseFoods, id) || has(out.foods, id);
+
+  /* day templates: named day types (training, rest, high carb…). Without a list, the old day types T/R/S a file uses. */
+  let templates = input.templates;
+  if (templates == null) {
+    const used = new Set([...(isObj(input.plan) ? Object.keys(input.plan) : []), ...(isObj(input.targets) ? Object.keys(input.targets) : []),
+      ...(Array.isArray(input.schedule) ? input.schedule : [])]);
+    templates = Object.keys(LEGACY_NAMES).filter(t => used.has(t)).map(id => ({ id, name: LEGACY_NAMES[id] }));
+  }
+  if (!Array.isArray(templates) || templates.length > MAX_TEMPLATES) throw new Error(`Keep to ${MAX_TEMPLATES} day templates or fewer`);
+  for (const t of templates) {
+    if (!isObj(t) || typeof t.id !== 'string' || !TEMPLATE_ID.test(t.id)) throw new Error('A day template id must be letters, digits or _ (starting with a letter)');
+    if (out.templates.some(x => x.id === t.id)) throw new Error(`Day template "${t.id}" is listed twice`);
+    out.templates.push({ id: t.id, name: text(t.name, 40, 'A day template name', true) });
+  }
+  const isTemplate = id => out.templates.some(t => t.id === id);
+  const tname = id => (out.templates.find(t => t.id === id) || { name: id }).name;
 
   if (input.schedule != null) {
-    if (!Array.isArray(input.schedule) || input.schedule.length !== 7 || !input.schedule.every(t => TYPES.includes(t))) {
-      throw new Error('The week needs 7 days, each T (training), R (rest) or S (Saturday training)');
+    if (!Array.isArray(input.schedule) || input.schedule.length !== 7 || !input.schedule.every(isTemplate)) {
+      throw new Error('The week needs 7 days, each one of your day templates');
     }
     out.schedule = [...input.schedule];
   }
 
-  /* free foods: whether sauces / green veg count no macros; only the kinds this layer sets */
+  /* free foods: whether sauces / green veg count no macros */
   const free = input.free == null ? {} : input.free;
   if (!isObj(free)) throw new Error('Free foods must be an object');
   for (const x of FREE_KINDS) if (free[x] != null) out.free[x] = !!free[x];
 
   const targets = input.targets == null ? {} : input.targets;
   if (!isObj(targets)) throw new Error('Targets must be an object');
-  for (const t of TYPES) {
-    if (targets[t] == null) continue;
-    if (!isObj(targets[t])) throw new Error(`Targets for ${t} must be an object`);
+  for (const [t, v] of Object.entries(targets)) {
+    if (!isTemplate(t)) throw new Error(`Targets for "${String(t).slice(0, 20)}", which isn't one of your day templates`);
+    if (!isObj(v)) throw new Error(`Targets for ${tname(t)} must be an object`);
     out.targets[t] = {};
-    for (const m of ['k', 'p', 'c', 'f']) out.targets[t][m] = num(targets[t][m], 0, 10000, `${t} target ${m}`);
+    for (const m of ['k', 'p', 'c', 'f']) out.targets[t][m] = num(v[m], 0, 10000, `${tname(t)} target ${m}`);
   }
+
+  const has = (o, id) => Object.prototype.hasOwnProperty.call(o, id);
+  const known = id => id === 'pudding' || has(out.foods, id);   /* rice pudding: values from the batch on the Daily Tracker */
 
   if (input.plan != null) {
     if (!isObj(input.plan)) throw new Error('Plan must be an object');
-    out.plan = {};
-    for (const t of TYPES) {
-      const meals = input.plan[t];
+    for (const [t, meals] of Object.entries(input.plan)) {
       if (meals == null) continue;
-      if (!Array.isArray(meals) || !meals.length || meals.length > 12) throw new Error(`Plan for ${t} needs 1 to 12 meals`);
+      if (!isTemplate(t)) throw new Error(`Meals for "${String(t).slice(0, 20)}", which isn't one of your day templates`);
+      if (!Array.isArray(meals) || meals.length > 12) throw new Error(`${tname(t)} can have up to 12 meals`);
       out.plan[t] = meals.map((m, mi) => {
-        if (!isObj(m)) throw new Error(`Plan ${t} meal ${mi + 1} must be an object`);
-        const w = `Plan ${t} meal ${mi + 1}`;
+        if (!isObj(m)) throw new Error(`${tname(t)} meal ${mi + 1} must be an object`);
+        const w = `${tname(t)} meal ${mi + 1}`;
         const meal = { id: text(m.id == null ? mi + 1 : m.id, 8, `${w} number`, true), name: text(m.name, 100, `${w} name`, true) };
         const note = text(m.note, 200);
         if (note) meal.note = note;
@@ -106,34 +126,28 @@ function clean(input, baseFoods = {}) {
           const items = m[b] == null ? [] : m[b];
           if (!Array.isArray(items) || items.length > 20) throw new Error(`${w} has too many items`);
           meal[b] = items.map(i => {
-            if (!isObj(i) || !known(i.f)) throw new Error(`${w}: unknown food "${String(isObj(i) ? i.f : i).slice(0, 40)}"`);
+            if (!isObj(i) || !known(i.f)) throw new Error(`${w}: unknown food "${String(isObj(i) ? i.f : i).slice(0, 40)}" – add it to your foods first`);
             return { f: i.f, g: num(i.g, 0, 5000, `${w} amount`), lock: !!i.lock };
           });
         }
         return meal;
       });
     }
-    if (!Object.keys(out.plan).length) out.plan = null;
+  }
+  /* every template has meals (maybe none yet) and targets */
+  for (const t of out.templates) {
+    if (!out.plan[t.id]) out.plan[t.id] = [];
+    if (!out.targets[t.id]) out.targets[t.id] = { k: 0, p: 0, c: 0, f: 0 };
   }
   return out;
-}
-
-function get() {
-  const row = q.get.get();
-  if (!row) return { foods: {}, schedule: null, targets: {}, plan: null, free: {} };
-  return { ...JSON.parse(row.data), updatedBy: row.updated_by, updatedAt: row.updated_at };
-}
-function put(input, user) {
-  const data = clean(input);
-  q.put.run(JSON.stringify(data), user.email);
-  return forUser(user);
 }
 
 const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const isDate = v => typeof v === 'string' && DATE_RE.test(v) && !isNaN(Date.parse(v + 'T00:00:00Z'));
 const MAX_VERSIONS = 100;
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const isEmpty = d => !Object.keys(d.foods || {}).length && !d.schedule && !Object.keys(d.targets || {}).length && !d.plan && !Object.keys(d.free || {}).length;
+/* no plan at all from that date */
+const isEmpty = d => !Object.keys(d.foods || {}).length && !(d.templates || []).length && !Object.keys(d.free || {}).length;
 
 /* The account's own plan changes, oldest first. A layer saved before versions is one version from the start. */
 function myVersions(user) {
@@ -149,7 +163,7 @@ function versionOn(list, date) {
   for (const x of list) if (!x.from || x.from <= date) v = x;
   return v;
 }
-/* The account's own layer in effect on a date (today by default), or null when it uses the app defaults as they are. */
+/* The account's plan in effect on a date (today by default), or null when it has none then. */
 function mine(user, date = ymd(new Date())) {
   const v = versionOn(myVersions(user), date);
   return v && !isEmpty(v) ? v : null;
@@ -160,10 +174,10 @@ function storeMine(user, list) {
   else q.putMine.run(user.id, JSON.stringify({ versions: list }));
 }
 /* With a from date (null = from the start) this saves the change taking effect then, replacing one with the
-   same date; changes dated later still apply from their dates. An empty change means "the app defaults from
-   then on". Without a date it replaces everything, as before versions existed. */
+   same date; changes dated later still apply from their dates. An empty change means "no plan from then on".
+   Without a date it replaces everything. */
 function putMine(input, user) {
-  const data = clean(input, get().foods || {});
+  const data = clean(input);
   const has = isObj(input) && Object.prototype.hasOwnProperty.call(input, 'from');
   const from = has && input.from != null && input.from !== '' ? input.from : null;
   if (from !== null && !isDate(from)) throw new Error('The date it takes effect from must be a date');
@@ -173,7 +187,7 @@ function putMine(input, user) {
   storeMine(user, list);
   return forUser(user);
 }
-/* Without a date: back to the app defaults for every day. With one ('start' for the first): delete that change,
+/* Without a date: no plan for any day. With one ('start' for the first): delete that change,
    so the one before it applies again. */
 function delMine(user, from) {
   if (from === undefined) { q.delMine.run(user.id); return forUser(user); }
@@ -185,9 +199,40 @@ function delMine(user, from) {
   storeMine(user, rest);
   return forUser(user);
 }
-/* What the browser gets: the app defaults, the account's own layer in effect today, and all its dated changes. */
-function forUser(user) { return { ...get(), mine: mine(user), myVersions: myVersions(user) }; }
+/* What the browser gets: the plan in effect today and all its dated changes. */
+function forUser(user) { return { mine: mine(user), myVersions: myVersions(user) }; }
 /* What the account's days start from on a date (today by default). */
-function effective(user, date) { return layerDefaults(get(), mine(user, date)); }
+function effective(user, date) { return mine(user, date) || clean({}); }
 
-module.exports = { isAdmin, clean, get, put, mine, myVersions, putMine, delMine, forUser, effective };
+/* Once: app defaults used to sit under every account's own changes. Every account that has used the app (saved a
+   day or a plan of its own) gets what it was using as its own plan – each dated change folded over the app defaults
+   and the built-in plan – so nothing changes for it. Accounts that never used it start with no plan, like new ones. */
+/* a bad old app food (or an own one) leaves that layer out rather than stopping the server */
+function carry(app, v) {
+  for (const [a, m] of [[app, v], [{}, v], [{}, {}]]) {
+    try { return clean(legacy.effective(a, m)); } catch (e) { console.error('Plan carry-over:', e.message); }
+  }
+}
+function migrate() {
+  if (q.flag.get()) return;
+  const row = q.appGet.get();
+  const app = row ? JSON.parse(row.data) : {};
+  db.exec('BEGIN');
+  try {
+    for (const u of q.users.all()) {
+      const r = q.mine.get(u.id);
+      if (!r && !u.days) continue;
+      const doc = r ? JSON.parse(r.data) : null;
+      const list = !doc ? [{ from: null }] : Array.isArray(doc.versions) ? doc.versions : [{ from: null, ...doc }];
+      const versions = list.map(v => ({ from: v.from || null, ...carry(app, v),
+        updatedAt: v.updatedAt || (r && r.updated_at) || new Date().toISOString().replace('T', ' ').slice(0, 19) }));
+      q.putMine.run(u.id, JSON.stringify({ versions }));
+    }
+    q.appDel.run();
+    q.setFlag.run();
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+}
+migrate();
+
+module.exports = { isAdmin, clean, mine, myVersions, putMine, delMine, forUser, effective, migrate };

@@ -2,7 +2,8 @@
 /* Portioning a Health Road pack (meat + sauce) from the meat in your plan (public/engine.js). */
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { packPortion, FOODS } = require('../public/engine.js');
+const { packPortion, FOODS, applyDefaults } = require('../public/engine.js');
+applyDefaults(require('./_plan')());
 
 test('pack portion is your share of the meat applied to the whole pack', () => {
   assert.ok(Math.abs(packPortion(230, 320, 250) - 294.4) < 1e-9);   /* 230 of 250g chicken in a 320g pack */
@@ -17,7 +18,7 @@ test('no portion until the pack is weighed', () => {
   assert.strictEqual(packPortion(0, 320, 250), null);
 });
 
-test('delivered meats default to their daily order as the meat in the pack', () => {
+test('delivered meats in a plan default to their daily order as the meat in the pack', () => {
   assert.strictEqual(FOODS.chicken.order, 250);
   assert.strictEqual(FOODS.mince.order, 250);
 });
