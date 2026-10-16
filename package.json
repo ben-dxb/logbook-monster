@@ -1,7 +1,7 @@
 {
-  "name": "mealswap",
+  "name": "logbook-monster",
   "version": "1.0.0",
-  "description": "Meal Swap Calculator – meal plan balancing with saved days, history and weight tracking",
+  "description": "Logbook Monster – meal plan balancing with saved days, history and weight tracking",
   "main": "server/index.js",
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server/index.js",
@@ -14,14 +14,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ben-dxb/mealswap.git"
+    "url": "git+https://github.com/ben-dxb/logbook-monster.git"
   },
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/ben-dxb/mealswap/issues"
+    "url": "https://github.com/ben-dxb/logbook-monster/issues"
   },
-  "homepage": "https://github.com/ben-dxb/mealswap#readme",
+  "homepage": "https://github.com/ben-dxb/logbook-monster#readme",
   "dependencies": {
     "dotenv": "^18.0.8",
     "express": "^5.3.0",

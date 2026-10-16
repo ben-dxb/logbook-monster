@@ -143,7 +143,7 @@ async function ask(system, buf, type, what) {
     r = await fetch(`${BASE}/chat/completions`, {
       method: 'POST',
       signal: AbortSignal.timeout(240000),
-      headers: { authorization: `Bearer ${c.key}`, 'content-type': 'application/json', 'HTTP-Referer': config.baseUrl, 'X-Title': 'Meal Swap' },
+      headers: { authorization: `Bearer ${c.key}`, 'content-type': 'application/json', 'HTTP-Referer': config.baseUrl, 'X-Title': 'Logbook Monster' },
       body: JSON.stringify({
         model: c.model, temperature: 0, max_tokens: 16000,
         messages: [{ role: 'system', content: system },

@@ -131,7 +131,7 @@ router.use('/gym', gym.router);
 /* Everything you've stored, as one JSON file. */
 router.get('/export', (req, res) => {
   const s = q.getSettings.get(req.user.id);
-  res.attachment(`mealswap-${new Date().toISOString().slice(0, 10)}.json`);
+  res.attachment(`logbook-monster-${new Date().toISOString().slice(0, 10)}.json`);
   res.json({
     exported: new Date().toISOString(),
     email: req.user.email,

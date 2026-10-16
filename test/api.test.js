@@ -32,7 +32,7 @@ const fakeAi = http.createServer((req, res) => {
   });
 });
 const BASE = `http://127.0.0.1:${PORT}`;
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mealswap-test-'));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'logbook-monster-test-'));
 let srv;
 
 before(async () => {

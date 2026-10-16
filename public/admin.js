@@ -153,8 +153,8 @@ document.addEventListener('click',e=>{
     delete AD.foods[id];adOpen.delete(id);}
   else if(a==='restore'){if(!confirm('Go back to the built-in meal plan? Your plan edits are dropped when you save.'))return;
     AD.plan=builtinPlanData();AD.custom=false;adMsg='Built-in plan restored – save to use it.';adErrs=[];}
-  else if(a==='csv'){adDownload(`mealswap-plan-${todayStr()}.csv`,planCsv(AD.plan),'text/csv');return;}
-  else if(a==='json'){adDownload(`mealswap-defaults-${todayStr()}.json`,JSON.stringify({...adPayload(),plan:AD.plan},null,2),'application/json');return;}
+  else if(a==='csv'){adDownload(`logbook-monster-plan-${todayStr()}.csv`,planCsv(AD.plan),'text/csv');return;}
+  else if(a==='json'){adDownload(`logbook-monster-defaults-${todayStr()}.json`,JSON.stringify({...adPayload(),plan:AD.plan},null,2),'application/json');return;}
   else if(a==='discard'){adLoad();adMsg='';adErrs=[];adNotes=[];}
   else if(a==='save'){adSave();return;}
   else return;

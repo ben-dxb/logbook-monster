@@ -39,13 +39,13 @@ async function api(method,url,body){
 }
 
 /* Signed out with changes still waiting: keep them in this browser and send them after you sign back in. */
-const STASH='mealswap-unsaved';
+const STASH='logbook-monster-unsaved';
 function toLogin(){
   if(pending.size&&ME){try{localStorage.setItem(STASH,JSON.stringify({email:ME,at:Date.now(),jobs:[...pending.entries()]}));}catch{}}
   pending.clear();location.href='/login'+location.hash;   /* come back to the same day after signing in */
 }
 function restoreStash(){
-  let st;try{st=JSON.parse(localStorage.getItem(STASH)||'null');}catch{}
+  let st;try{st=JSON.parse(localStorage.getItem(STASH)||localStorage.getItem('mealswap-unsaved')||'null');localStorage.removeItem('mealswap-unsaved');}catch{}
   if(!st||st.email!==ME||!Array.isArray(st.jobs))return;
   try{localStorage.removeItem(STASH);}catch{}
   if(Date.now()-st.at>14*86400000)return;

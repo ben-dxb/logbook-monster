@@ -107,7 +107,7 @@ router.post('/register', limiter, csrfProtect, async (req, res) => {
 
 router.post('/logout', csrfProtect, (req, res) => {
   req.session.destroy(() => {
-    res.clearCookie('mealswap.sid', { path: '/' });
+    res.clearCookie('logbookmonster.sid', { path: '/' });
     res.json({ ok: true });
   });
 });
