@@ -17,7 +17,7 @@ const q = {
   sums: db.prepare('SELECT date, summary FROM days WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date'),
   weights: db.prepare('SELECT date, kg FROM weights WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date'),
   weightAt: db.prepare('SELECT date, kg FROM weights WHERE user_id = ? AND date <= ? ORDER BY date DESC LIMIT 1'),
-  photoAt: db.prepare(`SELECT id, date, pose, note, size, created_at AS created, file, thumb FROM photos
+  photoAt: db.prepare(`SELECT id, date, pose, style, note, size, created_at AS created, file, thumb FROM photos
     WHERE user_id = ? AND pose = ? AND date <= ? ORDER BY date DESC, id DESC LIMIT 1`),
   suppLog: db.prepare('SELECT date, name, amount, unit, note FROM supplement_log WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date, id'),
   setsOn: db.prepare(`SELECT s.exercise_id AS e, x.name, s.reps, s.kg, s.at FROM sets s JOIN exercises x ON x.id = s.exercise_id

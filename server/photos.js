@@ -1,6 +1,7 @@
 'use strict';
-/* Progress photos: each account uploads its own pictures, dated and tagged with a pose (front, side,
-   back, other), and only ever sees its own. The browser shrinks a picture to a JPEG before upload (which
+/* Progress photos: each account uploads its own pictures, dated and tagged with a pose (which way the body
+   faces: front, left side, right side, back, other) and a pose type (relaxed, front double biceps…), and only
+   ever sees its own. The browser shrinks a picture to a JPEG before upload (which
    also drops its EXIF data, location included) and sends a small thumbnail after it; the server only
    checks the bytes really are a JPEG, PNG or WebP and stores them on disk under random names. */
 const fs = require('fs');
@@ -14,23 +15,28 @@ const ai = require('./ai');
 
 fs.mkdirSync(config.photoDir, { recursive: true });
 
-const COLS = 'id, date, pose, pose_ai, note, size, created_at AS created, file, thumb';
+const COLS = 'id, date, pose, style, pose_ai, note, size, created_at AS created, file, thumb';
 const q = {
   list: db.prepare(`SELECT ${COLS} FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date DESC, id DESC`),
   get: db.prepare(`SELECT ${COLS} FROM photos WHERE user_id = ? AND id = ?`),
   files: db.prepare('SELECT file, type, thumb FROM photos WHERE user_id = ? AND id = ?'),
   allFiles: db.prepare('SELECT file, thumb FROM photos WHERE user_id = ?'),
   count: db.prepare('SELECT COUNT(*) AS n FROM photos WHERE user_id = ?'),
-  add: db.prepare('INSERT INTO photos (user_id, date, pose, pose_ai, note, file, type, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
-  put: db.prepare('UPDATE photos SET date = ?, pose = ?, pose_ai = ?, note = ? WHERE user_id = ? AND id = ?'),
+  add: db.prepare('INSERT INTO photos (user_id, date, pose, style, pose_ai, note, file, type, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+  put: db.prepare('UPDATE photos SET date = ?, pose = ?, style = ?, pose_ai = ?, note = ? WHERE user_id = ? AND id = ?'),
   thumb: db.prepare('UPDATE photos SET thumb = ? WHERE user_id = ? AND id = ?'),
   del: db.prepare('DELETE FROM photos WHERE user_id = ? AND id = ?'),
   delRange: db.prepare('DELETE FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? RETURNING file, thumb'),
-  all: db.prepare('SELECT id, date, pose, pose_ai, note, size, created_at AS created FROM photos WHERE user_id = ? ORDER BY date, id'),
+  all: db.prepare('SELECT id, date, pose, style, pose_ai, note, size, created_at AS created FROM photos WHERE user_id = ? ORDER BY date, id'),
 };
 
 const MAX_PHOTOS = 3000, MAX_BYTES = 10 * 1024 * 1024, MAX_THUMB = 512 * 1024;
-const POSES = ['front', 'side', 'back', 'other'];
+/* left / right: that side of the body toward the camera. 'side' (either) is from before photos had left and right,
+   kept for those – POSES is what a photo may have, PICK what the app offers. */
+const POSES = ['front', 'left', 'right', 'side', 'back', 'other'];
+const PICK = POSES.filter(p => p !== 'side');
+/* the pose type; '' when not set */
+const STYLES = ['relaxed', 'front_relaxed', 'back_relaxed', 'front_double_biceps', 'back_double_biceps', 'most_muscular'];
 const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const isDate = s => typeof s === 'string' && DATE_RE.test(s) && new Date(s + 'T00:00:00Z').toISOString().startsWith(s);
 const fail = (msg, status = 400) => Object.assign(new Error(msg), { status });
@@ -51,9 +57,11 @@ function meta(b) {
   if (!isDate(o.date)) throw fail('Pick the date the photo was taken');
   const pose = o.pose == null || o.pose === '' ? 'other' : o.pose;
   if (!POSES.includes(pose)) throw fail(`Pick a pose: ${POSES.join(', ')}`);
+  const style = o.style == null ? '' : o.style;
+  if (style !== '' && !STYLES.includes(style)) throw fail(`Pick a pose type: ${STYLES.join(', ')}`);
   const note = String(o.note == null ? '' : o.note).replace(/\s+/g, ' ').trim();
   if (note.length > 200) throw fail('Note is too long (200 characters at most)');
-  return { date: o.date, pose, note };
+  return { date: o.date, pose, style, note };
 }
 
 /* File names are random and never come from the request, so they can't point outside the folder. */
@@ -67,10 +75,10 @@ const rawImage = limit => express.raw({ type: ['image/jpeg', 'image/png', 'image
 
 router.get('/', (req, res) => {
   const from = isDate(req.query.from) ? req.query.from : '0000-01-01', to = isDate(req.query.to) ? req.query.to : '9999-12-31';
-  res.json({ photos: q.list.all(req.user.id, from, to).map(view), poses: POSES, ai: ai.status().configured });
+  res.json({ photos: q.list.all(req.user.id, from, to).map(view), poses: PICK, styles: STYLES, ai: ai.status().configured });
 });
 
-/* POST /api/photos?date=…&pose=…&note=… with the image itself as the body; ai=1 when the AI is to pick the pose
+/* POST /api/photos?date=…&pose=…&style=…&note=… with the image itself as the body; ai=1 when the AI is to pick the pose
    (the pose sent is a stand-in until it does, and counts as not set by hand) */
 router.post('/', rawImage(MAX_BYTES), (req, res) => {
   try {
@@ -81,7 +89,7 @@ router.post('/', rawImage(MAX_BYTES), (req, res) => {
     const file = newName(EXT[type]);
     fs.writeFileSync(fileAt(file), req.body, { flag: 'wx' });
     try {
-      const { lastInsertRowid } = q.add.run(req.user.id, m.date, m.pose, req.query.ai === '1' ? 1 : 0, m.note, file, type, req.body.length);
+      const { lastInsertRowid } = q.add.run(req.user.id, m.date, m.pose, m.style, req.query.ai === '1' ? 1 : 0, m.note, file, type, req.body.length);
       res.json(view(q.get.get(req.user.id, Number(lastInsertRowid))));
     } catch (e) { unlink(file); throw e; }
   } catch (e) { send(res, e); }
@@ -107,8 +115,11 @@ router.put('/:id', (req, res) => {
     const old = q.get.get(req.user.id, id);
     if (!old) throw fail('No such photo', 404);
     const m = meta(req.body);
-    /* a pose the person changes is theirs; keeping the AI's (e.g. only the note changed) leaves it the AI's */
-    q.put.run(m.date, m.pose, m.pose === old.pose ? old.pose_ai : 0, m.note, req.user.id, id);
+    /* a pose (or pose type) the person changes is theirs; keeping the AI's (e.g. only the note changed) leaves it the AI's.
+       An older client that doesn't send a pose type keeps the one there is. */
+    if ((req.body || {}).style === undefined) m.style = old.style;
+    const same = m.pose === old.pose && m.style === old.style;
+    q.put.run(m.date, m.pose, m.style, same ? old.pose_ai : 0, m.note, req.user.id, id);
     res.json(view(q.get.get(req.user.id, id)));
   } catch (e) { send(res, e); }
 });
@@ -135,12 +146,26 @@ router.delete('/:id', (req, res) => {
 /* Ask the AI which pose a photo shows. It is sent the thumbnail (the full picture if there is none yet), and
    only when the person asks: on upload with "Let AI tell", "Tag with AI" in the catalog or "Ask AI" on one photo.
    POST /api/photos/12/ai-pose {save: true} also stores the answer (marked as the AI's); without it the answer is only returned. */
-const POSE_PROMPT = `You sort fitness progress photos by pose. Look at the picture and say which way the person's body faces the camera:
-- "front": the chest and face (or front of the body) toward the camera, including front double biceps and front relaxed poses
-- "back": the back toward the camera, including back double biceps and rear relaxed poses
-- "side": side-on to the camera, either side, including side chest and side triceps poses
+const POSE_PROMPT = `You sort fitness progress photos. Look at the picture and give two things.
+
+"pose" – which way the person's body faces the camera:
+- "front": the chest and face (or front of the body) toward the camera
+- "back": the back toward the camera
+- "left": side-on, with the person's own LEFT side (left shoulder, arm and hip) nearest the camera
+- "right": side-on, with the person's own RIGHT side (right shoulder, arm and hip) nearest the camera
 - "other": anything else – no person, only part of the body (e.g. just arms or legs), a face close-up, a pose in between, or you can't tell
-Reply with only {"pose": "front" | "back" | "side" | "other"}.`;
+Mirror selfies show the person reversed: judge by which of the person's own sides is toward the mirror/camera.
+
+"style" – the pose type:
+- "front_relaxed": facing the camera, standing relaxed (arms down, not flexing hard)
+- "back_relaxed": back to the camera, standing relaxed
+- "front_double_biceps": facing the camera, both arms up and bent, flexing the biceps
+- "back_double_biceps": back to the camera, both arms up and bent, flexing the biceps and back
+- "most_muscular": facing the camera, leaning in with arms in front of the body, flexing everything (crab or hands-on-hips most muscular)
+- "relaxed": standing relaxed side-on, or relaxed in any other way not listed above
+- "": none of these (another flexing pose such as side chest, or you can't tell)
+
+Reply with only {"pose": "front" | "back" | "left" | "right" | "other", "style": "front_relaxed" | "back_relaxed" | "front_double_biceps" | "back_double_biceps" | "most_muscular" | "relaxed" | ""}.`;
 const poseLimit = rateLimit({
   windowMs: 60 * 60 * 1000, limit: 200, standardHeaders: 'draft-7', legacyHeaders: false,
   keyGenerator: req => 'u' + req.user.id,
@@ -153,11 +178,12 @@ router.post('/:id/ai-pose', poseLimit, async (req, res) => {
     let buf;
     try { buf = await fs.promises.readFile(fileAt(row.thumb || row.file)); } catch { throw fail('That photo’s file is missing', 404); }
     const { reply, model } = await ai.ask(POSE_PROMPT, buf, sniff(buf) || row.type, 'progress photo', { maxTokens: 200, timeout: 60000, task: 'pose' });
-    const pose = POSES.includes(reply && reply.pose) ? reply.pose : 'other';
+    const pose = PICK.includes(reply && reply.pose) ? reply.pose : 'other';
+    const style = STYLES.includes(reply && reply.style) ? reply.style : '';
     const now = q.get.get(req.user.id, id);
     if (!now) throw fail('No such photo', 404);                  /* deleted while the AI was looking */
-    if (req.body && req.body.save === true) q.put.run(now.date, pose, 1, now.note, req.user.id, id);
-    res.json({ pose, model, photo: view(q.get.get(req.user.id, id)) });
+    if (req.body && req.body.save === true) q.put.run(now.date, pose, style, 1, now.note, req.user.id, id);
+    res.json({ pose, style, model, photo: view(q.get.get(req.user.id, id)) });
   } catch (e) { send(res, e); }
 });
 
@@ -180,7 +206,7 @@ router.get('/:id/thumb', serve('thumb'));
 /* v and tv are a piece of each file's random name: the app puts them in the picture URLs, so a replaced
    thumbnail or a reused id is never served from the browser's cache. */
 function view(r) {
-  return { id: r.id, date: r.date, pose: r.pose, poseAi: !!r.pose_ai, note: r.note, size: r.size, created: r.created,
+  return { id: r.id, date: r.date, pose: r.pose, style: r.style || '', poseAi: !!r.pose_ai, note: r.note, size: r.size, created: r.created,
     v: r.file.slice(0, 8), tv: r.thumb ? r.thumb.slice(0, 8) : null };
 }
 
@@ -190,4 +216,4 @@ const exportFor = user => q.all.all(user.id);
 const filesOf = userId => q.allFiles.all(userId);
 const removeFiles = rows => rows.forEach(r => { unlink(r.file); unlink(r.thumb); });
 
-module.exports = { router, exportFor, filesOf, removeFiles, view, POSES, sniff };
+module.exports = { router, exportFor, filesOf, removeFiles, view, POSES, STYLES, sniff };
