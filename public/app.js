@@ -383,7 +383,7 @@ async function setWeight(date,kg){
 
 /* ---------- routing: #day/2026-10-15, #history/2026-10, #history/timeline/…, #gym/…, #foods/…, #supps/…, #photos/…, #account, #admin ----------
    History has two tabs: Calendar (#history) and Timeline (#history/timeline, the 'timeline' view); old #timeline links still work, and old #weight links open the Timeline (weight is logged on the Daily Tracker).
-   #account (account admin, anyone) and #admin (super admin) share the #v-admin page. */
+   #account (account admin, anyone) and #admin (super admin; tabs #admin/ai, #admin/people, #admin/email) share the #v-admin page. */
 const VIEWS=['day','history','gym','foods','supps','photos','timeline','account','admin'];
 const viewEl=n=>$('#v-'+(n==='account'?'admin':n));
 function route(){
@@ -399,7 +399,7 @@ function route(){
   $('#acct').open=false;
   if(view==='day'){openDay(isDate(arg)?arg:S.cur);}
   else if(view==='history'){if(/^\d{4}-\d{2}$/.test(arg||''))month=arg+'-01';renderHistory();}
-  else if(view==='account'||view==='admin'){renderAdmin();}
+  else if(view==='account'||view==='admin'){adRoute(arg);}
   else if(view==='gym'){renderGym(arg?[arg,...more]:[]);}
   else if(view==='foods'){renderFoods(arg?[arg]:[]);}
   else if(view==='supps'){renderSupps(arg?[arg,...more]:[]);}

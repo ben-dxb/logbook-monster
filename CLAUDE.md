@@ -36,7 +36,9 @@
 - `public/app.js` – views (Daily Tracker, History calendar), saving, routing. A meal marked eaten (`m.eaten`) is locked whole – the solver never moves it, its controls
   are disabled – and undoing it asks for confirmation.
 - `public/admin.js` – Account admin (`#account`, anyone: own plan/week/targets/foods) and Super admin
-  (`#admin`: app defaults, AI key, people, email) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope.
+  (`#admin`, in tabs: app defaults, `#admin/ai`, `#admin/people`, `#admin/email`) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope,
+  `data-adtab` per super admin tab. AI settings (OpenRouter key, default model and a model per task – `TASKS` in `server/ai.js`:
+  plan, workout, food, pose, summary; pass `{ task }` to `ai.ask`/`ai.askText`) are super admin only.
 - `public/gym.js` – the Gym view (workouts, exercise sets, sessions, AI import preview).
 - `server/foods.js` / `public/foods.js` – the food library: meals and ingredients (`kind`) people enter (per 100 g/ml
   or per item) with an optional recipe, private or shared with everyone. `POST /api/foods/ai-fill` estimates blank
