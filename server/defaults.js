@@ -1,7 +1,9 @@
 'use strict';
 /* App-wide defaults the super admin sets: food values, which weekdays are training/rest, day targets
    and an uploaded meal plan. Stored as one JSON document and layered over engine.js in the browser.
-   Each account can keep its own version of any of these (user_defaults), layered over the app's. */
+   Each account can keep its own version of any of these (user_defaults), layered over the app's.
+   An account's own plan changes each take effect from a date (from: 'YYYY-MM-DD', null = from the start),
+   so days before a change keep the plan they had: user_defaults holds {versions:[…]}, oldest first. */
 const config = require('./config');
 const db = require('./db');
 const { FOODS, layerDefaults } = require('../public/engine.js');
@@ -121,21 +123,65 @@ function put(input, user) {
   return forUser(user);
 }
 
-/* The account's own layer, or null when it uses the app defaults as they are. */
-function mine(user) {
+const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+const isDate = v => typeof v === 'string' && DATE_RE.test(v) && !isNaN(Date.parse(v + 'T00:00:00Z'));
+const MAX_VERSIONS = 100;
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const isEmpty = d => !Object.keys(d.foods || {}).length && !d.schedule && !Object.keys(d.targets || {}).length && !d.plan;
+
+/* The account's own plan changes, oldest first. A layer saved before versions is one version from the start. */
+function myVersions(user) {
   const row = q.mine.get(user.id);
-  return row ? { ...JSON.parse(row.data), updatedAt: row.updated_at } : null;
+  if (!row) return [];
+  const doc = JSON.parse(row.data);
+  if (!Array.isArray(doc.versions)) return [{ from: null, ...doc, updatedAt: row.updated_at }];
+  return doc.versions;
 }
+/* the version in effect on a date */
+function versionOn(list, date) {
+  let v = null;
+  for (const x of list) if (!x.from || x.from <= date) v = x;
+  return v;
+}
+/* The account's own layer in effect on a date (today by default), or null when it uses the app defaults as they are. */
+function mine(user, date = ymd(new Date())) {
+  const v = versionOn(myVersions(user), date);
+  return v && !isEmpty(v) ? v : null;
+}
+function storeMine(user, list) {
+  list.sort((a, b) => (a.from || '').localeCompare(b.from || ''));
+  if (list.every(isEmpty)) q.delMine.run(user.id);
+  else q.putMine.run(user.id, JSON.stringify({ versions: list }));
+}
+/* With a from date (null = from the start) this saves the change taking effect then, replacing one with the
+   same date; changes dated later still apply from their dates. An empty change means "the app defaults from
+   then on". Without a date it replaces everything, as before versions existed. */
 function putMine(input, user) {
   const data = clean(input, get().foods || {});
-  const empty = !Object.keys(data.foods).length && !data.schedule && !Object.keys(data.targets).length && !data.plan;
-  if (empty) q.delMine.run(user.id); else q.putMine.run(user.id, JSON.stringify(data));
+  const has = isObj(input) && Object.prototype.hasOwnProperty.call(input, 'from');
+  const from = has && input.from != null && input.from !== '' ? input.from : null;
+  if (from !== null && !isDate(from)) throw new Error('The date it takes effect from must be a date');
+  const list = has ? myVersions(user).filter(x => x.from !== from) : [];
+  if (list.length >= MAX_VERSIONS) throw new Error('Too many plan changes – delete some old ones first');
+  list.push({ from, ...data, updatedAt: new Date().toISOString().replace('T', ' ').slice(0, 19) });
+  storeMine(user, list);
   return forUser(user);
 }
-function delMine(user) { q.delMine.run(user.id); return forUser(user); }
-/* What the browser gets: the app defaults plus the account's own layer. */
-function forUser(user) { return { ...get(), mine: mine(user) }; }
-/* What the account's days actually start from. */
-function effective(user) { return layerDefaults(get(), mine(user)); }
+/* Without a date: back to the app defaults for every day. With one ('start' for the first): delete that change,
+   so the one before it applies again. */
+function delMine(user, from) {
+  if (from === undefined) { q.delMine.run(user.id); return forUser(user); }
+  const key = from === 'start' ? null : from;
+  if (key !== null && !isDate(key)) throw new Error('Bad date');
+  const list = myVersions(user);
+  const rest = list.filter(x => x.from !== key);
+  if (rest.length === list.length) throw Object.assign(new Error('There is no plan change from that date'), { status: 404 });
+  storeMine(user, rest);
+  return forUser(user);
+}
+/* What the browser gets: the app defaults, the account's own layer in effect today, and all its dated changes. */
+function forUser(user) { return { ...get(), mine: mine(user), myVersions: myVersions(user) }; }
+/* What the account's days start from on a date (today by default). */
+function effective(user, date) { return layerDefaults(get(), mine(user, date)); }
 
-module.exports = { isAdmin, clean, get, put, mine, putMine, delMine, forUser, effective };
+module.exports = { isAdmin, clean, get, put, mine, myVersions, putMine, delMine, forUser, effective };

@@ -220,6 +220,57 @@ test('account admin: anyone keeps their own plan over the app defaults, only for
   assert.strictEqual((await friend.req('PUT', '/api/my/defaults', {})).body.mine, null);   /* nothing different = no layer */
 });
 
+test('account admin: plan changes take effect from a date, earlier days keep the plan they had', async () => {
+  const friend = client();
+  await friend.req('GET', '/auth/config');
+  await friend.req('POST', '/auth/login', { email: 'friend@example.com', password: 'longenough2' });
+  await friend.req('GET', '/api/me');
+  const plan = name => ({ R: [{ id: '1', name, p: [{ f: 'whey', g: 40 }], c: [{ f: 'banana', g: 100 }], x: [] }] });
+  const names = r => r.body.myVersions.map(v => [v.from, v.plan ? v.plan.R[0].name : null]);
+  /* a layer saved before dates existed is one change from the start */
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(dir, 't.db'));
+  const uid = db.prepare('SELECT id FROM users WHERE email = ?').get('friend@example.com').id;
+  db.prepare('INSERT OR REPLACE INTO user_defaults (user_id, data) VALUES (?, ?)').run(uid, JSON.stringify({ foods: {}, schedule: null, targets: {}, plan: plan('Old bowl') }));
+  db.close();
+  let r = await friend.req('GET', '/api/defaults');
+  assert.deepStrictEqual(names(r), [[null, 'Old bowl']]);
+  assert.strictEqual(r.body.mine.plan.R[0].name, 'Old bowl');
+
+  r = await friend.req('PUT', '/api/my/defaults', { plan: plan('Future bowl'), from: '2999-01-04' });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(names(r), [[null, 'Old bowl'], ['2999-01-04', 'Future bowl']]);
+  assert.strictEqual(r.body.mine.plan.R[0].name, 'Old bowl', 'today still uses the plan in effect now');
+  r = await friend.req('PUT', '/api/my/defaults', { plan: plan('Past bowl'), from: '2020-03-02' });
+  assert.strictEqual(r.body.mine.plan.R[0].name, 'Past bowl');
+  r = await friend.req('PUT', '/api/my/defaults', { plan: plan('Past bowl 2'), from: '2020-03-02' });   /* same date replaces it */
+  assert.deepStrictEqual(names(r), [[null, 'Old bowl'], ['2020-03-02', 'Past bowl 2'], ['2999-01-04', 'Future bowl']]);
+  /* nothing of your own from a date = the app defaults from then on */
+  r = await friend.req('PUT', '/api/my/defaults', { from: '2021-01-01' });
+  assert.strictEqual(r.body.mine, null);
+  assert.strictEqual(r.body.myVersions.length, 4);
+  for (const from of ['2020-13-01', 'soon']) assert.strictEqual((await friend.req('PUT', '/api/my/defaults', { from })).status, 400);
+
+  /* the export has every change; someone else's stay theirs */
+  assert.strictEqual((await friend.req('GET', '/api/export')).body.planChanges.length, 4);
+  const admin = client();
+  await admin.req('GET', '/auth/config');
+  await admin.req('POST', '/auth/login', { email: 'me@example.com', password: 'longenough1' });
+  await admin.req('GET', '/api/me');
+  assert.deepStrictEqual((await admin.req('GET', '/api/defaults')).body.myVersions, []);
+  assert.strictEqual((await admin.req('DELETE', '/api/my/defaults/2999-01-04')).status, 404);
+
+  assert.strictEqual((await friend.req('DELETE', '/api/my/defaults/2998-01-01')).status, 404);
+  r = await friend.req('DELETE', '/api/my/defaults/2021-01-01');
+  assert.strictEqual(r.body.mine.plan.R[0].name, 'Past bowl 2');
+  r = await friend.req('DELETE', '/api/my/defaults/start');
+  assert.deepStrictEqual(names(r), [['2020-03-02', 'Past bowl 2'], ['2999-01-04', 'Future bowl']]);
+  /* without a date, a save replaces every change, as before */
+  r = await friend.req('PUT', '/api/my/defaults', { plan: plan('Only bowl') });
+  assert.deepStrictEqual(names(r), [[null, 'Only bowl']]);
+  assert.strictEqual((await friend.req('DELETE', '/api/my/defaults')).body.myVersions.length, 0);
+});
+
 test('AI import: admin-only key that is never shown, and the reply is tidied', async () => {
   const admin = client();
   await admin.req('GET', '/auth/config');
