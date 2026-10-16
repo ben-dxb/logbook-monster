@@ -208,13 +208,13 @@
     <section class="panel" data-adtab="defaults" aria-labelledby="ad-ph">
       <h2 id="ad-ph"><span class="admine">My meal plan</span><span class="adapp">Default meal plan</span></h2>
       <p><span class="admine">The plan your new days start from, one per day type.</span><span class="adapp">The plan every account’s new days start from, unless they’ve made their own.</span>
-        Edit it here, or download it, change it in a spreadsheet and upload it again. Amounts are the starting point – each day still balances them to its targets. Days already in the history keep their own amounts.</p>
+        Edit it here<span class="adfiles">, or download it, change it in a spreadsheet and upload it again</span>. Amounts are the starting point – each day still balances them to its targets. Days already in the history keep their own amounts.</p>
       <div id="ad-planstate" class="status"></div>
       <div id="ad-versions" class="adversions" hidden></div>
       <div class="adtools">
-        <label class="btn adfile">Upload plan (CSV or JSON)<input id="ad-file" type="file" accept=".csv,.json,.txt,text/csv,application/json"></label>
-        <button class="ghost" type="button" data-ad="csv">Download plan (CSV)</button>
-        <button class="ghost" type="button" data-ad="json">Download all defaults (JSON)</button>
+        <label class="btn adfile adfiles">Upload plan (CSV or JSON)<input id="ad-file" type="file" accept=".csv,.json,.txt,text/csv,application/json"></label>
+        <button class="ghost adfiles" type="button" data-ad="csv">Download plan (CSV)</button>
+        <button class="ghost adfiles" type="button" data-ad="json">Download all defaults (JSON)</button>
         <button class="ghost" type="button" data-ad="restore" id="ad-restore" hidden>Use the built-in plan</button>
       </div>
       <section class="adai" id="ad-ai" aria-labelledby="ad-aih">
@@ -225,7 +225,8 @@
           <span id="ad-aistate" class="sub" role="status"></span>
         </div>
       </section>
-      <details class="adhelp"><summary>CSV format</summary>
+      <label class="tog adapp adoptfiles"><input type="checkbox" id="ad-planfiles"> Offer CSV / JSON plan files <span class="muted">– the upload and download buttons, for everyone</span></label>
+      <details class="adhelp adfiles"><summary>CSV format</summary>
         <p>One row per food, with these headings in the first row: <code>day_type, meal, meal_name, box, food, grams, locked, note</code>.
           <b>day_type</b> is training, rest or saturday; <b>meal</b> is the meal number; <b>box</b> is protein, carbs or fats (left blank, it follows the food's swap list);
           <b>food</b> is a food id or its name from the Foods list below; <b>locked</b> is yes to keep that amount fixed. Day types missing from the file keep their current plan.

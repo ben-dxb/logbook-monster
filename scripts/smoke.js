@@ -376,6 +376,11 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await pg.click('.adfood[data-id=banana] summary'); await pg.fill('#ad-fd-banana-k', '90');
         await pg.click('#ad-save');
         await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
+        /* plan files off: the CSV / JSON buttons go, on again: they're back */
+        await pg.uncheck('#ad-planfiles'); await pg.waitForFunction(() => document.querySelector('#v-admin').classList.contains('nofiles') && !document.querySelector('#ad-planfiles').disabled, null, { timeout: 5000 });
+        expect(await pg.isHidden('[data-ad=csv]') && await pg.isHidden('.adfile.adfiles'), 'plan file buttons should hide when switched off');
+        await pg.check('#ad-planfiles'); await pg.waitForFunction(() => !document.querySelector('#v-admin').classList.contains('nofiles') && !document.querySelector('#ad-planfiles').disabled, null, { timeout: 5000 });
+        expect(!(await pg.isHidden('[data-ad=csv]')), 'plan file buttons should be back when switched on');
         /* super admin tabs: the App defaults tab holds only the editor; AI, people and email are tabs of their own */
         expect(await pg.isHidden('#ad-aipanel') && await pg.isHidden('#ad-uh') && await pg.isHidden('#ad-eh') && !(await pg.isHidden('#ad-ph')), 'App defaults tab should show only the editor');
         expect(/OpenRouter API key/.test(await pg.textContent('#ad-aistate')) && await pg.isDisabled('#ad-aifile'), 'PDF reading should be off without a key');

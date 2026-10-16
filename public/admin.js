@@ -87,6 +87,7 @@ function renderAdmin(){
     AD=null;adMsg='';adErrs=[];adNotes=[];
   }
   adScope=want;$('#v-admin').classList.toggle('mine',want==='mine');
+  $('#v-admin').classList.toggle('nofiles',!planFiles);$('#ad-planfiles').checked=planFiles;
   if(want==='mine')adTab='defaults';
   adTabs();
   if(!AD){if(want==='mine')adPick();adLoad();adAiLoad();if(want==='app'){auLoad();amLoad();}}
@@ -259,6 +260,13 @@ $('#ad-addfood').addEventListener('submit',e=>{
   adOpen.add(id);['ad-nf-n','ad-nf-k','ad-nf-p','ad-nf-c','ad-nf-f'].forEach(x=>{$('#'+x).value='';});
   renderAdmin();
   const d=document.querySelector(`.adfood[data-id="${id}"]`);if(d)d.scrollIntoView({block:'nearest'});
+});
+/* super admin: CSV / JSON plan files on or off for everyone */
+$('#ad-planfiles').addEventListener('change',async e=>{
+  const el=e.target;el.disabled=true;
+  try{planFiles=(await api('PUT','/api/admin/options',{planFiles:el.checked})).planFiles;}
+  catch(err){if(!err.signedOut)alert(err.message);}
+  el.disabled=false;el.checked=planFiles;$('#v-admin').classList.toggle('nofiles',!planFiles);
 });
 $('#ad-file').addEventListener('change',e=>{const el=e.target;adUpload(el.files&&el.files[0]).finally(()=>{el.value='';});});
 window.addEventListener('beforeunload',e=>{if(adDirty()){e.preventDefault();e.returnValue='';}});
