@@ -1,5 +1,5 @@
 services:
-  mealswap:
+  logbook-monster:
     build: .
     restart: unless-stopped
     env_file: .env
@@ -9,6 +9,7 @@ services:
     ports:
       - "127.0.0.1:3000:3000"   # only reachable through your reverse proxy
     volumes:
-      - mealswap-data:/app/data
+      - logbook-monster-data:/app/data
 volumes:
-  mealswap-data:
+  logbook-monster-data:
+    name: mealswap_mealswap-data   # the volume created before the rename; keeps existing data
