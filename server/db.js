@@ -205,6 +205,12 @@ if (!db.prepare('PRAGMA table_info(exercises)').all().some(c => c.name === 'tren
   db.exec('ALTER TABLE exercises ADD COLUMN trend INTEGER NOT NULL DEFAULT 0');
 }
 
+/* Added later: parts are the body parts an exercise trains, as PARTS ids in gym.js joined with commas ('' = not tagged yet).
+   Set by hand in the exercise's settings or by "Tag with AI" in the Gym. */
+if (!db.prepare('PRAGMA table_info(exercises)').all().some(c => c.name === 'parts')) {
+  db.exec("ALTER TABLE exercises ADD COLUMN parts TEXT NOT NULL DEFAULT ''");
+}
+
 /* Added later: pose_ai = 1 when a photo's pose came from the AI (or was left for it: "Let AI tell" on upload, the
    AI not answering), so "Tag poses with AI" can leave the poses people set themselves alone. Older photos count as set by hand. */
 if (!db.prepare('PRAGMA table_info(photos)').all().some(c => c.name === 'pose_ai')) {

@@ -8,13 +8,14 @@ const db = require('./db');
 const ai = require('./ai');
 
 const q = {
-  exercises: db.prepare(`SELECT e.id, e.name, e.notes, e.trend, COUNT(s.id) AS sets, MAX(s.at) AS last
+  exercises: db.prepare(`SELECT e.id, e.name, e.notes, e.trend, e.parts, COUNT(s.id) AS sets, MAX(s.at) AS last
     FROM exercises e LEFT JOIN sets s ON s.exercise_id = e.id WHERE e.user_id = ? GROUP BY e.id ORDER BY e.name COLLATE NOCASE`),
-  exercise: db.prepare('SELECT id, name, notes, trend FROM exercises WHERE user_id = ? AND id = ?'),
+  exercise: db.prepare('SELECT id, name, notes, trend, parts FROM exercises WHERE user_id = ? AND id = ?'),
   exerciseByName: db.prepare('SELECT id, name, notes FROM exercises WHERE user_id = ? AND name = ? COLLATE NOCASE'),
   countExercises: db.prepare('SELECT COUNT(*) AS n FROM exercises WHERE user_id = ?'),
   addExercise: db.prepare('INSERT INTO exercises (user_id, name, notes) VALUES (?, ?, ?)'),
   putExercise: db.prepare('UPDATE exercises SET name = ?, notes = ? WHERE user_id = ? AND id = ?'),
+  partsExercise: db.prepare('UPDATE exercises SET parts = ? WHERE user_id = ? AND id = ?'),
   trendExercise: db.prepare('UPDATE exercises SET trend = ? WHERE user_id = ? AND id = ?'),
   trendClear: db.prepare('UPDATE exercises SET trend = 0 WHERE user_id = ?'),
   trendCount: db.prepare('SELECT COUNT(*) AS n FROM exercises WHERE user_id = ? AND trend = 1'),
@@ -42,6 +43,18 @@ const q = {
   sameSets: db.prepare('SELECT COUNT(*) AS n FROM sets WHERE user_id = ? AND exercise_id = ? AND at = ? AND reps = ? AND kg = ?'),
   allSets: db.prepare('SELECT id, exercise_id AS e, reps, kg, note, at FROM sets WHERE user_id = ? ORDER BY at, id'),
 };
+
+/* Body parts an exercise can be tagged with – the filters on the exercise picker. */
+const PARTS = [['chest', 'Chest'], ['back', 'Back'], ['shoulders', 'Shoulders'], ['traps', 'Traps'], ['biceps', 'Biceps'], ['triceps', 'Triceps'],
+  ['forearms', 'Forearms'], ['core', 'Core'], ['glutes', 'Glutes'], ['quads', 'Quads'], ['hamstrings', 'Hamstrings'], ['adductors', 'Adductors'],
+  ['calves', 'Calves'], ['cardio', 'Cardio']].map(([id, name]) => ({ id, name }));
+const PART_IDS = PARTS.map(p => p.id);
+/* known ids only, no repeats, main part first as given; null when the list isn't a list */
+function cleanParts(v) {
+  if (!Array.isArray(v)) return null;
+  return [...new Set(v.map(x => String(x).toLowerCase().trim()))].filter(id => PART_IDS.includes(id)).slice(0, 6);
+}
+const partsOut = r => r && ({ ...r, parts: r.parts ? r.parts.split(',') : [] });
 
 const MAX = { exercises: 500, workouts: 60, items: 40, sets: 100000, trends: 30 };
 const AT_RE = /^(\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]))T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
@@ -101,7 +114,7 @@ function exerciseCreate(user, name, notes) {
 }
 
 function overview(user) {
-  const exercises = q.exercises.all(user.id);
+  const exercises = q.exercises.all(user.id).map(partsOut);
   const ids = new Set(exercises.map(e => e.id));
   const workouts = q.workouts.all(user.id).map(w => ({ ...w, items: JSON.parse(w.items).filter(i => ids.has(i.e)) }));
   return { exercises, workouts };
@@ -112,6 +125,28 @@ function tx(fn) {
   try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 
+/* ---------- AI: which body parts each exercise trains ---------- */
+const PARTS_PROMPT = `You tag gym exercises with the body parts they train, for a workout tracking app.
+For each exercise give the muscle groups it trains significantly: the main mover first, then important secondary muscles (at most 4).
+Use only these ids: ${PART_IDS.join(', ')}.
+"back" covers lats, rhomboids and lower back; "core" covers abs and obliques; "cardio" is for conditioning work such as running, rowing or the bike.
+Machine brand names (Panatta, Atlantis, Hammer Strength…) are only equipment – go by the movement.
+If a name is too unclear to tell, give an empty list.
+Reply with only JSON: {"exercises": [{"id": <the id given>, "parts": ["quads", "glutes"]}]}`;
+
+async function tagParts(user, ids) {
+  const list = ids.map(id => q.exercise.get(user.id, id)).filter(Boolean);
+  if (!list.length) throw fail('Pick exercises to tag');
+  const { reply, model } = await ai.askText(PARTS_PROMPT, list.map(e => `${e.id}: ${e.name}`).join('\n'), { task: 'exercise' });
+  const got = new Map((isObj(reply) && Array.isArray(reply.exercises) ? reply.exercises : []).filter(isObj).map(x => [idOf(x.id), cleanParts(x.parts)]));
+  let tagged = 0;
+  tx(() => list.forEach(e => {
+    const parts = got.get(e.id);
+    if (parts && parts.length) { q.partsExercise.run(parts.join(','), user.id, e.id); tagged++; }
+  }));
+  return { tagged, model, exercises: overview(user).exercises };
+}
+
 /* ---------- AI: read a workout plan ---------- */
 function prompt(names) {
   return `You turn a strength training program (a coach's PDF, a spreadsheet screenshot or a photo of a plan) into JSON for a workout tracking app.
@@ -119,7 +154,7 @@ function prompt(names) {
 A program is a list of workouts (training days or sessions, e.g. "Monday — Upper", "Push A", "Day 2 – Lower"). Each workout has:
 - "name": short name as written in the document, prefixed with the weekday if the document says which day it is done
 - "description": one or two sentences summarising the session (number of working sets, the focus, order or rest instructions the document gives)
-- "exercises": the exercises in the order they are done, each {"name": exercise name, "target": the prescription in a short form, e.g. "3 × 8–12", "1 × 5–8 heavy, then 1 × 10–15 lighter", "2 × 12–15, 60s rest", "3 × 30s"}
+- "exercises": the exercises in the order they are done, each {"name": exercise name, "target": the prescription in a short form, e.g. "3 × 8–12", "1 × 5–8 heavy, then 1 × 10–15 lighter", "2 × 12–15, 60s rest", "3 × 30s", "parts": the body parts it trains, main mover first, at most 4, from these ids: ${PART_IDS.join(', ')}}
 Keep warm-ups, cardio and stretching only if the document lists them as exercises. Keep supersets in order and mention the pairing in the target ("superset with lateral raise").
 
 The person already has these exercises. When the document means the same exercise, use the exact same name so their history carries over:
@@ -139,7 +174,7 @@ function tidyWorkouts(raw, user) {
       const name = str(isObj(x) ? x.name : x, 80);
       if (!name) return null;
       const found = q.exerciseByName.get(user.id, name);
-      return { name: found ? found.name : name, target: str(isObj(x) ? x.target : '', 200), existing: found ? found.id : null };
+      return { name: found ? found.name : name, target: str(isObj(x) ? x.target : '', 200), existing: found ? found.id : null, parts: (isObj(x) && cleanParts(x.parts)) || [] };
     }).filter(Boolean);
     return { name: str(w.name, 80) || `Workout ${wi + 1}`, description: String(w.description == null ? '' : w.description).trim().slice(0, 1000), exercises };
   }).filter(w => w.exercises.length);
@@ -148,6 +183,11 @@ function tidyWorkouts(raw, user) {
 }
 
 /* The OpenRouter key is the admin's, so each account gets a handful of reads an hour. */
+const partsLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false,
+  keyGenerator: req => 'u' + req.user.id,
+  message: { error: 'That’s a lot of AI tagging – wait a while and try again.' },
+});
 const aiLimit = rateLimit({
   windowMs: 60 * 60 * 1000, limit: 12, standardHeaders: 'draft-7', legacyHeaders: false,
   keyGenerator: req => 'u' + req.user.id,
@@ -162,20 +202,34 @@ const send = fn => (req, res) => {
 };
 const notFound = what => Object.assign(new Error(`No such ${what}`), { status: 404 });
 
-router.get('/', send(req => ({ ...overview(req.user), ai: ai.status().configured })));
+router.get('/', send(req => ({ ...overview(req.user), parts: PARTS, ai: ai.status().configured })));
 
 router.post('/exercises', send(req => {
   const b = isObj(req.body) ? req.body : {};
-  return q.exercise.get(req.user.id, exerciseCreate(req.user, b.name, b.notes));
+  return partsOut(q.exercise.get(req.user.id, exerciseCreate(req.user, b.name, b.notes)));
 }));
+/* AI: tag these exercises (yours, 40 at most a time) with the body parts they train. */
+router.post('/exercises/ai-parts', partsLimit, async (req, res) => {
+  try {
+    const ids = isObj(req.body) && Array.isArray(req.body.ids) ? [...new Set(req.body.ids.map(idOf))] : null;
+    if (!ids || !ids.length || ids.some(n => !Number.isFinite(n))) throw fail('Send a list of exercise ids');
+    if (ids.length > 40) throw fail('Tag 40 exercises at most at a time');
+    res.json(await tagParts(req.user, ids));
+  } catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); if (!e.status) console.error(e); }
+});
 router.put('/exercises/:id', send(req => {
   const id = idOf(req.params.id), b = isObj(req.body) ? req.body : {};
   if (!q.exercise.get(req.user.id, id)) throw notFound('exercise');
   const name = text(b.name, 80, 'Exercise name', true);
   const other = q.exerciseByName.get(req.user.id, name);
   if (other && other.id !== id) throw fail(`You already have an exercise called ${other.name}`);
-  q.putExercise.run(name, longText(b.notes, 1000, 'Notes'), req.user.id, id);
-  return q.exercise.get(req.user.id, id);
+  const parts = b.parts === undefined ? null : cleanParts(b.parts);
+  if (b.parts !== undefined && !parts) throw fail('Body parts must be a list');
+  tx(() => {
+    q.putExercise.run(name, longText(b.notes, 1000, 'Notes'), req.user.id, id);
+    if (parts) q.partsExercise.run(parts.join(','), req.user.id, id);
+  });
+  return partsOut(q.exercise.get(req.user.id, id));
 }));
 /* "Trend": follow one exercise's estimated one-rep max on the Timeline's chart */
 router.put('/exercises/:id/trend', send(req => {
@@ -184,7 +238,7 @@ router.put('/exercises/:id/trend', send(req => {
   if (!e) throw notFound('exercise');
   if (on && !e.trend && q.trendCount.get(req.user.id).n >= MAX.trends) throw fail(`You can follow ${MAX.trends} exercises on the trend chart at most`);
   q.trendExercise.run(on ? 1 : 0, req.user.id, id);
-  return q.exercise.get(req.user.id, id);
+  return partsOut(q.exercise.get(req.user.id, id));
 }));
 /* the Timeline's exercise picker: the whole list of followed exercises at once */
 router.put('/trends', send(req => {
@@ -266,7 +320,11 @@ router.post('/import', send(req => {
     let pos = q.countWorkouts.get(req.user.id).pos;
     for (const w of list) {
       if (!isObj(w) || !Array.isArray(w.exercises)) throw fail('Each workout needs a list of exercises');
-      const items = w.exercises.slice(0, MAX.items).map(x => ({ e: exerciseCreate(req.user, isObj(x) ? x.name : x), target: isObj(x) ? x.target : '' }));
+      const items = w.exercises.slice(0, MAX.items).map(x => {
+        const e = exerciseCreate(req.user, isObj(x) ? x.name : x), parts = isObj(x) && cleanParts(x.parts);
+        if (parts && parts.length && !q.exercise.get(req.user.id, e).parts) q.partsExercise.run(parts.join(','), req.user.id, e);   /* tags only untagged ones */
+        return { e, target: isObj(x) ? x.target : '' };
+      });
       const c = cleanWorkout({ name: w.name, description: w.description, items }, req.user);
       if (q.countWorkouts.get(req.user.id).n >= MAX.workouts) throw fail(`You can have ${MAX.workouts} workouts at most`);
       q.addWorkout.run(req.user.id, c.name, c.description, c.items, ++pos);

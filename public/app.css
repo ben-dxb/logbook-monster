@@ -319,6 +319,24 @@ footer{font-size:12px;color:var(--muted)}
 .gen{font-weight:700;min-width:0;overflow-wrap:anywhere}
 .gtarget{min-width:0;width:100%;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:4px 6px;font-size:13px}
 .gaddex{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:end}
+.gaddex input[type=search]{min-width:0;width:100%;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:8px 10px;font-size:15px}
+/* the exercise picker in the workout builder: search, body-part filters and a tall list of your exercises */
+.gpick{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:10px}
+.gparts button small{font-size:11px;opacity:.7;margin-left:2px}
+.gpicklist{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));align-content:start;max-height:min(65vh,620px);min-height:180px;overflow-y:auto;overscroll-behavior:contain}
+.gpicklist .grow{border-top:0;border-bottom:1px solid var(--soft)}
+.gpicklist .empty,.gpicklist .gadd{grid-column:1/-1}
+.gprow{width:100%;background:transparent;border:0;font:inherit;text-align:left;cursor:pointer;min-height:48px}
+.gprow:hover{background:var(--soft)}
+.gprow:focus-visible{outline:2px solid var(--info);outline-offset:-2px}
+.gplus{flex:none;display:inline-grid;place-items:center;width:28px;height:28px;border-radius:99px;border:1px solid var(--line);font-weight:800;color:var(--good)}
+.gprow .chip.ok{align-self:center;flex:none}
+.gpts{display:flex;flex-wrap:wrap;gap:3px;margin-top:2px}
+.chip.gpart{background:transparent;border:1px solid var(--line);color:var(--muted);font-weight:600}
+.gtag{align-self:flex-start}
+#g-tagmsg:empty{display:none}
+.gpartset{border:0;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
+.gpartset legend{padding:0;margin-bottom:4px}
 /* sets of one exercise, grouped by day */
 .gdays{display:flex;flex-direction:column;gap:12px}
 .gday{display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}

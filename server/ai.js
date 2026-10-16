@@ -16,6 +16,7 @@ const TASKS = {
   supps: { name: 'Supplement regime import', hint: 'Reads a PDF or photo of a supplement regime – needs a model that reads PDFs' },
   food: { name: 'Food values', hint: 'Fills in blank calories and macros in the food library (text only)' },
   pose: { name: 'Photo poses', hint: 'Tells front / side / back from a progress photo – needs a model that sees images' },
+  exercise: { name: 'Exercise body parts', hint: 'Tags exercises with the body parts they train (text only)' },
   summary: { name: 'Timeline summary', hint: 'Writes the summary of trends on the Timeline (text only)' },
 };
 const MODEL_RE = /^[\w.\-/:]{3,100}$/;
