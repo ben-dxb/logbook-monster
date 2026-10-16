@@ -314,6 +314,13 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.fill('#p-nearkg', ''); await pg.uncheck('#p-near');
       await pg.waitForFunction(() => document.querySelectorAll('#p-list .pday').length === 2);
       expect(first === !(await pg.locator('#p-aibtn').count()), '"Tag poses with AI" only once AI is set up');
+      if (!first) {
+        /* every photo here had its pose set by hand: asked whether to redo those, "leave them" leaves nothing for the AI */
+        let asked = '';
+        pg.once('dialog', d => { asked = d.message(); d.dismiss(); }); await pg.click('#p-aibtn');
+        await pg.waitForFunction(() => /nothing for the AI to tag/.test(document.querySelector('#p-list').textContent), null, { timeout: 5000 });
+        expect(/you set yourself/.test(asked), '"Tag poses with AI" should ask about poses set by hand');
+      }
       await pg.fill('#p-jump', '2026-09-04'); await pg.waitForSelector('#p-d-2026-09-01.hit');
       /* pick two photos in the catalog and compare them, older on the left */
       await pg.click('#p-selbtn'); await pg.waitForSelector('#p-selbar:not([hidden])');

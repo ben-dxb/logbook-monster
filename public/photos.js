@@ -257,12 +257,12 @@ async function pUpload(form){
       try{
         const big=await pShrink(f,P_MAX,0.86), small=await pShrink(f,P_THUMB,0.8);
         if(stop)return;
-        let p=await pSend('POST',`/api/photos?${new URLSearchParams({date:d,pose,note})}`,big);
+        let p=await pSend('POST',`/api/photos?${new URLSearchParams({date:d,pose,note,...(byAi?{ai:'1'}:{})})}`,big);
         try{p=await pSend('PUT',`/api/photos/${p.id}/thumb`,small);}catch(e){if(e.signedOut)throw e;}   /* the catalog falls back to the full picture */
         PHOTOS.push(p);done++;dates.add(d);if(when[i].own)own++;
         if(byAi){
           try{const a=await pAskAi(p.id,true);const k=PHOTOS.findIndex(x=>x.id===p.id);if(k>=0)PHOTOS[k]=a.photo;}
-          catch(e){if(e.signedOut)throw e;aiMiss++;}   /* stays "other" */
+          catch(e){if(e.signedOut)throw e;aiMiss++;}   /* stays "other", not counted as set by hand */
         }
       }catch(e){
         if(e.signedOut||/reach the server|most photos/.test(e.message))stop=stop||e;
@@ -276,7 +276,7 @@ async function pUpload(form){
     const ds=[...dates].sort();
     pMsg=!done?'':`Added ${done} photo${done===1?'':'s'} `+(ds.length===1?`for ${fmtLong(ds[0])}`:`over ${ds.length} days, ${fmtShort(ds[0])} to ${fmtShort(ds[ds.length-1])}`)+
       (useExif&&many&&own?` (${own===done?'all':own} dated from the photo${own===1?'':'s'}${own<done?`, ${done-own} on ${fmtShort(date)}`:''})`:'')+'.'+
-      (aiMiss?` The AI couldn’t tag ${aiMiss===done?(done===1?'it':'them'):aiMiss} – ${aiMiss===1?'it’s':'they’re'} under Other; change the pose on the photo.`:'');
+      (aiMiss?` The AI couldn’t tag ${aiMiss===done?(done===1?'it':'them'):aiMiss} – ${aiMiss===1?'it’s':'they’re'} under Other; try “Tag poses with AI” again later or change the pose on the photo.`:'');
     if(stop||fails.length){
       err.textContent=(done?`Added ${done} of ${n}. `:'')+(stop?stop.message+' ':'')+(fails.length?`${fails.length} couldn’t be added – ${fails.slice(0,3).join('; ')}${fails.length>3?'; …':''}`:'');
       err.hidden=false;
@@ -328,11 +328,17 @@ async function pDelete(id){
 }
 
 
-/* "Tag poses with AI": the AI sets the pose of every photo the catalog shows (so pick Other first to sort only those) */
+/* "Tag poses with AI": the AI sets the pose of the photos the catalog shows (so pick Other first to sort only those).
+   Poses the person set themselves (poseAi false) are redone only if they say so. */
 async function pAiTagAll(){
   if(pAiBusy)return;
-  const list=pShown();if(!list.length)return;
-  if(!confirm(`Let the AI look at the ${list.length} photo${list.length===1?'':'s'} shown and set ${list.length===1?'its':'their'} pose (front, side, back or other)? Poses you set yourself will be replaced.\n\n${P_AI_NOTE}`))return;
+  let list=pShown();if(!list.length)return;
+  const mine=list.filter(p=>!p.poseAi).length;
+  if(mine&&!confirm(`${mine===list.length?(mine===1?'The photo':`All ${mine} photos`):`${mine} of the ${list.length} photos`} shown ${mine===1?'has a pose':'have poses'} you set yourself. Let the AI redo ${mine===1?'that':'those'} too?\n\nOK – redo ${mine===1?'it':'them'} too\nCancel – leave ${mine===1?'it':'them'} as ${mine===1?'it is':'they are'}`)){
+    list=list.filter(p=>p.poseAi);
+    if(!list.length){pMsg='Every photo shown has a pose you set yourself, so there’s nothing for the AI to tag.';renderPhotoList();return;}
+  }
+  if(!confirm(`Let the AI look at ${list.length===1?'this photo':`these ${list.length} photos`} and set ${list.length===1?'its':'their'} pose (front, side, back or other)?\n\n${P_AI_NOTE}`))return;
   pAiBusy=true;pMsg='';
   const btn=()=>$('#p-aibtn');
   let done=0, changed=0, miss=0, why='';
