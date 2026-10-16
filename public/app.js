@@ -51,7 +51,7 @@ function restoreStash(){
   try{localStorage.removeItem(STASH);}catch{}
   if(Date.now()-st.at>14*86400000)return;
   for(const [key,j] of st.jobs){
-    if(key==='@settings'){const v=JSON.parse(j);S.pud={...PUD_DEFAULT,...(v.pud||{})};S.snackOv=v.snackOv||{};recalcPudding();}
+    if(key==='@settings'){const v=JSON.parse(j);S.pud={...PUD_DEFAULT,...(v.pud||{})};S.snackOv=v.snackOv||{};S.pBasis=v.pBasis==='direct'?'direct':'total';recalcPudding();}
     else if(isDate(key)){S.days[key]=migrate(JSON.parse(j));SAVED.days[key]=null;}
   }
 }
@@ -64,6 +64,7 @@ function migrate(D){
   return D;
 }
 const pending=new Map(); let saveTimer=null, saveState='idle', saveErr='', inFlight=false;
+const settingsJson=()=>JSON.stringify({pud:S.pud,snackOv:S.snackOv||{},pBasis:S.pBasis||'total'});
 function summaryOf(date,D){const t=dayTotals(D);return {...t,targets:{...D.targets},type:TYPE[wdOf(date)]};}
 
 /* Called after every render: anything that differs from what the server has gets queued. */
@@ -73,7 +74,7 @@ function persist(){
     if(SAVED.days[date]===undefined){SAVED.days[date]=j;continue;}   /* first sight of an unsaved plan: baseline */
     if(SAVED.days[date]!==j) pending.set(date,j);
   }
-  const sj=JSON.stringify({pud:S.pud,snackOv:S.snackOv||{}});
+  const sj=settingsJson();
   if(SAVED.settings!==null&&SAVED.settings!==sj) pending.set('@settings',sj);
   if(pending.size){saveState='pending';clearTimeout(saveTimer);saveTimer=setTimeout(flush,600);}
   renderStatus();
@@ -222,9 +223,12 @@ function render(){
   renderWeek();
   renderWeightInline();
   const names={k:'Calories',p:'Protein min',c:'Carbs',f:'Fat max'};
+  const dir=pKey()==='d';if(dir)names.p='Direct protein min';
+  const val=m=>m==='p'&&dir?T.d:T[m];
   $('#sum').innerHTML=MAC.map(m=>`<div class="stat"><span class="lbl">${names[m]}</span>
-      <span class="num">${r0(T[m])}<i>/ ${r0(tg[m])}${m==='k'?'':'g'}</i></span>${chip(m,T[m],+tg[m])}
-      ${m==='p'?`<span class="sub">direct ${r0(T.d)}g</span>`:''}</div>`).join('');
+      <span class="num">${r0(val(m))}<i>/ ${r0(tg[m])}${m==='k'?'':'g'}</i></span>${chip(m,val(m),+tg[m])}
+      ${m==='p'?`<span class="sub">${dir?`total ${r0(T.p)}g`:`direct ${r0(T.d)}g`}</span>`:''}</div>`).join('');
+  document.querySelectorAll('[data-act="pbasis"]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===(dir?'direct':'total'))));
   const left={k:tg.k-T.k,p:tg.p-T.p,c:tg.c-T.c,f:tg.f-T.f};
   $('#left').innerHTML=D.auto?'':`<b>Left to spend off plan:</b> ${r0(Math.max(0,left.k))} kcal · P ${r1(Math.max(0,left.p))} · C ${r1(Math.max(0,left.c))} · F ${r1(Math.max(0,left.f))}`;
   $('#left').hidden=D.auto;
@@ -461,6 +465,7 @@ document.addEventListener('click',e=>{
   else if(a==='save'){saveMeal(+b.dataset.m);}
   else if(a==='undo'){undoMeal(+b.dataset.m);}
   else if(a==='odel'){act(D=>{D.off.splice(+b.dataset.i,1);});}
+  else if(a==='pbasis'){if(S.pBasis!==b.dataset.v){S.pBasis=b.dataset.v;act(()=>{});}}
   else if(a==='reset'){if(!resetArmed){resetArmed=true;render();return;}resetArmed=false;S.days[S.cur]=freshDay(wd());render();}
 });
 /* pack weights: update the portion as you type, without re-rendering under your fingers */
@@ -555,7 +560,8 @@ document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(
     LIB=(lib&&lib.foods)||[];LIBV++;
     applyDefaults(defs);
     S.pud={...PUD_DEFAULT,...((settings||{}).pud||{})};S.snackOv=(settings||{}).snackOv||{};
-    SAVED.settings=JSON.stringify({pud:S.pud,snackOv:S.snackOv});
+    S.pBasis=(settings||{}).pBasis==='direct'?'direct':'total';
+    SAVED.settings=settingsJson();
     (sums||[]).forEach(s=>{SUMS[s.date]=s;LOGGED.add(s.date);});
     (weights||[]).forEach(w=>{WEIGHTS[w.date]=w.kg;});
     recalcPudding();

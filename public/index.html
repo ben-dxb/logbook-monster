@@ -106,6 +106,10 @@
     <section class="panel" aria-labelledby="th">
       <h2 id="th">Day targets</h2>
       <p>Change these for this day only. Protein is a minimum and fat a maximum; calories and carbs are matched.</p>
+      <div class="seg pbasis" role="group" aria-label="Protein target counts"><span class="lbl">Protein target counts</span>
+        <button type="button" data-act="pbasis" data-v="total" aria-pressed="true">Total protein</button>
+        <button type="button" data-act="pbasis" data-v="direct" aria-pressed="false">Direct protein</button></div>
+      <p>Auto-balance drives protein from this. Direct protein is meat, eggs, dairy and whey only; total also counts carbs and off-plan food. Applies to every day.</p>
       <div class="grid4">
         <label class="f"><span class="lbl">kcal</span><input id="t-k" type="number" inputmode="decimal" min="0"></label>
         <label class="f"><span class="lbl">Protein g</span><input id="t-p" type="number" inputmode="decimal" min="0"></label>
