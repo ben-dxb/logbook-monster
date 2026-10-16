@@ -39,6 +39,20 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.goto(BASE + '/');
       expect(pg.url().endsWith('/login'), 'signed-out visit should land on /login');
       await pg.fill('#email', 'smoke@example.com'); await pg.fill('#password', 'smoke-password-1'); await pg.click('#submit');
+      /* the Dashboard is the landing page: the default checklist (Training done too – no plan, so no rest days yet), a tick that survives a reload */
+      await pg.waitForSelector('#v-dash:not([hidden]) .dcheck .dlist', { timeout: 5000 });
+      expect(await pg.locator('.dcheck .dweek .dday').count() === 7, 'the checklist should show the last 7 days');
+      if (first) {
+        expect(await pg.locator('.dcheck input[data-dk]').count() === 7 && /Training done/.test(await pg.textContent('.dcheck')), 'the default checklist has 7 items');
+        await pg.check('.dcheck input[data-dk=water]');
+        await pg.waitForFunction(() => /1 of 7 done/.test(document.querySelector('.dcheck').textContent), null, { timeout: 5000 });
+        await pg.reload(); await pg.waitForSelector('#v-dash:not([hidden]) .dcheck .dlist');
+        expect(await pg.isChecked('.dcheck input[data-dk=water]'), 'a tick should survive reload');
+        expect(await pg.locator('#d-body .dcard').count() === 5, 'one card each for food, weight, gym, supplements and photos');
+      }
+      const dashScroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(dashScroll <= 1, `horizontal overflow of ${dashScroll}px on the dashboard at ${w}px wide`);
+      await pg.click('a[data-view=day]');
       if (first) {   /* no app defaults: a new account has no plan until it makes one; this one takes the old built-in plan */
         await pg.waitForSelector('#v-day:not([hidden]) #meals .noplan', { timeout: 5000 });
         await pg.evaluate(plan => api('PUT', '/api/my/defaults', plan), require('../server/legacy').effective({}, {}));
@@ -486,6 +500,23 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await pg.click('#ad-save');
         await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
         expect(/5 day templates/.test(await pg.textContent('#ad-planstate')), 'the new template should be saved with the plan');
+        /* the daily checklist: drop Cardio, add an item, save – the Dashboard follows; Weigh in and Supplements taken tick
+           themselves from today's weight and supplement log */
+        await pg.waitForSelector('#ad-cl .adclrow');
+        expect(await pg.locator('#ad-cl .adclrow').count() === 7, 'the checklist editor starts with the default list');
+        await pg.click('#ad-cl [data-cl=del][data-i="6"]');
+        await pg.click('[data-cl=add]'); await pg.fill('#ad-cl input[data-cl=label][data-i="6"]', 'Smoke stretch');
+        await pg.selectOption('#ad-cl select[data-cl=show][data-i="6"]', 'all');
+        await pg.click('#ad-clsave'); await pg.waitForFunction(() => /Checklist saved/.test(document.querySelector('#ad-clmsg').textContent), null, { timeout: 5000 });
+        const clScroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        expect(clScroll <= 1, `horizontal overflow of ${clScroll}px on Account admin at ${w}px wide`);
+        await pg.click('a[data-view=dash]'); await pg.waitForSelector('#v-dash:not([hidden]) .dcheck .dlist');
+        const dtxt = await pg.textContent('.dcheck');
+        expect(/Smoke stretch/.test(dtxt) && !/Cardio done/.test(dtxt), 'the dashboard should show the saved checklist');
+        expect(await pg.isChecked('.dcheck input[data-dk=weigh]') && await pg.isDisabled('.dcheck input[data-dk=weigh]'), 'Weigh in should tick itself from today’s weight');
+        expect(await pg.isChecked('.dcheck input[data-dk=supps]'), 'Supplements taken should tick itself from today’s supplement log');
+        expect(/Smoke creatine/.test(await pg.textContent('#d-body')), 'the supplement regime card lists the library');
+        await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
         expect(/OpenRouter API key/.test(await pg.textContent('#ad-aistate')) && await pg.isDisabled('#ad-aifile'), 'PDF reading should be off without a key');
         /* super admin: no plan editor at all – AI, people and email in tabs */
         await pg.click('#acct>summary'); await pg.click('#adminlink');
@@ -513,7 +544,10 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await gp.goto(link); await gp.waitForSelector('#form:not([hidden])', { timeout: 5000 });
         expect(/guest@example\.com/.test(await gp.textContent('#intro')), 'invite page should name the invited email');
         await gp.fill('#password', 'guest-password-1'); await gp.click('#submit');
-        /* the guest starts with no plan – nothing of the super admin's */
+        /* the guest starts with no plan – nothing of the super admin's – and the default checklist */
+        await gp.waitForSelector('#v-dash:not([hidden]) .dcheck .dlist', { timeout: 5000 });
+        expect(/No meal plan yet/.test(await gp.textContent('#d-body')) && await gp.locator('.dcheck input[data-dk]:checked').count() === 0, 'a new account’s dashboard is empty');
+        await gp.click('a[data-view=day]');
         await gp.waitForSelector('#v-day:not([hidden]) #meals .noplan', { timeout: 5000 });
         expect(await gp.locator('#meals .meal').count() === 0, 'a new account should have no meals');
         expect(await gp.isHidden('#adminlink'), 'super admin link should be hidden for other accounts');

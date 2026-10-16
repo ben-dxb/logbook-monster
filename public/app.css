@@ -574,3 +574,37 @@ footer{font-size:12px;color:var(--muted)}
 .cmore{align-self:flex-start}
 .cdd{grid-area:d}.cdk{grid-area:k}.cdm{grid-area:m}.cdw{grid-area:w}
 @media (max-width:700px){.cday{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:'d w' 'k m'}.cdm{text-align:right}}
+/* ---------- dashboard ---------- */
+.dgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr));gap:12px;align-items:start}
+.dcheck{grid-column:1/-1}
+.dhead{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.dhead .chip{align-self:auto}
+.dweek{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.dday{display:flex;flex-direction:column;align-items:center;gap:1px;padding:5px 2px;border:1px solid var(--line);border-radius:8px;color:var(--ink);text-decoration:none;font-size:12px;min-width:0}
+.dday span{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.dday[aria-current]{border-color:var(--info);box-shadow:inset 0 0 0 1px var(--info)}
+.dday.all b{color:var(--good)}
+.dlist{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,230px),1fr));gap:6px}
+.dtick{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:15px;cursor:pointer;min-width:0}
+.dtick input{width:20px;height:20px;flex:none}
+.dtick span:first-of-type{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+.dtick.done{border-color:var(--good)}
+.dtick.done span:first-of-type{color:var(--muted);text-decoration:line-through}
+.dcard{color:var(--ink);text-decoration:none}
+.dcard h2{display:flex;justify-content:space-between;align-items:center}
+.dcard:hover{border-color:var(--info)}
+.dmacs{display:flex;flex-direction:column;gap:6px}
+.dmac{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:2px 8px;align-items:baseline;font-size:13px}
+.dbar{grid-column:1/-1;width:100%;height:6px;accent-color:var(--good)}
+.dbar.over{accent-color:var(--bad)}
+.dbig{font-size:13px;color:var(--muted)} .dbig b{font-size:24px;color:var(--ink)}
+.dsupps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;font-size:13px}
+.dsupps li{display:flex;justify-content:space-between;gap:8px} .dsupps li span{min-width:0;overflow-wrap:anywhere}
+.dphoto{display:flex;gap:10px;align-items:flex-start}
+.dphoto img{width:96px;height:128px;object-fit:cover;border-radius:8px;flex:none;background:var(--soft)}
+/* Account admin › Daily checklist */
+.adcl{display:flex;flex-direction:column;gap:8px}
+.adclrow{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr) auto;gap:6px 8px;align-items:end}
+.adclrow input,.adclrow select{width:100%;min-width:0;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px;color:inherit}
+.adclrow .gmv{display:flex;gap:4px;align-items:center}
+@media (max-width:640px){.adclrow{grid-template-columns:minmax(0,1fr) minmax(0,1fr);border-top:1px solid var(--line);padding-top:8px}.adclrow .adclname{grid-column:1/-1}.adclrow .gmv{grid-column:1/-1;justify-content:flex-end}}

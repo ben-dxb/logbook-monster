@@ -176,6 +176,20 @@ CREATE TABLE IF NOT EXISTS shares (
   used_at    TEXT
 );
 CREATE INDEX IF NOT EXISTS shares_user ON shares(user_id);
+/* The Dashboard's daily checklist: each account's own list of items (JSON; none stored = the default list) and
+   which items were ticked on which day. */
+CREATE TABLE IF NOT EXISTS checklists (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  items      TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS checklist_log (
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  date       TEXT NOT NULL,
+  item       TEXT NOT NULL,
+  done_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, date, item)
+);
 `);
 
 /* Added after the first release: accounts an admin invited may sign in even when ALLOWED_EMAILS doesn't list them. */
