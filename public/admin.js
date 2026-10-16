@@ -12,7 +12,7 @@ const adOpen=new Set();                      /* food editors left open */
 function builtinRecord(id){const F=BUILTIN.foods[id];const r={group:builtinGroup(id)};
   FOOD_FIELDS.forEach(k=>{if(k!=='group')r[k]=F[k]!=null?F[k]:(k==='unit'?'g':null);});return r;}
 function builtinPlanData(){const keep=CUSTOM_PLAN;CUSTOM_PLAN=null;try{return planData();}finally{CUSTOM_PLAN=keep;}}
-function adEditable(id){return id!=='pudding';}       /* pudding values come from the batch on the Day page */
+function adEditable(id){return id!=='pudding'&&!isLib(id);}   /* pudding values come from the batch on the Day page; library foods belong to people */
 function adLoad(){
   const foods={};Object.keys(FOODS).filter(adEditable).forEach(id=>{foods[id]=foodRecord(id);});
   AD={foods,schedule:[...TYPE],targets:clone(COACH),plan:planData(),custom:!!CUSTOM_PLAN};
@@ -177,7 +177,7 @@ async function adSave(){
   adBusy=true;adStatus();
   try{
     const r=await api('PUT','/api/admin/defaults',adPayload());
-    applyDefaults(r);
+    applyDefaults(r);libRegister();
     /* days you haven't saved yet start again from the new plan */
     for(const d of Object.keys(S.days)) if(!LOGGED.has(d)&&!pending.has(d)){delete S.days[d];delete SAVED.days[d];}
     adLoad();adMsg='';adErrs=[];
