@@ -25,7 +25,10 @@ const gEmpty=t=>`<p class="empty">${t}</p>`;
 const P_NAME={front:'Front',left:'Left side',right:'Right side',side:'Side',back:'Back',other:'Other'};
 const pSrc=p=>`${SHARED.base}/api/photos/${p.id}/file?v=${encodeURIComponent(p.v)}`;
 const pThumb=p=>p.tv?`${SHARED.base}/api/photos/${p.id}/thumb?v=${encodeURIComponent(p.tv)}`:pSrc(p);
+const P_STYLE={relaxed:'Relaxed',front_relaxed:'Front relaxed',back_relaxed:'Back relaxed',front_double_biceps:'Front double biceps',
+  back_double_biceps:'Back double biceps',most_muscular:'Most muscular'};
 const pPoseName=p=>P_NAME[p]||p;
+const pLabel=p=>pPoseName(p.pose)+(p.style?' · '+(P_STYLE[p.style]||p.style):'');
 const sNum=n=>String(Math.round(n*1000)/1000);
 const sUnitTxt=(u,n)=>/s$/.test(u)&&+n===1?u.slice(0,-1):u;
 const sDose=(n,u)=>`${sNum(n)} ${sUnitTxt(u,n)}`;
