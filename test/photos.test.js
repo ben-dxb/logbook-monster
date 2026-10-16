@@ -6,19 +6,35 @@ const { spawn, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const http = require('node:http');
 const { DatabaseSync } = require('node:sqlite');
 
-const [PORT] = require('./_ports').freePorts(1);
+const [PORT, AI_PORT] = require('./_ports').freePorts(2);
+/* Stands in for OpenRouter: answers with the pose written in the picture's bytes ("pose:back"), or junk */
+const aiSeen = [];
+const fakeAi = http.createServer((req, res) => {
+  let body = '';
+  req.on('data', c => { body += c; });
+  req.on('end', () => {
+    const j = JSON.parse(body); aiSeen.push(j);
+    const img = Buffer.from(j.messages[1].content[1].image_url.url.split(',')[1], 'base64').toString('latin1');
+    const m = /pose:(\w+)/.exec(img);
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ model: 'test/vision', choices: [{ message: { content: JSON.stringify({ pose: m ? m[1] : 'upside-down' }) } }] }));
+  });
+});
 const BASE = `http://127.0.0.1:${PORT}`;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'logbook-monster-photos-'));
 const PHOTO_DIR = path.join(dir, 'pics');
 const root = path.join(__dirname, '..');
 const env = { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', BASE_URL: BASE, DB_PATH: path.join(dir, 't.db'), PHOTO_DIR,
   SESSION_SECRET: 'x'.repeat(40), AUTH_RATE_LIMIT: '1000', ALLOWED_EMAILS: '', ADMIN_EMAILS: 'admin@example.com', ALLOW_REGISTRATION: 'false',
-  GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: '' };
+  GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: 'sk-test-key-1234',
+  OPENROUTER_BASE_URL: `http://127.0.0.1:${AI_PORT}` };
 let srv;
 
 before(async () => {
+  await new Promise(r => fakeAi.listen(AI_PORT, '127.0.0.1', r));
   for (const who of ['admin', 'ann', 'bob']) {
     execFileSync(process.execPath, ['--disable-warning=ExperimentalWarning', 'scripts/create-user.js', `${who}@example.com`],
       { cwd: root, env: { ...env, NEW_PASSWORD: 'long-password-1' }, stdio: 'ignore' });
@@ -30,7 +46,7 @@ before(async () => {
   }
   throw new Error('server did not start');
 });
-after(() => { srv.kill(); fs.rmSync(dir, { recursive: true, force: true }); });
+after(() => { srv.kill(); fakeAi.close(); fs.rmSync(dir, { recursive: true, force: true }); });
 
 async function signIn(email) {
   let cookie = '', csrf = '';
@@ -141,4 +157,37 @@ test('progress photos: removing an account removes its pictures', async () => {
   assert.strictEqual((await admin('DELETE', `/api/admin/users/${id}`)).status, 200);
   await new Promise(res => setTimeout(res, 100));
   assert.strictEqual(files().length, before);
+});
+
+test('progress photos: the AI tags the pose, from the thumbnail, only when asked to save', async () => {
+  const ann = await signIn('ann@example.com'), other = await signIn('admin@example.com');
+  assert.strictEqual((await ann('GET', '/api/photos')).body.ai, true);
+  const p = (await ann('POST', '/api/photos?date=2026-10-05&pose=other&note=gym', jpeg('pose:front'))).body;
+  aiSeen.length = 0;
+
+  /* just asking: the answer comes back, nothing is saved */
+  let r = await ann('POST', `/api/photos/${p.id}/ai-pose`, {});
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.pose, 'front');
+  assert.strictEqual(r.body.photo.pose, 'other');
+  assert.match(aiSeen[0].messages[1].content[1].image_url.url, /^data:image\/jpeg;base64,/);
+  assert.match(aiSeen[0].messages[0].content, /"front" \| "back" \| "side" \| "other"/);
+
+  /* the thumbnail is what is sent once there is one */
+  await ann('PUT', `/api/photos/${p.id}/thumb`, jpeg('pose:back'));
+  r = await ann('POST', `/api/photos/${p.id}/ai-pose`, { save: true });
+  assert.deepStrictEqual({ pose: r.body.pose, saved: r.body.photo.pose, note: r.body.photo.note, date: r.body.photo.date },
+    { pose: 'back', saved: 'back', note: 'gym', date: '2026-10-05' });
+  assert.strictEqual((await ann('GET', '/api/photos')).body.photos.find(x => x.id === p.id).pose, 'back');
+
+  /* an answer that isn't a pose counts as other */
+  await ann('PUT', `/api/photos/${p.id}/thumb`, jpeg('no-hint'));
+  r = await ann('POST', `/api/photos/${p.id}/ai-pose`, { save: true });
+  assert.strictEqual(r.body.pose, 'other');
+
+  /* nobody else can have someone's photo read */
+  const n = aiSeen.length;
+  assert.strictEqual((await other('POST', `/api/photos/${p.id}/ai-pose`, { save: true })).status, 404);
+  assert.strictEqual((await ann('POST', '/api/photos/999999/ai-pose', {})).status, 404);
+  assert.strictEqual(aiSeen.length, n, 'nothing was sent to the AI');
 });

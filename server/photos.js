@@ -7,8 +7,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const config = require('./config');
+const ai = require('./ai');
 
 fs.mkdirSync(config.photoDir, { recursive: true });
 
@@ -64,7 +66,7 @@ const rawImage = limit => express.raw({ type: ['image/jpeg', 'image/png', 'image
 
 router.get('/', (req, res) => {
   const from = isDate(req.query.from) ? req.query.from : '0000-01-01', to = isDate(req.query.to) ? req.query.to : '9999-12-31';
-  res.json({ photos: q.list.all(req.user.id, from, to).map(view), poses: POSES });
+  res.json({ photos: q.list.all(req.user.id, from, to).map(view), poses: POSES, ai: ai.status().configured });
 });
 
 /* POST /api/photos?date=…&pose=…&note=… with the image itself as the body */
@@ -111,6 +113,35 @@ router.delete('/:id', (req, res) => {
   const id = idOf(req.params.id), row = q.files.get(req.user.id, id);
   if (row) { q.del.run(req.user.id, id); unlink(row.file); unlink(row.thumb); }
   res.json({ ok: true });
+});
+
+/* Ask the AI which pose a photo shows. It is sent the thumbnail (the full picture if there is none yet), and
+   only when the person asks: on upload with "Let AI tell", "Tag with AI" in the catalog or "Ask AI" on one photo.
+   POST /api/photos/12/ai-pose {save: true} also stores the answer; without it the answer is only returned. */
+const POSE_PROMPT = `You sort fitness progress photos by pose. Look at the picture and say which way the person's body faces the camera:
+- "front": the chest and face (or front of the body) toward the camera, including front double biceps and front relaxed poses
+- "back": the back toward the camera, including back double biceps and rear relaxed poses
+- "side": side-on to the camera, either side, including side chest and side triceps poses
+- "other": anything else – no person, only part of the body (e.g. just arms or legs), a face close-up, a pose in between, or you can't tell
+Reply with only {"pose": "front" | "back" | "side" | "other"}.`;
+const poseLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, limit: 200, standardHeaders: 'draft-7', legacyHeaders: false,
+  keyGenerator: req => 'u' + req.user.id,
+  message: { error: 'That’s a lot of photos for the AI – wait a while and try again.' },
+});
+router.post('/:id/ai-pose', poseLimit, async (req, res) => {
+  try {
+    const id = idOf(req.params.id), row = q.files.get(req.user.id, id);
+    if (!row) throw fail('No such photo', 404);
+    let buf;
+    try { buf = await fs.promises.readFile(fileAt(row.thumb || row.file)); } catch { throw fail('That photo’s file is missing', 404); }
+    const { reply, model } = await ai.ask(POSE_PROMPT, buf, sniff(buf) || row.type, 'progress photo', { maxTokens: 200, timeout: 60000 });
+    const pose = POSES.includes(reply && reply.pose) ? reply.pose : 'other';
+    const now = q.get.get(req.user.id, id);
+    if (!now) throw fail('No such photo', 404);                  /* deleted while the AI was looking */
+    if (req.body && req.body.save === true) q.put.run(now.date, pose, now.note, req.user.id, id);
+    res.json({ pose, model, photo: view(q.get.get(req.user.id, id)) });
+  } catch (e) { send(res, e); }
 });
 
 /* The pictures themselves. Names never change, so the browser can keep them; private, so no shared cache does. */
