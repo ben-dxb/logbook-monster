@@ -127,8 +127,23 @@ test('trends: macros, weight, Epley strength index, volume and the supplements y
   assert.deepStrictEqual(s('vol').points, [['2026-09-10', 735], ['2026-09-12', 1680]]);
   assert.deepStrictEqual(s('str').points, [['2026-09-10', 100], ['2026-09-12', 97.6]],
     'index: squat 133.3/140 and bench 80/80, averaged; a 30-rep set doesn’t count for strength');
+  assert.ok(!r.body.series.some(x => x.key.startsWith('ex:')), 'no exercise e1RM line until the person follows one');
+  assert.deepStrictEqual(r.body.exercises.map(x => [x.name, x.days, x.trend]), [['Squat', 2, false], ['Bench', 1, false]],
+    'the picker lists exercises with strength sets');
+
+  /* follow squat from the Gym ("Trend"), then pick bench too on the Timeline */
+  assert.strictEqual((await ann('PUT', `/api/gym/exercises/${sq}/trend`, { on: true })).body.trend, 1);
+  assert.strictEqual((await ann('GET', '/api/gym')).body.exercises.find(e => e.id === sq).trend, 1);
+  r = await ann('GET', '/api/timeline/trends?from=2026-09-01&to=2026-09-30');
   assert.deepStrictEqual(s('ex:' + sq).points, [['2026-09-10', 140], ['2026-09-12', 133.3]]);
-  assert.ok(s('ex:' + bench), 'each exercise has its own e1RM line');
+  assert.ok(!s('ex:' + bench), 'only followed exercises');
+  assert.deepStrictEqual((await ann('PUT', '/api/gym/trends', { ids: [sq, bench] })).body.ids, [sq, bench].sort((a, b) => a - b));
+  r = await ann('GET', '/api/timeline/trends?from=2026-09-01&to=2026-09-30');
+  assert.ok(s('ex:' + bench) && s('ex:' + sq));
+  assert.strictEqual((await ann('PUT', '/api/gym/trends', { ids: ['x'] })).status, 400);
+  assert.strictEqual((await ann('PUT', '/api/gym/trends', { ids: [999999] })).status, 400);
+  assert.deepStrictEqual((await ann('PUT', '/api/gym/trends', { ids: [sq] })).body.ids, [sq]);
+  r = await ann('GET', '/api/timeline/trends?from=2026-09-01&to=2026-09-30');
   assert.ok(!r.body.series.some(x => x.group === 'Supplements'), 'no supplement is followed yet');
   assert.strictEqual(r.body.ai, true);
 
@@ -150,7 +165,10 @@ test('trends: macros, weight, Epley strength index, volume and the supplements y
 
   const bob = await signIn('bob@example.com');
   assert.strictEqual((await bob('PUT', '/api/supps/trend', { name: 'Creatine', on: true })).status, 200);
+  assert.strictEqual((await bob('PUT', `/api/gym/exercises/${sq}/trend`, { on: true })).status, 404, 'Bob can’t follow Ann’s exercise');
+  assert.strictEqual((await bob('PUT', '/api/gym/trends', { ids: [sq] })).status, 400);
   r = await bob('GET', '/api/timeline/trends?from=2026-09-01&to=2026-09-30');
+  assert.deepStrictEqual(r.body.exercises, []);
   assert.ok(r.body.series.every(x => !x.points.length), 'Bob sees none of Ann’s numbers');
 
   await ann('PUT', '/api/supps/trend', { name: 'creatine', on: false });

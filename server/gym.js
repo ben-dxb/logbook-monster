@@ -8,13 +8,17 @@ const db = require('./db');
 const ai = require('./ai');
 
 const q = {
-  exercises: db.prepare(`SELECT e.id, e.name, e.notes, COUNT(s.id) AS sets, MAX(s.at) AS last
+  exercises: db.prepare(`SELECT e.id, e.name, e.notes, e.trend, COUNT(s.id) AS sets, MAX(s.at) AS last
     FROM exercises e LEFT JOIN sets s ON s.exercise_id = e.id WHERE e.user_id = ? GROUP BY e.id ORDER BY e.name COLLATE NOCASE`),
-  exercise: db.prepare('SELECT id, name, notes FROM exercises WHERE user_id = ? AND id = ?'),
+  exercise: db.prepare('SELECT id, name, notes, trend FROM exercises WHERE user_id = ? AND id = ?'),
   exerciseByName: db.prepare('SELECT id, name, notes FROM exercises WHERE user_id = ? AND name = ? COLLATE NOCASE'),
   countExercises: db.prepare('SELECT COUNT(*) AS n FROM exercises WHERE user_id = ?'),
   addExercise: db.prepare('INSERT INTO exercises (user_id, name, notes) VALUES (?, ?, ?)'),
   putExercise: db.prepare('UPDATE exercises SET name = ?, notes = ? WHERE user_id = ? AND id = ?'),
+  trendExercise: db.prepare('UPDATE exercises SET trend = ? WHERE user_id = ? AND id = ?'),
+  trendClear: db.prepare('UPDATE exercises SET trend = 0 WHERE user_id = ?'),
+  trendCount: db.prepare('SELECT COUNT(*) AS n FROM exercises WHERE user_id = ? AND trend = 1'),
+  trendIds: db.prepare('SELECT id FROM exercises WHERE user_id = ? AND trend = 1 ORDER BY id'),
   delExercise: db.prepare('DELETE FROM exercises WHERE user_id = ? AND id = ?'),
 
   workouts: db.prepare('SELECT id, name, description, items FROM workouts WHERE user_id = ? ORDER BY position, id'),
@@ -39,7 +43,7 @@ const q = {
   allSets: db.prepare('SELECT id, exercise_id AS e, reps, kg, note, at FROM sets WHERE user_id = ? ORDER BY at, id'),
 };
 
-const MAX = { exercises: 500, workouts: 60, items: 40, sets: 100000 };
+const MAX = { exercises: 500, workouts: 60, items: 40, sets: 100000, trends: 30 };
 const AT_RE = /^(\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]))T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 const fail = msg => Object.assign(new Error(msg), { status: 400 });
@@ -172,6 +176,26 @@ router.put('/exercises/:id', send(req => {
   if (other && other.id !== id) throw fail(`You already have an exercise called ${other.name}`);
   q.putExercise.run(name, longText(b.notes, 1000, 'Notes'), req.user.id, id);
   return q.exercise.get(req.user.id, id);
+}));
+/* "Trend": follow one exercise's estimated one-rep max on the Timeline's chart */
+router.put('/exercises/:id/trend', send(req => {
+  const id = idOf(req.params.id), on = !!(isObj(req.body) && req.body.on);
+  const e = q.exercise.get(req.user.id, id);
+  if (!e) throw notFound('exercise');
+  if (on && !e.trend && q.trendCount.get(req.user.id).n >= MAX.trends) throw fail(`You can follow ${MAX.trends} exercises on the trend chart at most`);
+  q.trendExercise.run(on ? 1 : 0, req.user.id, id);
+  return q.exercise.get(req.user.id, id);
+}));
+/* the Timeline's exercise picker: the whole list of followed exercises at once */
+router.put('/trends', send(req => {
+  const ids = isObj(req.body) && Array.isArray(req.body.ids) ? [...new Set(req.body.ids.map(idOf))] : null;
+  if (!ids || ids.some(n => !Number.isFinite(n))) throw fail('Send a list of exercise ids');
+  if (ids.length > MAX.trends) throw fail(`You can follow ${MAX.trends} exercises on the trend chart at most`);
+  if (ids.some(id => !q.exercise.get(req.user.id, id))) throw fail('One of those exercises doesn’t exist');
+  db.exec('BEGIN');
+  try { q.trendClear.run(req.user.id); ids.forEach(id => q.trendExercise.run(1, req.user.id, id)); db.exec('COMMIT'); }
+  catch (e) { db.exec('ROLLBACK'); throw e; }
+  return { ids: q.trendIds.all(req.user.id).map(r => r.id) };
 }));
 router.delete('/exercises/:id', send(req => { q.delExercise.run(req.user.id, idOf(req.params.id)); return { ok: true }; }));
 

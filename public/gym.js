@@ -168,7 +168,8 @@ async function gExercisePage(id){
       :gEmpty('No sets yet – log your first one below.');
   }
   const Q=gQuick;
-  return gHead(gBackE,e.name)+`<div class="seg" role="group" aria-label="Show">${tabs}</div>${e.notes?`<p class="gdesc">${esc(e.notes)}</p>`:''}${body}
+  return gHead(gBackE,e.name)+`<div class="seg" role="group" aria-label="Show">${tabs}</div>
+    <label class="tog gtrend" title="Chart this exercise’s estimated 1RM on the Timeline"><input type="checkbox" data-g="trend" data-id="${e.id}"${e.trend?' checked':''}> Trend – show its e1RM on the <a href="#history/timeline">Timeline</a></label>${e.notes?`<p class="gdesc">${esc(e.notes)}</p>`:''}${body}
     <form id="g-quick" class="gquick" aria-label="Log a set">
       <div class="gqf"><label class="gqin"><input id="g-reps" type="number" inputmode="numeric" min="0" max="1000" step="1" value="${Q.reps}" aria-label="Reps"><em>rep</em></label>
         <span class="gstep"><button type="button" data-g="adj" data-f="reps" data-d="-1" aria-label="One rep less">−</button><button type="button" data-g="adj" data-f="reps" data-d="1" aria-label="One rep more">+</button></span></div>
@@ -270,7 +271,7 @@ function gExercisesPage(){
   return `<div class="gbar"><h2>My exercises</h2></div>
     <form id="g-newex" class="gaddex"><label class="f"><span class="lbl">Find or add</span><input id="g-find" maxlength="80" autocomplete="off" placeholder="e.g. Hack squat"></label><button class="btn" type="submit">Add</button></form>
     <div class="glist">${gCsvRow()}</div>${gCsvPanel()}
-    <div class="glist" id="g-exlist">${GY.exercises.map(e=>`<a class="grow" href="#gym/e/${e.id}" data-n="${esc(e.name.toLowerCase())}"><span class="gt"><b>${esc(e.name)}</b><small>${e.sets?`${e.sets} set${e.sets===1?'':'s'}`:'No sets yet'}</small></span><span class="gwhen">${esc(ago(e.last&&e.last.slice(0,10)))}</span><i class="gch">›</i></a>`).join('')
+    <div class="glist" id="g-exlist">${GY.exercises.map(e=>`<a class="grow" href="#gym/e/${e.id}" data-n="${esc(e.name.toLowerCase())}"><span class="gt"><b>${esc(e.name)}</b><small>${e.sets?`${e.sets} set${e.sets===1?'':'s'}`:'No sets yet'}${e.trend?' · on the Timeline':''}</small></span><span class="gwhen">${esc(ago(e.last&&e.last.slice(0,10)))}</span><i class="gch">›</i></a>`).join('')
       ||'<p class="empty grow">No exercises yet. Add one above, or make a workout.</p>'}</div>`;
 }
 
@@ -400,7 +401,17 @@ document.addEventListener('change',e=>{
   else if(el.id==='g-csvunit'&&gCsv){gCsv.unit=el.value;gCsv.unitAsked=true;gCsvRead();renderGym();}
   else if(el.id==='g-aifile'){const f=el.files&&el.files[0];el.value='';if(f&&!gAiBusy)gAiRead(f);}
   else if(el.dataset.g==='aion'&&gAi){gAi.workouts[+el.dataset.i].on=el.checked;renderGym();}
+  else if(el.dataset.g==='trend')gTrend(el);
 });
+/* "Trend": follow the exercise's e1RM on the Timeline's chart (switched on there too, so it shows straight away) */
+async function gTrend(el){
+  const id=+el.dataset.id, on=el.checked;el.disabled=true;
+  try{
+    const x=await api('PUT',`/api/gym/exercises/${id}/trend`,{on});const e=exById(id);if(e)e.trend=x.trend;
+    if(typeof tOn!=='undefined'){const k='ex:'+id;if(x.trend)tOn.add(k);else tOn.delete(k);tKeep();TL=null;}
+  }catch(err){el.checked=!on;if(!err.signedOut)alert(err.message);}
+  el.disabled=false;
+}
 document.addEventListener('submit',async e=>{
   const f=e.target;if(view!=='gym'||!f.id||!f.id.startsWith('g-'))return;
   e.preventDefault();

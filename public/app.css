@@ -500,6 +500,18 @@ footer{font-size:12px;color:var(--muted)}
 .tbig i{font-style:normal;font-size:13px;color:var(--muted);margin-left:3px}
 .tcphotos{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
 .strend{font-size:13px;color:var(--muted)}
+.texpick{min-width:0;max-width:100%}
+.texpick[open]{flex-basis:100%}
+.texpick>summary{display:inline-flex}
+.texpick>summary{cursor:pointer;list-style:none;border-style:dashed}
+.texpick>summary::-webkit-details-marker{display:none}
+.texpick[open]>summary{color:var(--ink);border-style:solid}
+.texbox{margin-top:8px;min-width:0;border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px}
+.texlist{display:flex;flex-direction:column;gap:4px;max-height:260px;overflow-y:auto}
+.texlist .tog{overflow-wrap:anywhere}
+.texlist .sub{font-size:12px}
+.texlist [hidden],.texbox p:empty{display:none}
+.gtrend{font-size:13px;color:var(--muted);margin:6px 0}
 @media (max-width:700px){
   .tgroup{grid-template-columns:minmax(0,1fr)}
   .tcgrid{grid-template-columns:minmax(0,1fr)}

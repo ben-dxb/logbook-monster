@@ -24,7 +24,7 @@ const q = {
     WHERE s.user_id = ? AND s.at >= ? AND s.at < ? ORDER BY s.at, s.id`),
   lastSession: db.prepare('SELECT substr(at, 1, 10) AS date FROM sets WHERE user_id = ? AND at < ? ORDER BY at DESC LIMIT 1'),
   setsTo: db.prepare('SELECT exercise_id AS e, reps, kg, substr(at, 1, 10) AS d FROM sets WHERE user_id = ? AND at < ? ORDER BY at, id'),
-  exercises: db.prepare('SELECT id, name FROM exercises WHERE user_id = ?'),
+  exercises: db.prepare('SELECT id, name, trend FROM exercises WHERE user_id = ?'),
 };
 
 const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
@@ -88,7 +88,6 @@ function dayCard(user, date) {
 
 /* ---------- trends ---------- */
 const MACROS = [['k', 'Calories', 'kcal'], ['p', 'Protein', 'g'], ['c', 'Carbs', 'g'], ['f', 'Fat', 'g']];
-const TOP_EXERCISES = 8;
 
 /* Every series the chart can show over [from, to]: { key, name, unit, group, zero, points: [[date, value]] }.
    zero: a missing day means none (supplements), so averages count it as 0; otherwise it means no data. */
@@ -125,9 +124,10 @@ function series(user, from, to) {
   }
   out.push({ key: 'str', name: 'Strength index', unit: '%', group: 'Gym', points: str });
   out.push({ key: 'vol', name: 'Volume', unit: 'kg', group: 'Gym', points: vol });
-  const names = new Map(q.exercises.all(user.id).map(x => [x.id, x.name]));
-  [...exPts.entries()].filter(([e]) => names.has(e)).sort((a, b) => b[1].length - a[1].length).slice(0, TOP_EXERCISES)
-    .forEach(([e, pts]) => out.push({ key: 'ex:' + e, name: names.get(e) + ' e1RM', unit: 'kg', group: 'Gym', points: pts }));
+  /* one e1RM line per exercise the person follows ("Trend" in the Gym, or the Timeline's exercise picker) */
+  for (const x of q.exercises.all(user.id).filter(x => x.trend).sort((a, b) => (exPts.get(b.id) || []).length - (exPts.get(a.id) || []).length)) {
+    out.push({ key: 'ex:' + x.id, name: x.name + ' e1RM', unit: 'kg', group: 'Gym', points: exPts.get(x.id) || [] });
+  }
 
   /* supplements followed on the chart: the day's total of the unit they're most often logged in */
   const followed = supps.trendsOf(user);
@@ -145,6 +145,19 @@ function series(user, from, to) {
     }
   }
   return out;
+}
+
+/* The Timeline's exercise picker: every exercise with a strength set, how many days of them fall in the range, and whether it is followed. */
+function exerciseList(user, from, to) {
+  const days = new Map(), seen = new Set();
+  for (const s of q.setsTo.all(user.id, addDays(to, 1))) {
+    if (!countsForStrength(s)) continue;
+    seen.add(s.e);
+    if (s.d >= from) (days.get(s.e) || days.set(s.e, new Set()).get(s.e)).add(s.d);
+  }
+  return q.exercises.all(user.id).filter(x => seen.has(x.id) || x.trend)
+    .map(x => ({ id: x.id, name: x.name, trend: !!x.trend, days: days.has(x.id) ? days.get(x.id).size : 0 }))
+    .sort((a, b) => b.days - a.days || a.name.localeCompare(b.name));
 }
 
 /* ---------- AI: how the metrics relate ---------- */
@@ -256,7 +269,7 @@ router.get('/day/:date', (req, res) => {
 router.get('/trends', (req, res) => {
   try {
     const [from, to] = rangeOf(req.query);
-    res.json({ from, to, series: series(req.user, from, to), ai: ai.status().configured });
+    res.json({ from, to, series: series(req.user, from, to), exercises: exerciseList(req.user, from, to), ai: ai.status().configured });
   } catch (e) { send(res, e); }
 });
 
