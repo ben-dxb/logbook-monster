@@ -307,8 +307,10 @@ async function addFoodToDay(food,date,qty,mi){
   if(!(qty>0)||!isDate(date))return false;
   if(!await loadDay(date))return false;
   S.cur=date;
-  const D=day(), fid=libFid(food);
-  if(mi!=null&&D.meals[mi]&&FOODS[fid]){const box=libBox(food);
+  /* a food from your meal plan goes in as the plan's own food; a plan meal or library food as a library food */
+  const D=day(), fid=food.fid||libFid(food);
+  if(!food.fid&&!FOODS[fid])FOODS[fid]=libFoodRec(food);
+  if(mi!=null&&D.meals[mi]&&FOODS[fid]){const box=(food.fid&&foodGroup(food.fid))||libBox(food);
     editMeal(mi,box,(D,m)=>{(m[box]=m[box]||[]).push(it(fid,qty));});saveMeal(mi);}
   else act(D=>libAdd(D,food,qty));
   go('day/'+date);
