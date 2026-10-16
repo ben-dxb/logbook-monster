@@ -349,7 +349,7 @@ test('AI: the key and models are the super admin’s, a plan is read against you
   assert.strictEqual((await admin.req('PUT', '/api/admin/ai', { models: { nope: 'x/y' } })).status, 400);
   assert.strictEqual((await admin.req('PUT', '/api/admin/ai', { models: { plan: 'bad model!' } })).status, 400);
   let ms = await admin.req('PUT', '/api/admin/ai', { models: { plan: 'plan/model', food: 'food/model' } });
-  assert.deepStrictEqual(ms.body.tasks.map(t => [t.id, t.model, t.uses]), [['plan', 'plan/model', 'plan/model'], ['workout', '', 'test/model'],
+  assert.deepStrictEqual(ms.body.tasks.map(t => [t.id, t.model, t.uses]), [['plan', 'plan/model', 'plan/model'], ['workout', '', 'test/model'], ['supps', '', 'test/model'],
     ['food', 'food/model', 'food/model'], ['pose', '', 'test/model'], ['summary', '', 'test/model']]);
   await pdf(admin);
   assert.strictEqual(aiSeen.at(-1).body.model, 'plan/model');

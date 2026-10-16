@@ -429,6 +429,15 @@ footer{font-size:12px;color:var(--muted)}
 .squick{display:flex;flex-direction:column;gap:6px}
 .sdose{font-size:13px;white-space:nowrap}
 #s-log .orow span:first-child{overflow-wrap:anywhere;min-width:0}
+.sai .sairow{border-top:1px solid var(--line);padding-top:8px;display:grid;grid-template-columns:auto minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);gap:6px 8px;align-items:end}
+.sai .sairow.off .f{opacity:.55}
+.sai .sion{grid-row:span 2;align-self:start;padding-top:22px}
+.sai .sainotes{grid-column:2/-1}
+.sai .sairow input:not([type=checkbox]),.sai .sairow select{width:100%;min-width:0;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px;font:inherit;color:inherit}
+.sai .sairow .chip{display:inline-block;font-size:11px}
+.sai input[type=date]{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:4px 6px;font:inherit;color:inherit;max-width:100%}
+@media (max-width:560px){.sai .sairow{grid-template-columns:auto minmax(0,1fr) minmax(0,1fr)}.sai .sion{grid-row:span 3}.sai .sainame{grid-column:2/-1}}
+#s-ai{display:flex;flex-direction:column;gap:10px}
 /* ---------- progress photos ---------- */
 .sform input[type=file]{width:100%;min-width:0;font-size:13px}
 .pdays{display:flex;flex-direction:column;gap:14px}
