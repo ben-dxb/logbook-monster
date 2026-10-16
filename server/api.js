@@ -71,6 +71,9 @@ router.put('/my/defaults', (req, res) => {
   try { res.json(defaults.putMine(req.body, req.user)); } catch (e) { bad(res, e.message); }
 });
 router.delete('/my/defaults', (req, res) => res.json(defaults.delMine(req.user)));
+router.delete('/my/defaults/:from', (req, res) => {
+  try { res.json(defaults.delMine(req.user, req.params.from)); } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
 
 /* AI import: an OpenRouter key and model, and reading a plan PDF into the defaults format. */
 const adminOnly = (req, res, next) => (defaults.isAdmin(req.user) ? next() : res.status(403).json({ error: 'Only the super admin can do this' }));
@@ -188,6 +191,7 @@ router.get('/export', (req, res) => {
     email: req.user.email,
     settings: s ? JSON.parse(s.data) : {},
     defaults: defaults.mine(req.user),
+    planChanges: defaults.myVersions(req.user),
     days: q.allDays.all(req.user.id).map(r => ({ date: r.date, data: JSON.parse(r.data) })),
     weights: q.listWeights.all(req.user.id, '0000-01-01', '9999-12-31'),
     gym: gym.exportFor(req.user),

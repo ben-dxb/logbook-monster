@@ -37,7 +37,9 @@ or Google.
 - **Account admin** (everyone) – your own baseline: upload a meal plan (CSV or JSON) or edit it
   in place, download it, choose which weekdays are training or rest, set day targets, and edit or
   add foods. Only what you change is stored; everything else follows the app defaults, and
-  **Go back to the app defaults** drops your changes. Days already saved keep their own amounts.
+  **Go back to the app defaults** drops your changes. Each change takes effect from a date you pick
+  (today by default, or a later date to schedule it); days before it keep the plan they had, and
+  **Plan changes** lists them to edit or delete. Days already saved keep their own amounts.
   **Read a PDF with AI** sends your coach's plan PDF (or a photo) to a model on OpenRouter and
   loads the meals, amounts, new foods and targets into the page for you to check and save
   (12 reads an hour per account, using the super admin's key).

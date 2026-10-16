@@ -66,7 +66,7 @@ function migrate(D){
 }
 const pending=new Map(); let saveTimer=null, saveState='idle', saveErr='', inFlight=false;
 const settingsJson=()=>JSON.stringify({pud:S.pud,snackOv:S.snackOv||{},pBasis:S.pBasis||'total'});
-function summaryOf(date,D){const t=dayTotals(D);return {...t,targets:{...D.targets},type:TYPE[wdOf(date)]};}
+function summaryOf(date,D){useDefs(date);const t=dayTotals(D);return {...t,targets:{...D.targets},type:typeOn(date)};}
 
 /* Called after every render: anything that differs from what the server has gets queued. */
 function persist(){
@@ -117,7 +117,7 @@ async function loadDay(date){
     }catch(e){showLoading(false);if(!e.signedOut)alert('Couldn’t load that day: '+e.message);return false;}
     showLoading(false);
   }
-  if(!S.days[date]){S.days[date]=freshDay(wdOf(date));if(SAVED.days[date]===undefined)SAVED.days[date]=JSON.stringify(S.days[date]);}
+  if(!S.days[date]){S.days[date]=freshOn(date);if(SAVED.days[date]===undefined)SAVED.days[date]=JSON.stringify(S.days[date]);}
   return true;
 }
 async function openDay(date){
@@ -133,7 +133,7 @@ async function unlogDay(){
   if(!confirm(`Remove ${fmtLong(date)} from your history? This can’t be undone.`))return;
   try{await api('DELETE','/api/days/'+date);}catch(e){alert(e.message);return;}
   LOGGED.delete(date);delete SUMS[date];pending.delete(date);
-  S.days[date]=freshDay(wdOf(date));SAVED.days[date]=JSON.stringify(S.days[date]);
+  S.days[date]=freshOn(date);SAVED.days[date]=JSON.stringify(S.days[date]);
   render();
 }
 
@@ -141,7 +141,7 @@ async function unlogDay(){
 const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const r0=x=>Math.round(x), r1=x=>(Math.round(x*10)/10).toFixed(1);
-function day(){if(!S.days[S.cur])S.days[S.cur]=freshDay(wdOf(S.cur));return S.days[S.cur];}
+function day(){useDefs(S.cur);if(!S.days[S.cur])S.days[S.cur]=freshDay(wdOf(S.cur));return S.days[S.cur];}
 const wd=()=>wdOf(S.cur);
 function showLoading(on){$('#loading').hidden=!on;}
 
@@ -197,7 +197,7 @@ function chip(m,val,tgt){
 function renderWeek(){
   const mon=addDays(S.cur,-wd()), t=todayStr();
   $('#tabs').innerHTML=DAYS.map((n,i)=>{const d=addDays(mon,i);
-    return `<button class="tab${d===S.cur?' on':''}${d===t?' today':''}${LOGGED.has(d)?' logged':''}" data-act="day" data-d="${d}" aria-pressed="${d===S.cur}" aria-label="${esc(fmtLong(d))}${LOGGED.has(d)?', saved':''}"><small>${n}</small><b>${parse(d).getDate()}</b><small>${TYPE[i]==='R'?'Rest':'Train'}</small></button>`;}).join('');
+    return `<button class="tab${d===S.cur?' on':''}${d===t?' today':''}${LOGGED.has(d)?' logged':''}" data-act="day" data-d="${d}" aria-pressed="${d===S.cur}" aria-label="${esc(fmtLong(d))}${LOGGED.has(d)?', saved':''}"><small>${n}</small><b>${parse(d).getDate()}</b><small>${typeOn(d)==='R'?'Rest':'Train'}</small></button>`;}).join('');
 }
 function renderStatus(){
   if(view!=='day')return;
@@ -347,7 +347,7 @@ function renderHistory(){
     const st=s?dayStatus(s):null;
     const label=[fmtLong(d), s?`${r0(s.k)} kcal, ${r0(s.p)}g protein${st.txt?', '+st.txt:''}`:'not logged', w!=null?`weight ${w} kg`:''].filter(Boolean).join(', ');
     h+=`<button class="cell${out?' out':''}${d===t?' today':''}${s?' logged':''}" data-act="open" data-d="${d}" aria-label="${esc(label)}">
-      <span class="dn">${parse(d).getDate()}<small>${((s&&s.type)||TYPE[i%7])==='R'?'Rest':'Train'}</small></span>
+      <span class="dn">${parse(d).getDate()}<small>${((s&&s.type)||typeOn(d))==='R'?'Rest':'Train'}</small></span>
       ${s?`<span class="kc"><i class="dot ${st.cls}">${st.sym}</i>${r0(s.k)}</span><span class="pr">P ${r0(s.p)}g</span>`:''}
       ${w!=null?`<span class="wg">${w} kg</span>`:''}
     </button>`;
@@ -498,7 +498,7 @@ document.addEventListener('click',e=>{
   else if(a==='undo'){undoMeal(+b.dataset.m);}
   else if(a==='odel'){act(D=>{D.off.splice(+b.dataset.i,1);});}
   else if(a==='pbasis'){if(S.pBasis!==b.dataset.v){S.pBasis=b.dataset.v;act(()=>{});}}
-  else if(a==='reset'){if(!resetArmed){resetArmed=true;render();return;}resetArmed=false;S.days[S.cur]=freshDay(wd());render();}
+  else if(a==='reset'){if(!resetArmed){resetArmed=true;render();return;}resetArmed=false;S.days[S.cur]=freshOn(S.cur);render();}
 });
 /* pack weights: update the portion as you type, without re-rendering under your fingers */
 function setPack(el){const D=day(),f=el.dataset.f;D.packs=D.packs||{};const p=D.packs[f]=D.packs[f]||{};

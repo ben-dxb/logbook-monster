@@ -222,10 +222,15 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         expect(await gp.inputValue('#ad-wd-0') === 'R', 'the guest should start from the app defaults');
         await gp.selectOption('#ad-wd-0', 'T'); await gp.click('#ad-save');
         await gp.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent) && !document.querySelector('#ad-reset').hidden, null, { timeout: 5000 });
+        /* a change that takes effect later: Mondays are rest days again from 2031, days before keep training */
+        await gp.selectOption('#ad-wd-0', 'R'); await gp.fill('#ad-from', '2031-01-01'); await gp.click('#ad-save');
+        await gp.waitForFunction(() => /Scheduled/.test(document.querySelector('#ad-versions').textContent) && /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
         const gscroll = await gp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         expect(gscroll <= 1, `horizontal overflow of ${gscroll}px on the account admin page`);
         await gp.evaluate(() => { location.hash = '#day/2030-01-07'; });
         await gp.waitForFunction(() => /Training day/.test(document.querySelector('#dsub').textContent), null, { timeout: 5000 });
+        await gp.evaluate(() => { location.hash = '#day/2031-01-06'; });
+        await gp.waitForFunction(() => document.querySelector('#datepick').value === '2031-01-06' && /Rest day/.test(document.querySelector('#dsub').textContent), null, { timeout: 5000 });
         await gctx.close();
       }
       await pg.click('#ad-types [data-t=R]');
