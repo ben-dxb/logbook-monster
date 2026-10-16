@@ -439,8 +439,8 @@ async function setWeight(date,kg){
   else{await api('PUT','/api/weights/'+date,{kg});WEIGHTS[date]=Math.round(kg*100)/100;}
 }
 
-/* ---------- routing: #day/2026-10-15, #history/2026-10, #weight, #gym/…, #foods/…, #admin ---------- */
-const VIEWS=['day','history','weight','gym','foods','admin'];
+/* ---------- routing: #day/2026-10-15, #history/2026-10, #weight, #gym/…, #foods/…, #supps/…, #admin ---------- */
+const VIEWS=['day','history','weight','gym','foods','supps','admin'];
 function route(){
   const [v,arg,...more]=location.hash.replace(/^#/,'').split('/');
   view=VIEWS.includes(v)&&(v!=='admin'||isAdmin)?v:'day';
@@ -452,6 +452,7 @@ function route(){
   else if(view==='admin'){renderAdmin();}
   else if(view==='gym'){renderGym(arg?[arg,...more]:[]);}
   else if(view==='foods'){renderFoods(arg?[arg]:[]);}
+  else if(view==='supps'){renderSupps(arg?[arg,...more]:[]);}
   else renderWeight();
 }
 function go(hash){if(location.hash==='#'+hash)route();else location.hash=hash;}

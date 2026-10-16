@@ -364,5 +364,12 @@ footer{font-size:12px;color:var(--muted)}
 .fform .tog{align-items:flex-start}
 .fform .tog input{margin-top:3px}
 .fdel{margin-left:auto}
+/* ---------- supplements ---------- */
+.sform{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-items:end;max-width:560px}
+.sform .swide{grid-column:1/-1}
+.sform select{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px}
+.squick{display:flex;flex-direction:column;gap:6px}
+.sdose{font-size:13px;white-space:nowrap}
+#s-log .orow span:first-child{overflow-wrap:anywhere;min-width:0}
 @media (max-width:700px){.fform{grid-template-columns:repeat(2,minmax(0,1fr))}.grid5 .btn{order:1}}
 @media (max-width:560px){.views{flex-wrap:wrap;justify-content:center;border-radius:14px;width:100%;margin-right:0}.views a{padding:4px 10px;font-size:13px}}

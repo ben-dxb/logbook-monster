@@ -105,6 +105,33 @@ CREATE TABLE IF NOT EXISTS foods (
 );
 CREATE INDEX IF NOT EXISTS foods_user ON foods(user_id);
 CREATE INDEX IF NOT EXISTS foods_public ON foods(public);
+/* Supplements: a library like the foods (a name, a usual amount and unit, notes, private or shared) and
+   the log of what each account took on a day. A log entry keeps its own name, amount and unit, so it
+   can be free text, and survives the library entry being changed or deleted. */
+CREATE TABLE IF NOT EXISTS supplements (
+  id         INTEGER PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name       TEXT NOT NULL,
+  amount     REAL,
+  unit       TEXT NOT NULL DEFAULT 'mg',
+  notes      TEXT NOT NULL DEFAULT '',
+  public     INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS supplements_user ON supplements(user_id);
+CREATE TABLE IF NOT EXISTS supplement_log (
+  id            INTEGER PRIMARY KEY,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  date          TEXT NOT NULL,
+  supplement_id INTEGER REFERENCES supplements(id) ON DELETE SET NULL,
+  name          TEXT NOT NULL,
+  amount        REAL NOT NULL,
+  unit          TEXT NOT NULL,
+  note          TEXT NOT NULL DEFAULT '',
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS supplement_log_day ON supplement_log(user_id, date);
 `);
 
 /* Added after the first release: accounts an admin invited may sign in even when ALLOWED_EMAILS doesn't list them. */

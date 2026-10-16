@@ -1,6 +1,6 @@
 'use strict';
 /* Browser smoke test: starts a throwaway server, signs in, weighs a meal-prep pack, edits and saves a day, logs a weight,
-   opens History and Weight, logs gym sets, adds a shared food to the library and to a day, uploads a plan and invites someone on the Admin page, at desktop and phone widths. Fails on any page error.
+   opens History and Weight, logs gym sets, adds a shared food to the library and to a day, logs supplements, uploads a plan and invites someone on the Admin page, at desktop and phone widths. Fails on any page error.
    Needs Playwright (npm i -g playwright, or available in the environment); skips if missing. */
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -145,6 +145,28 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
         expect(await inMeals() === mBefore + 2, 'meal items should survive the food being edited');
       }
+      /* supplements: a library entry with a usual amount, a free-text entry with its own unit, quick add, remove */
+      await pg.click('a[data-view=supps]'); await pg.waitForSelector('#v-supps:not([hidden]) #s-form');
+      if (first) {
+        await pg.click('#s-body a[href="#supps/lib"]'); await pg.click('#s-body a[href="#supps/lib/new"]'); await pg.waitForSelector('#s-lform');
+        await pg.fill('#s-name', 'Smoke creatine'); await pg.fill('#s-lamt', '5'); await pg.selectOption('#s-lunit', 'g'); await pg.check('#s-public');
+        await pg.click('#s-lform button[type=submit]');
+        await pg.waitForFunction(() => /Added “Smoke creatine”/.test((document.querySelector('#s-list') || {}).textContent), null, { timeout: 5000 });
+        await pg.click('#s-list [data-sa=log]'); await pg.waitForSelector('#s-form');
+        expect(await pg.inputValue('#s-amt') === '5' && await pg.inputValue('#s-unit') === 'g', '"Log it" should fill in the usual amount');
+        await pg.fill('#s-amt', '3'); await pg.click('#s-form button[type=submit]');
+        await pg.waitForFunction(() => /Smoke creatine\s*3 g/.test(document.querySelector('#s-log').textContent), null, { timeout: 5000 });
+      }
+      await pg.selectOption('#s-pick', ''); await pg.fill('#s-desc', 'Smoke vitamin D3'); await pg.fill('#s-amt', '2000'); await pg.selectOption('#s-unit', 'IU');
+      await pg.click('#s-form button[type=submit]');
+      await pg.waitForFunction(() => /Smoke vitamin D3\s*2000 IU/.test(document.querySelector('#s-log').textContent), null, { timeout: 5000 });
+      await pg.click('[data-sa=quick]'); await pg.waitForFunction(() => /Smoke creatine\s*5 g/.test(document.querySelector('#s-log').textContent), null, { timeout: 5000 });
+      const sRows = await pg.locator('#s-log .orow').count();
+      await pg.reload(); await pg.waitForSelector('#s-log .orow');
+      expect(await pg.locator('#s-log .orow').count() === sRows, 'supplement log should survive reload');
+      const sscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(sscroll <= 1, `horizontal overflow of ${sscroll}px on the supplements page at ${w}px wide`);
+      await pg.click('#s-log .orow:last-child [data-sa=del]'); await pg.waitForFunction(n => document.querySelectorAll('#s-log .orow').length === n, sRows - 1, { timeout: 5000 });
       /* admin (the only account is the first one, so it is the admin) */
       await pg.click('#acct>summary'); await pg.click('#adminlink'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-meals .admeal');
       if (first) {
