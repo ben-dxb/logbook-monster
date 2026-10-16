@@ -28,7 +28,10 @@ or Google.
   yours by name; sets you already have are skipped, so importing a newer export later is safe.
 - **Food Library** – your meal plan is always in it, with nothing to enter: every meal of the plan in
   use as a whole meal (amounts as in the plan; listed per day type when they differ) and every food it
-  uses or lets you swap in as an ingredient, kept in step with plan changes. Plus whole meals and single ingredients you enter (per 100 g,
+  uses or lets you swap in as an ingredient, kept in step with plan changes. Common fitness foods (chicken, fish,
+  eggs, dairy, rice, pasta, oats, potatoes, fruit, veg, fats – typical USDA values) are there to start from.
+  **Weights** shows foods per 100 g raw/dry or cooked (one card or the whole list), worked out from a typical
+  cooked weight; your own foods can say how they're weighed and their cooked weight. Plus whole meals and single ingredients you enter (per 100 g,
   per 100 ml or per item), with a recipe or notes, private or shared with everyone. Tabs split
   meals from ingredients; search, Show (mine / shared), Sort (A–Z, calories, protein, protein per
   calorie) and quick filters (high protein, low calorie, has recipe, AI estimates) find one, and

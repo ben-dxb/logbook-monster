@@ -1,6 +1,6 @@
 'use strict';
 /* Browser smoke test: starts a throwaway server, signs in, weighs a meal-prep pack, edits and saves a day, logs a weight,
-   opens History and Weight, logs gym sets, adds a shared food to the library and to a day, logs supplements, uploads and compares progress photos, uploads a plan and invites someone on the Admin page, at desktop and phone widths. Fails on any page error.
+   opens History and Weight, logs gym sets, adds a shared food to the library and to a day, logs supplements, uploads, filters and compares progress photos, uploads a plan and invites someone on the Admin page, at desktop and phone widths. Fails on any page error.
    Needs Playwright (npm i -g playwright, or available in the environment); skips if missing. */
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -61,6 +61,23 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         expect(await pg.getAttribute('[data-act=pbasis][data-v=direct]', 'aria-pressed') === 'true', 'direct protein setting should survive reload');
         await pg.click('[data-act=pbasis][data-v=total]');
         await pg.waitForFunction(() => /Protein min/.test(document.querySelector('#sum').textContent) && !/Direct protein min/.test(document.querySelector('#sum').textContent), null, { timeout: 5000 });
+        /* eaten: marking a meal eaten locks all of it, survives a reload, and undoing needs a confirmation */
+        const m2 = '#meals .meal >> nth=1';
+        const amts = () => pg.evaluate(() => [...document.querySelectorAll('#meals .meal')[1].querySelectorAll('input[data-act=amt]')].map(x => x.value + (x.disabled ? 'd' : '')).join());
+        await pg.click(`${m2} >> [data-act=eat]`);
+        await pg.waitForFunction(() => /Saved/.test(document.querySelector('#status').textContent) && document.querySelectorAll('#meals .meal.eaten').length === 1, null, { timeout: 5000 });
+        const eatenAmts = await amts();
+        expect(/d$/.test(eatenAmts) && !(await pg.locator(`${m2} >> [data-act=del]`).count()) && !(await pg.locator(`${m2} >> select[data-add]`).count()), 'an eaten meal should be locked');
+        await pg.fill('#t-k', '2500'); await pg.press('#t-k', 'Tab');
+        await pg.waitForFunction(() => /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
+        expect(await amts() === eatenAmts, 'rebalancing the day should not move an eaten meal');
+        await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal.eaten');
+        pg.once('dialog', d => d.dismiss()); await pg.click(`${m2} >> [data-act=uneat]`);
+        expect(await pg.locator('#meals .meal.eaten').count() === 1, 'cancelling the confirmation should keep the meal eaten');
+        pg.once('dialog', d => d.accept()); await pg.click(`${m2} >> [data-act=uneat]`);
+        await pg.waitForFunction(() => !document.querySelector('#meals .meal.eaten') && /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
+        await pg.click('#coach');
+        await pg.waitForFunction(() => /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
       }
       /* balance inside a meal: off while editing by default; ticked on the meal, more protein moves its carbs before saving */
       if (first) {
@@ -156,7 +173,20 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       expect(/Cream of rice \(dry\)/.test(await pg.textContent('#f-list')), 'plan ingredients should be in the library');
       await pg.click('#f-list .fcard:has-text("Cream of rice bowl") [data-fa=add]'); await pg.waitForSelector('#f-addform');
       expect(/kcal/.test(await pg.textContent('#f-aprev')) && !/^0 kcal/.test(await pg.textContent('#f-aprev')), 'a plan meal should add with its values');
-      await pg.click('#f-addform [data-fa=cancel]'); await pg.selectOption('#f-who', 'all');
+      await pg.click('#f-addform [data-fa=cancel]');
+      /* starter foods, shown raw or cooked: one card, then the whole list */
+      await pg.selectOption('#f-who', 'starter');
+      const chick = '#f-list .fcard[data-id="std:chicken-breast"]';
+      await pg.waitForSelector(chick);
+      expect(/120 kcal/.test(await pg.textContent(chick + ' .ml')) && /\(raw\)/.test(await pg.textContent(chick + ' h3')), 'starter chicken should show raw values');
+      await pg.click(chick + ' [data-fa=wt][data-v=cooked]');
+      await pg.waitForFunction(() => /160 kcal/.test(document.querySelector('#f-list .fcard[data-id="std:chicken-breast"] .ml').textContent));
+      await pg.click('#f-wt [data-v=cooked]');
+      await pg.waitForFunction(() => /130 kcal/.test(document.querySelector('#f-list .fcard[data-id="std:white-rice"] .ml').textContent));
+      expect(/\(cooked\)/.test(await pg.textContent('#f-list .fcard[data-id="std:white-rice"] h3')), 'whole list should switch to cooked');
+      const wscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(wscroll <= 1, `horizontal overflow of ${wscroll}px on the starter foods at ${w}px wide`);
+      await pg.click('#f-wt [data-v=raw]'); await pg.selectOption('#f-who', 'mine');
       await pg.fill('#f-q', 'oats'); await pg.waitForFunction(() => document.querySelectorAll('#f-list .fcard').length === 1);
       expect(/Shared/.test(await pg.textContent('#f-list .fcard')), 'shared food should be marked Shared');
       await pg.click('#f-list .fcard details summary'); expect(/30g whey/.test(await pg.textContent('#f-list .frecipe')), 'recipe should show');
@@ -209,7 +239,9 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       const sscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(sscroll <= 1, `horizontal overflow of ${sscroll}px on the supplements page at ${w}px wide`);
       await pg.click('#s-log .orow:last-child [data-sa=del]'); await pg.waitForFunction(n => document.querySelectorAll('#s-log .orow').length === n, sRows - 1, { timeout: 5000 });
-      /* progress photos: upload two days of pictures (shrunk in the browser, with thumbnails), edit one, compare the days */
+      /* progress photos: upload two days of pictures (shrunk in the browser, with thumbnails), edit one, filter by bodyweight,
+         jump to a date, pick two to compare, match a weight */
+      if (first) await pg.evaluate(async () => { await api('PUT', '/api/weights/2026-09-01', { kg: 85 }); await api('PUT', '/api/weights/2026-10-01', { kg: 80.4 }); });
       await pg.click('a[data-view=photos]'); await pg.waitForSelector('#v-photos:not([hidden]) #p-form');
       if (first) {
         const pic = async (w, h, colour) => Buffer.from(await pg.evaluate(([w, h, colour]) => {
@@ -229,17 +261,35 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       }
       expect(await pg.locator('#p-list .pday').count() === 2 && await pg.locator('#p-list .ptile').count() === 3, 'catalog should show 3 photos over 2 days');
       await pg.waitForFunction(() => [...document.querySelectorAll('#p-list .ptile img')].every(i => i.complete && i.naturalWidth > 0), null, { timeout: 5000 });
+      expect(/85 kg/.test(await pg.textContent('#p-d-2026-09-01 h3')), 'a day should show its weigh-in');
       const pscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(pscroll <= 1, `horizontal overflow of ${pscroll}px on the photos page at ${w}px wide`);
-      await pg.click('#p-list .pday:last-child .ptile >> nth=0'); await pg.waitForSelector('#p-eform');
+      await pg.click('#p-d-2026-09-01 .ptile >> nth=0'); await pg.waitForSelector('#p-eform');
       await pg.waitForFunction(() => { const i = document.querySelector('.pbig img'); return i && i.complete && i.naturalWidth > 0; }, null, { timeout: 5000 });
       await pg.fill('#p-enote', 'smoke edited ' + w); await pg.click('#p-eform button[type=submit]');
       await pg.waitForFunction(() => /Saved/.test((document.querySelector('#p-list') || {}).textContent || ''), null, { timeout: 5000 });
-      await pg.click('#p-body a[href="#photos/compare"]'); await pg.waitForSelector('#p-cmp .pcmp');
-      await pg.waitForFunction(() => document.querySelectorAll('#p-cmp .pside img').length === 2 && /30 days apart/.test(document.querySelector('#p-cmp').textContent), null, { timeout: 5000 });
-      await pg.selectOption('#p-cpose', 'side'); await pg.waitForSelector('#p-cmp .pnone');
+      /* bodyweight: the latest weigh-in is today's 80.5 kg, so only 1 October (80.4) is within 1 kg; then 85 kg finds 1 September */
+      await pg.check('#p-near');
+      await pg.waitForFunction(() => document.querySelectorAll('#p-list .pday').length === 1 && document.querySelector('#p-d-2026-10-01'));
+      await pg.fill('#p-nearkg', '85');
+      await pg.waitForFunction(() => document.querySelectorAll('#p-list .pday').length === 1 && document.querySelector('#p-d-2026-09-01'));
+      await pg.fill('#p-nearkg', ''); await pg.uncheck('#p-near');
+      await pg.waitForFunction(() => document.querySelectorAll('#p-list .pday').length === 2);
+      await pg.fill('#p-jump', '2026-09-04'); await pg.waitForSelector('#p-d-2026-09-01.hit');
+      /* pick two photos in the catalog and compare them, older on the left */
+      await pg.click('#p-selbtn'); await pg.waitForSelector('#p-selbar:not([hidden])');
+      await pg.click('#p-d-2026-10-01 .ptile'); await pg.click('#p-d-2026-09-01 .ptile >> nth=0');
+      expect(await pg.locator('#p-list .ptile.on').count() === 2, 'two photos should be picked');
+      await pg.click('[data-pa=cmpgo]'); await pg.waitForSelector('#p-cmp .pside');
+      await pg.waitForFunction(() => document.querySelectorAll('#p-cmp .pside img').length === 2 && /30 days apart · -4\.6 kg/.test(document.querySelector('#p-cmpsum').textContent), null, { timeout: 5000 });
+      expect(/Sep/.test(await pg.textContent('#p-cmp .pside >> nth=0')), 'the older photo should be on the left');
       const cmpscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(cmpscroll <= 1, `horizontal overflow of ${cmpscroll}px on the photo compare page at ${w}px wide`);
+      const cmpUrl = pg.url();
+      await pg.click('#p-cmp .pside >> nth=0 >> [data-pa=match]'); await pg.waitForFunction(() => document.querySelectorAll('#p-cmp .pside img').length === 2);
+      const other = await pg.evaluate(() => [...document.querySelectorAll('#p-ca option')].find(o => !o.selected && !/Oct/.test(o.textContent)).value);
+      await pg.selectOption('#p-ca', other); await pg.waitForFunction(u => location.href !== u, cmpUrl);
+      await pg.waitForFunction(() => document.querySelectorAll('#p-cmp .pside img').length === 2);
       /* admin (the only account is the first one, so it is the admin) */
       await pg.click('#acct>summary'); await pg.click('#adminlink'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-meals .admeal');
       if (first) {

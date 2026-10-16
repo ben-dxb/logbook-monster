@@ -232,7 +232,8 @@ function solve(day,held,opts={}){
   if(!day.auto) return;
   const items=allItems(day);
   const anc=i=>(i.a!=null?i.a:i.g);
-  const free=items.filter(i=>anc(i)>0&&!i.lock&&!held.has(i)&&!(opts.protect&&FOODS[i.f].d>0));
+  const eaten=new Set();day.meals.forEach(m=>{if(m.eaten)BOXES.forEach(([b])=>(m[b]||[]).forEach(i=>eaten.add(i)));}); /* eaten meals never move */
+  const free=items.filter(i=>anc(i)>0&&!i.lock&&!held.has(i)&&!eaten.has(i)&&!(opts.protect&&FOODS[i.f].d>0));
   if(!free.length) return;
   const used=(f,except)=>items.filter(i=>i.f===f&&i!==except).reduce((s,i)=>s+i.g,0);
   free.forEach(i=>{

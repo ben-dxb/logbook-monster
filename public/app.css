@@ -66,6 +66,9 @@ h1{font-size:22px;font-weight:800;font-stretch:80%;margin:0;letter-spacing:.01em
 .ml{font-size:12px;color:var(--muted)} .ml b{color:var(--ink)}
 .mnote{margin:0;font-size:12px;color:var(--muted)}
 .meal.dirty{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.meal.eaten{border-color:var(--good)}
+.meal.eaten .boxes{opacity:.8}
+.meal header .ghost{font-size:12px;padding:2px 10px}
 .savebar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;background:var(--soft);border-radius:8px;padding:8px 10px;font-size:13px}
 .savebar .sb{display:flex;gap:8px}
 .boxes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:10px}
@@ -382,6 +385,11 @@ footer{font-size:12px;color:var(--muted)}
 .fcount{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted);min-height:28px}
 .fletter{margin:6px 0 -4px;font-size:13px;font-weight:800;color:var(--muted);letter-spacing:.08em;border-bottom:1px solid var(--line);padding-bottom:2px}
 .chip.plan{color:var(--good);border:1px solid currentColor;background:transparent}
+.chip.std{color:var(--info);border:1px solid currentColor;background:transparent}
+.fwt{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:12px}
+.fwt .seg button{font-size:12px;padding:2px 10px}
+#f-wt button{font-size:12px;padding:3px 10px}
+.fform .fstate{grid-column:span 2}
 .chip.kind{background:transparent;border:1px solid var(--line);color:var(--muted)}
 .muted{color:var(--muted)}
 .aiv{border:0;background:var(--warnbg);color:var(--warnink);border-radius:6px;padding:0 5px;font:inherit;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
@@ -415,6 +423,19 @@ footer{font-size:12px;color:var(--muted)}
 .pbig figcaption,.pside figcaption{font-size:13px;color:var(--muted);text-align:center;overflow-wrap:anywhere}
 .pcmp{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .pside img{display:block;width:100%;max-height:70vh;object-fit:contain;border-radius:10px;background:var(--soft)}
-.pnone{display:grid;place-items:center;aspect-ratio:3/4;border:1px dashed var(--line);border-radius:10px;color:var(--muted);font-size:13px;text-align:center;padding:8px}
+.pside select{width:100%;min-width:0;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px}
+.pside .ghost{align-self:center}
+.ptools{display:flex;flex-direction:column;gap:8px}
+.prow{display:flex;flex-wrap:wrap;gap:8px;align-items:end}
+.prow .f{flex:0 1 auto;min-width:0}
+.prow .f input,.prow .f select{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px}
+.pweight #p-nearkg{width:90px}
+.pweight .tog{align-self:center}
+.pweight .sub{flex:1 1 200px;align-self:center}
+.psel{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;background:var(--surface);border:1px solid var(--accent);border-radius:12px;padding:8px 12px;font-size:14px;font-weight:700}
+.ptile.on{outline:3px solid var(--accent);outline-offset:-3px}
+.pnum{position:absolute;top:6px;right:6px;display:grid;place-items:center;width:24px;height:24px;border-radius:99px;background:var(--accent);color:var(--accent-ink);font-size:13px}
+.pday{scroll-margin-top:70px;border-radius:12px;transition:background .3s}
+.pday.hit{background:var(--soft)}
 @media (max-width:700px){.fform{grid-template-columns:repeat(2,minmax(0,1fr))}.grid5 .btn{order:1}}
 @media (max-width:560px){.views{flex-wrap:wrap;justify-content:center;border-radius:14px;width:100%;margin-right:0}.views a{padding:4px 10px;font-size:13px}}

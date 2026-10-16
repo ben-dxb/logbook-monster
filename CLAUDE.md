@@ -33,20 +33,23 @@
   `users.js` (invites, account list), `mail.js` (SMTP sending – use `mail.notify()` for fire-and-forget notifications).
 - `public/engine.js` – the original calculator data and balancing maths. Change food data and plan
   here; keep the solver behaviour unless asked.
-- `public/app.js` – views (Day, History calendar, Weight), saving, routing.
+- `public/app.js` – views (Day, History calendar, Weight), saving, routing. A meal marked eaten (`m.eaten`) is locked whole – the solver never moves it, its controls
+  are disabled – and undoing it asks for confirmation.
 - `public/admin.js` – Account admin (`#account`, anyone: own plan/week/targets/foods) and Super admin
   (`#admin`: app defaults, AI key, people, email) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope.
 - `public/gym.js` – the Gym view (workouts, exercise sets, sessions, AI import preview).
 - `server/foods.js` / `public/foods.js` – the food library: meals and ingredients (`kind`) people enter (per 100 g/ml
   or per item) with an optional recipe, private or shared with everyone. `POST /api/foods/ai-fill` estimates blank
   values; `food.ai` records which values are AI estimates and the source shown behind the ⚑ flag. The meal plan in use is
-  always listed too (`fPlanFoods` in `foods.js`, built in the browser, never stored): its meals (`plan:m:…`) and foods (`plan:f:<food id>`). "Add to plan" puts
+  always listed too (`fPlanFoods` in `foods.js`, built in the browser, never stored): its meals (`plan:m:…`) and foods (`plan:f:<food id>`). Starter foods (`public/starter.js`, `std:<id>`) are listed
+  for everyone the same way. `state` (raw/cooked) + `yield` (cooked weight as % of raw) let `fShown` show a food either way. "Add to plan" puts
   one in a meal or a day's off-plan list. Inside meals a library food is a calculator food with id `L:<id>:<hash of its
   values>`; each day keeps a copy in `D.lib` so old days still load after the food changes (`libRegister`/`libSync` in `app.js`).
 - `server/supps.js` / `public/supps.js` – supplements: a library (usual amount + unit, private or shared, like foods) and a
   per-day log (`#supps`), each entry picked from the library or typed as free text, with an amount and a unit (g, mg, mcg, IU…).
 - `server/photos.js` / `public/photos.js` – progress photos (`#photos`): each account's own pictures with a date, pose and note,
-  shown by date and side by side (`#photos/compare`). The browser shrinks each to a JPEG (dropping EXIF) and sends a thumbnail
+  shown by date (filter by pose or by bodyweight near a chosen weight, jump to a date) and side by side
+  (`#photos/compare/<id>/<id>`, two photos picked in the catalog; "Find one at N kg" swaps in the closest-weight photo). The browser shrinks each to a JPEG (dropping EXIF) and sends a thumbnail
   after it; files live on disk in `PHOTO_DIR` (default `photos/` next to the database), only their details in SQLite.
 - `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by tests.
 - Secrets live only in `.env` on the server; never send them to the client or commit them.

@@ -154,25 +154,25 @@ function deltaTag(D,mi,box,i){
   return `<span class="delta ${d>0?'up':'down'}">${d>0?'+':'−'}${Math.abs(d)}${u}</span>`;
 }
 function itemRow(D,mi,box,ii,i){
-  const F=FOODS[i.f], id=`${S.cur}-${mi}-${box}-${ii}`, u=F.unit||'g';
+  const F=FOODS[i.f], id=`${S.cur}-${mi}-${box}-${ii}`, u=F.unit||'g', ro=D.meals[mi].eaten?' disabled':'';
   const list=box==='p'?PROTEIN_SWAPS:box==='x'?FAT_SWAPS:CARB_SWAPS;
   const opts=(list.includes(i.f)?list:[i.f,...list]).map(f=>`<option value="${f}"${f===i.f?' selected':''}>${esc(FOODS[f].n)}</option>`).join('');
   return `<div class="row${i.lock?' locked':''}${i.g===0?' zero':''}">
-    <label class="lock" title="Lock this amount"><input type="checkbox" id="l-${id}" data-act="lock" data-m="${mi}" data-b="${box}" data-i="${ii}"${i.lock?' checked':''}><span>${i.lock?'Locked':'Lock'}</span></label>
-    <select id="s-${id}" data-act="swap" data-m="${mi}" data-b="${box}" data-i="${ii}" aria-label="Food">${opts}</select>
-    <span class="amt"><input id="g-${id}" type="number" inputmode="decimal" min="0" step="${F.step}" value="${r0(i.g)}" data-act="amt" data-m="${mi}" data-b="${box}" data-i="${ii}" aria-label="Amount"><em>${u}</em></span>
+    <label class="lock" title="Lock this amount"><input type="checkbox" id="l-${id}" data-act="lock" data-m="${mi}" data-b="${box}" data-i="${ii}"${i.lock?' checked':''}${ro}><span>${i.lock?'Locked':'Lock'}</span></label>
+    <select id="s-${id}" data-act="swap" data-m="${mi}" data-b="${box}" data-i="${ii}" aria-label="Food"${ro}>${opts}</select>
+    <span class="amt"><input id="g-${id}" type="number" inputmode="decimal" min="0" step="${F.step}" value="${r0(i.g)}" data-act="amt" data-m="${mi}" data-b="${box}" data-i="${ii}" aria-label="Amount"${ro}><em>${u}</em></span>
     ${deltaTag(D,mi,box,i)}
-    <button class="x" data-act="del" data-m="${mi}" data-b="${box}" data-i="${ii}" aria-label="Remove">×</button>
+    ${ro?'<span class="x"></span>':`<button class="x" data-act="del" data-m="${mi}" data-b="${box}" data-i="${ii}" aria-label="Remove">×</button>`}
   </div>`;
 }
 /* Delivered meat (foods with a daily order) comes in sauce: weigh the pack, get the amount to put on your plate */
 function packOut(i,pk,F){const m=pk.m!=null?pk.m:F.order, g=packPortion(i.g,+pk.w,+m);
   return g==null?'Weigh the pack to get your portion':`Weigh out <b>${r0(g)}g</b> of the pack${i.g>m?' – more than one pack':''}`;}
 function packHtml(D,mi,i){
-  const F=FOODS[i.f], pk=(D.packs||{})[i.f]||{}, id=`pk-${S.cur}-${mi}-${i.f}`;
+  const F=FOODS[i.f], pk=(D.packs||{})[i.f]||{}, id=`pk-${S.cur}-${mi}-${i.f}`, ro=D.meals[mi].eaten?' disabled':'';
   const name=esc(F.n.replace(/^Health Road /,''));
-  return `<div class="pack"><label class="pf"><span class="lbl">Pack with sauce</span><span class="amt"><input id="${id}-w" type="number" inputmode="decimal" min="0" step="1" value="${pk.w!=null?pk.w:''}" placeholder="weigh" data-act="pack" data-f="${i.f}" data-k="w"><em>g</em></span></label>
-    <label class="pf"><span class="lbl">${name} in it</span><span class="amt"><input id="${id}-m" type="number" inputmode="decimal" min="0" step="1" value="${pk.m!=null?pk.m:F.order}" data-act="pack" data-f="${i.f}" data-k="m"><em>g</em></span></label>
+  return `<div class="pack"><label class="pf"><span class="lbl">Pack with sauce</span><span class="amt"><input id="${id}-w" type="number" inputmode="decimal" min="0" step="1" value="${pk.w!=null?pk.w:''}" placeholder="weigh" data-act="pack" data-f="${i.f}" data-k="w"${ro}><em>g</em></span></label>
+    <label class="pf"><span class="lbl">${name} in it</span><span class="amt"><input id="${id}-m" type="number" inputmode="decimal" min="0" step="1" value="${pk.m!=null?pk.m:F.order}" data-act="pack" data-f="${i.f}" data-k="m"${ro}><em>g</em></span></label>
     <span class="pout" data-packout="${i.f}" data-g="${i.g}" aria-live="polite">${packOut(i,pk,F)}</span></div>`;
 }
 function macLine(t){return `<span class="ml"><b>${r0(t.k)}</b> kcal · P ${r1(t.p)} · C ${r1(t.c)} · F ${r1(t.f)}</span>`;}
@@ -181,7 +181,7 @@ function boxHtml(D,mi,box,label){
   return `<div class="box"><div class="bh"><span class="lbl">${label}</span>${items.length?macLine(t):''}</div>
     ${items.map((i,ii)=>itemRow(D,mi,box,ii,i)).join('')||'<p class="empty">Nothing here</p>'}
     ${box==='p'?items.filter(i=>i.g>0&&FOODS[i.f].order!=null).map(i=>packHtml(D,mi,i)).join(''):''}
-    <div class="add"><select id="a-${S.cur}-${mi}-${box}" data-add="${box}" data-m="${mi}" aria-label="Add a food"><option value="">+ Add a food…</option>${(box==='x'?FAT_SWAPS:Object.keys(FOODS).filter(f=>!FAT_SWAPS.includes(f)&&!isLib(f))).map(f=>`<option value="${f}">${esc(FOODS[f].n)}</option>`).join('')}${libOptions()}</select></div>
+    ${D.meals[mi].eaten?'':`<div class="add"><select id="a-${S.cur}-${mi}-${box}" data-add="${box}" data-m="${mi}" aria-label="Add a food"><option value="">+ Add a food…</option>${(box==='x'?FAT_SWAPS:Object.keys(FOODS).filter(f=>!FAT_SWAPS.includes(f)&&!isLib(f))).map(f=>`<option value="${f}">${esc(FOODS[f].n)}</option>`).join('')}${libOptions()}</select></div>`}
   </div>`;
 }
 function chip(m,val,tgt){
@@ -246,7 +246,9 @@ function render(){
   $('#meals').innerHTML=D.meals.map((m,mi)=>{
     const mt=sum([...m.p,...m.c,...(m.x||[])].map(i=>macOf(i.f,i.g)));
     const all=[...m.p,...m.c,...(m.x||[])];const saved=!m.dirty&&all.length&&all.every(i=>i.lock);
-    return `<section class="meal${m.dirty?' dirty':''}"><header><span class="mn">Meal ${esc(m.id)}</span><h2>${esc(m.name)}</h2>${macLine(mt)}${saved?'<span class="chip ok">Locked</span>':''}</header>
+    const eat=m.eaten?`<span class="chip ok">✓ Eaten</span><button class="ghost" data-act="uneat" data-m="${mi}">Undo eaten</button>`
+      :`${saved?'<span class="chip ok">Locked</span>':''}<button class="ghost" data-act="eat" data-m="${mi}">Mark eaten</button>`;
+    return `<section class="meal${m.dirty?' dirty':''}${m.eaten?' eaten':''}"><header><span class="mn">Meal ${esc(m.id)}</span><h2>${esc(m.name)}</h2>${macLine(mt)}${eat}</header>
       ${m.dirty?`<div class="savebar" role="status"><span>Changes not saved – the rest of the day won't move until you save.</span><label class="tog" title="The meal's other unlocked foods move to keep its calories – handy after changing protein or fats"><input type="checkbox" id="mc-${S.cur}-${mi}" data-act="mcalc" data-m="${mi}"${m.calc?' checked':''}> Balance this meal as I edit</label><span class="sb"><button class="ghost" data-act="undo" data-m="${mi}">Undo changes</button><button class="btn" data-act="save" data-m="${mi}">Save meal</button></span></div>`:''}
       ${m.note?`<p class="mnote">${esc(m.note)}</p>`:''}
       <div class="boxes">${BOXES.map(([b,l])=>boxHtml(D,mi,b,l)).join('')}</div></section>`;
@@ -309,6 +311,7 @@ async function addFoodToDay(food,date,qty,mi){
   S.cur=date;
   /* a food from your meal plan goes in as the plan's own food; a plan meal or library food as a library food */
   const D=day(), fid=food.fid||libFid(food);
+  if(mi!=null&&D.meals[mi]&&D.meals[mi].eaten){alert(`Meal ${D.meals[mi].id} is marked eaten – undo that first to change it.`);go('day/'+date);return false;}
   if(!food.fid&&!FOODS[fid])FOODS[fid]=libFoodRec(food);
   if(mi!=null&&D.meals[mi]&&FOODS[fid]){const box=(food.fid&&foodGroup(food.fid))||libBox(food);
     editMeal(mi,box,(D,m)=>{(m[box]=m[box]||[]).push(it(fid,qty));});saveMeal(mi);}
@@ -460,7 +463,7 @@ function route(){
   else if(view==='gym'){renderGym(arg?[arg,...more]:[]);}
   else if(view==='foods'){renderFoods(arg?[arg]:[]);}
   else if(view==='supps'){renderSupps(arg?[arg,...more]:[]);}
-  else if(view==='photos'){renderPhotos(arg?[arg]:[]);}
+  else if(view==='photos'){renderPhotos(arg?[arg,...more]:[]);}
   else renderWeight();
 }
 function go(hash){if(location.hash==='#'+hash)route();else location.hash=hash;}
@@ -472,6 +475,7 @@ function act(fn,opts){const D=day();const held=new Set();fn(D,held);
 /* edits inside a meal wait for 'Save meal' – nothing else moves until then. With 'Balance this meal' ticked on the meal (m.calc,
    off for every new edit), the meal's other foods move as you edit to keep its calories; what you changed or added (i.ed) stays. */
 function editMeal(mi,box,fn){const D=day();const m=D.meals[mi];
+  if(m.eaten){render();return;}           /* an eaten meal is locked until you undo it */
   if(!m._snap)m._snap=clone({p:m.p,c:m.c,x:m.x||[]});
   const before=new Set(BOXES.flatMap(([b])=>m[b]||[]));
   fn(D,m);BOXES.forEach(([b])=>(m[b]||[]).forEach(i=>{if(!before.has(i))i.ed=true;}));
@@ -483,6 +487,15 @@ function saveMeal(mi){const D=day();const m=D.meals[mi];const held=new Set();
   const protect=!m.dirtyProt;delete m._snap;delete m.dirty;delete m.dirtyProt;delete m.calc;
   D.meals.forEach(o=>{if(o.dirty)BOXES.forEach(([b])=>(o[b]||[]).forEach(i=>held.add(i)));});
   solve(D,held,{protect});render();}
+/* Eaten: the whole meal is locked as it is (unsaved changes saved first) and the rest of the day balances around it.
+   Undoing asks first. */
+function eatMeal(mi){const D=day();const m=D.meals[mi];if(!m||m.eaten)return;
+  if(m.dirty)saveMeal(mi);
+  m.eaten=true;render();}
+function uneatMeal(mi){const D=day();const m=D.meals[mi];if(!m||!m.eaten)return;
+  if(!confirm(`Meal ${m.id} – ${m.name} is marked eaten. Undo that and unlock it for changes?`))return;
+  delete m.eaten;render();}
+const anyEaten=D=>D.meals.some(m=>m.eaten);
 function undoMeal(mi){const D=day();const m=D.meals[mi];if(m._snap)Object.assign(m,clone(m._snap));
   delete m._snap;delete m.dirty;delete m.dirtyProt;delete m.calc;render();}
 /* tick: balance the meal now; untick: the foods it moved go back to where you left them */
@@ -505,13 +518,18 @@ document.addEventListener('click',e=>{
   else if(a==='unlog'){unlogDay();}
   else if(a==='retry'){clearTimeout(saveTimer);saveState='pending';flush();}
   else if(a==='wdel'){const d=b.dataset.d;if(confirm(`Delete the weigh-in for ${fmtLong(d)}?`))setWeight(d,null).then(renderWeight,err=>{if(!err.signedOut)alert(err.message);});}
-  else if(a==='bf'){act(D=>{if(D.bf===b.dataset.v)return;D.bf=b.dataset.v;const p=planFor(wd(),D.bf,D.pie);D.meals[0]=p[0];D.base[0]=clone(p[0]);});}
+  else if(a==='bf'){if(day().meals[0].eaten){alert('Breakfast is marked eaten – undo that first to change it.');return;}
+    act(D=>{if(D.bf===b.dataset.v)return;D.bf=b.dataset.v;const p=planFor(wd(),D.bf,D.pie);D.meals[0]=p[0];D.base[0]=clone(p[0]);});}
   else if(a==='del'){editMeal(+b.dataset.m,b.dataset.b,(D,m)=>{m[b.dataset.b].splice(+b.dataset.i,1);});}
   else if(a==='save'){saveMeal(+b.dataset.m);}
   else if(a==='undo'){undoMeal(+b.dataset.m);}
+  else if(a==='eat'){eatMeal(+b.dataset.m);}
+  else if(a==='uneat'){uneatMeal(+b.dataset.m);}
   else if(a==='odel'){act(D=>{D.off.splice(+b.dataset.i,1);});}
   else if(a==='pbasis'){if(S.pBasis!==b.dataset.v){S.pBasis=b.dataset.v;act(()=>{});}}
-  else if(a==='reset'){if(!resetArmed){resetArmed=true;render();return;}resetArmed=false;S.days[S.cur]=freshOn(S.cur);render();}
+  else if(a==='reset'){if(!resetArmed){resetArmed=true;render();return;}resetArmed=false;
+    if(anyEaten(day())&&!confirm('Some meals are marked eaten. Reset the whole day to the plan anyway? That undoes them.')){render();return;}
+    S.days[S.cur]=freshOn(S.cur);render();}
 });
 /* pack weights: update the portion as you type, without re-rendering under your fingers */
 function setPack(el){const D=day(),f=el.dataset.f;D.packs=D.packs||{};const p=D.packs[f]=D.packs[f]||{};
@@ -530,7 +548,8 @@ document.addEventListener('change',e=>{
   else if(a==='amt'){editMeal(+el.dataset.m,el.dataset.b,D=>{const i=get(D);i.g=Math.max(0,+el.value||0);i.a=i.g;i.ed=true;});}
   else if(a==='swap'){editMeal(+el.dataset.m,el.dataset.b,D=>{const h=new Set();const i=get(D),box=D.meals[+el.dataset.m][el.dataset.b];const mac=el.dataset.b==='p'?'p':el.dataset.b==='x'?'f':'c';
       const need=FOODS[i.f][mac]*i.g/100;placeMatched(box,el.value,mac,need,h,i);h.forEach(x=>{x.ed=true;});});}
-  else if(a==='pie'){act(D=>{D.pie=el.checked;D.meals=planFor(wd(),D.bf,D.pie);D.base=clone(D.meals);D.targets={...(D.pie?PIE_TARGETS:COACH.S)};});}
+  else if(a==='pie'){if(anyEaten(day())){alert('Some meals are marked eaten – undo them first to switch the Saturday plan.');el.checked=!el.checked;return;}
+    act(D=>{D.pie=el.checked;D.meals=planFor(wd(),D.bf,D.pie);D.base=clone(D.meals);D.targets={...(D.pie?PIE_TARGETS:COACH.S)};});}
   else if(a==='auto'){act(D=>{D.auto=el.checked;});}
   else if(a==='mcalc'){calcMeal(+el.dataset.m,el.checked);}
   else if(el.dataset.add){const mi=+el.dataset.m,box=el.dataset.add,f=el.value;if(!f||!FOODS[f])return;
