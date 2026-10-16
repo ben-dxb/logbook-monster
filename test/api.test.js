@@ -9,8 +9,7 @@ const path = require('node:path');
 
 const http = require('node:http');
 
-const PORT = 3900 + Math.floor(Math.random() * 90);
-const AI_PORT = PORT + 100;
+const [PORT, AI_PORT, SMTP_PORT] = require('./_ports').freePorts(3);
 /* Stands in for OpenRouter: records the request and replies with a canned plan. */
 const aiSeen = [];
 const fakeAi = http.createServer((req, res) => {
@@ -33,7 +32,6 @@ const fakeAi = http.createServer((req, res) => {
 });
 /* Stands in for the SMTP server (e.g. Gmail): accepts AUTH PLAIN and keeps each message. */
 const net = require('node:net');
-const SMTP_PORT = PORT + 200;
 const mails = [];
 const fakeSmtp = net.createServer(sock => {
   let data = null, msg = {};
