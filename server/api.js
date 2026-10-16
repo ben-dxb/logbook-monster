@@ -11,6 +11,7 @@ const users = require('./users');
 const gym = require('./gym');
 const foods = require('./foods');
 const supps = require('./supps');
+const checklist = require('./checklist');
 const photos = require('./photos');
 const timeline = require('./timeline');
 const shares = require('./shares');
@@ -210,6 +211,7 @@ router.delete('/weights/:date', (req, res) => {
 router.use('/gym', gym.router);
 router.use('/foods', foods.router);
 router.use('/supps', supps.router);
+router.use('/checklist', checklist.router);
 router.use('/photos', photos.router);
 router.use('/timeline', timeline.router);
 router.use('/shares', shares.mine);
@@ -229,6 +231,7 @@ router.get('/export', (req, res) => {
     gym: gym.exportFor(req.user),
     foods: foods.exportFor(req.user),
     supplements: supps.exportFor(req.user),
+    checklist: checklist.exportFor(req.user),
     photos: photos.exportFor(req.user),
   });
 });

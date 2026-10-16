@@ -15,6 +15,7 @@
   <header class="top">
     <h1>Logbook Monster</h1>
     <nav class="views" aria-label="Views">
+      <a href="#dash" data-view="dash">Dashboard</a>
       <a href="#day" data-view="day">Daily Tracker</a>
       <a href="#history" data-view="history">History</a>
       <a href="#gym" data-view="gym">Gym</a>
@@ -42,6 +43,11 @@
   </header>
 
   <p id="loading" class="note">Loading your data…</p>
+
+  <!-- ===================== DASHBOARD ===================== -->
+  <section id="v-dash" class="view" hidden>
+    <div id="d-body" class="gbody"></div>
+  </section>
 
   <!-- ===================== DAY ===================== -->
   <section id="v-day" class="view" hidden>
@@ -267,6 +273,13 @@
       </form>
       <div id="ad-foods" class="adfoods"></div>
     </section>
+    <section class="panel admine" aria-labelledby="ad-clh">
+      <h2 id="ad-clh">Daily checklist</h2>
+      <p>The list you tick off each day on the Dashboard. Pick which days each item shows on; an item can also tick itself when you log a weight, a supplement or a gym set.</p>
+      <div id="ad-cl" class="adcl"></div>
+      <div class="gactions"><button class="ghost" type="button" data-cl="add">+ Add an item</button><button class="btn" type="button" data-cl="save" id="ad-clsave" disabled>Save checklist</button><button class="ghost" type="button" data-cl="reset">Back to the default list</button></div>
+      <p id="ad-clmsg" class="sub" role="status"></p>
+    </section>
     <section class="panel admine" aria-labelledby="ad-shh">
       <h2 id="ad-shh">Share with your coach</h2>
       <p>Make a link your coach can open without a password or an account to see your days, weight, trends, supplements, gym sets and progress photos – read only, so nothing can be changed. It stops working when it runs out, or as soon as you switch it off here. Anyone holding the link sees the same, so only send it to your coach.</p>
@@ -365,6 +378,7 @@
 <script src="/starter.js"></script>
 <script src="/foods.js"></script>
 <script src="/supps.js"></script>
+<script src="/dash.js"></script>
 <script src="/photos.js"></script>
 <script src="/timeline.js"></script>
 </body>

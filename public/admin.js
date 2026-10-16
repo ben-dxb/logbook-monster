@@ -106,6 +106,7 @@ function renderAdmin(){
   if(!AD){adPick();adLoad();}
   if(!SH)shLoad();
   pbSync();
+  if(!clDraft)clLoad();else clRender();
   adVersions();
   const numIn=(id,val,attrs,label)=>`<input id="${id}" type="number" inputmode="decimal" min="0" value="${val==null?'':val}" ${attrs} aria-label="${esc(label)}">`;
   const has=AD.templates.length>0;
@@ -549,6 +550,50 @@ $('#ad-pdel').addEventListener('submit',async e=>{
     $('#ad-pdmsg').textContent=`Deleted ${r.deleted} photo${r.deleted===1?'':'s'}.`;}
   catch(err){if(!err.signedOut)$('#ad-pdmsg').textContent=err.message;btn.disabled=!pdN;}
 });
+
+/* ---------- Daily checklist: the Dashboard's list (server/checklist.js) ---------- */
+let clDraft=null, clDirty=false;
+const CL_AUTO=[['','No'],['weight','When I log a weight'],['supps','When I log a supplement'],['gym','When I log a gym set']];
+async function clLoad(){
+  try{CL=await api('GET','/api/checklist');clDraft=CL.items.map(x=>({...x}));clDirty=false;}
+  catch(e){if(!e.signedOut)$('#ad-clmsg').textContent='Couldn’t load your checklist: '+e.message;return;}
+  clRender();
+}
+function clRender(){
+  const el=$('#ad-cl');if(!el||!clDraft)return;
+  const tpls=(AD&&AD.templates)||[];
+  const showOpts=it=>[['all','Every day'],['training','Training days'],...tpls.map(t=>['tpl:'+t.id,`Only ${t.name} days`])]
+    .concat(it.show.startsWith('tpl:')&&!tpls.some(t=>'tpl:'+t.id===it.show)?[[it.show,'A day template no longer in your plan']]:[])
+    .map(([v,l])=>`<option value="${esc(v)}"${v===it.show?' selected':''}>${esc(l)}</option>`).join('');
+  el.innerHTML=clDraft.length?clDraft.map((it,i)=>`<div class="adclrow">
+      <label class="f adclname"><span class="lbl">Item</span><input data-cl="label" data-i="${i}" maxlength="60" value="${esc(it.label)}"></label>
+      <label class="f"><span class="lbl">Shows on</span><select data-cl="show" data-i="${i}">${showOpts(it)}</select></label>
+      <label class="f"><span class="lbl">Ticks itself</span><select data-cl="auto" data-i="${i}">${CL_AUTO.map(([v,l])=>`<option value="${v}"${v===it.auto?' selected':''}>${l}</option>`).join('')}</select></label>
+      <span class="gmv"><button class="ghost" type="button" data-cl="up" data-i="${i}" aria-label="Move ${esc(it.label)} up"${i?'':' disabled'}>↑</button><button class="ghost" type="button" data-cl="down" data-i="${i}" aria-label="Move ${esc(it.label)} down"${i<clDraft.length-1?'':' disabled'}>↓</button><button class="x" type="button" data-cl="del" data-i="${i}" aria-label="Remove ${esc(it.label)}">×</button></span>
+    </div>`).join(''):'<p>Your checklist is empty – add an item.</p>';
+  $('#ad-clsave').disabled=!clDirty;
+}
+function clChanged(){clDirty=true;$('#ad-clsave').disabled=false;$('#ad-clmsg').textContent='';}
+function clNewId(){let n=1;while(clDraft.some(x=>x.id==='c'+n))n++;return 'c'+n;}
+$('#v-admin').addEventListener('click',async e=>{
+  const b=e.target.closest('button[data-cl]');if(!b||!clDraft)return;
+  const a=b.dataset.cl, i=+b.dataset.i;
+  if(a==='add'){if(clDraft.length>=20){$('#ad-clmsg').textContent='A checklist can have 20 items at most.';return;}
+    clDraft.push({id:clNewId(),label:'',show:'all',auto:''});clChanged();clRender();$(`#ad-cl input[data-i="${clDraft.length-1}"]`).focus();}
+  else if(a==='del'){clDraft.splice(i,1);clChanged();clRender();}
+  else if(a==='up'||a==='down'){const j=a==='up'?i-1:i+1;[clDraft[i],clDraft[j]]=[clDraft[j],clDraft[i]];clChanged();clRender();}
+  else if(a==='save'||a==='reset'){
+    if(a==='reset'&&!confirm('Go back to the default checklist? Your own items are replaced (ticks already made stay).'))return;
+    const items=clDraft.filter(x=>x.label.trim()), msg=$('#ad-clmsg');
+    b.disabled=true;
+    try{CL=a==='reset'?await api('DELETE','/api/checklist'):await api('PUT','/api/checklist',{items});
+      clDraft=CL.items.map(x=>({...x}));clDirty=false;clRender();msg.textContent=a==='reset'?'Back to the default checklist.':'Checklist saved.';}
+    catch(err){if(!err.signedOut)msg.textContent=err.message;}
+    b.disabled=false;$('#ad-clsave').disabled=!clDirty;
+  }
+});
+$('#v-admin').addEventListener('input',e=>{const d=e.target.dataset;if(d.cl==='label'&&clDraft){clDraft[+d.i].label=e.target.value;clChanged();}});
+$('#v-admin').addEventListener('change',e=>{const d=e.target.dataset;if((d.cl==='show'||d.cl==='auto')&&clDraft){clDraft[+d.i][d.cl]=e.target.value;clChanged();}});
 
 /* ---------- Share with your coach: read-only links with no password, live until a time you pick (server/shares.js) ---------- */
 let SH=null, shNew=null;

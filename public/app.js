@@ -385,23 +385,24 @@ async function setWeight(date,kg){
   else{await api('PUT','/api/weights/'+date,{kg});WEIGHTS[date]=Math.round(kg*100)/100;}
 }
 
-/* ---------- routing: #day/2026-10-15, #history/2026-10, #history/timeline/…, #gym/…, #foods/…, #supps/…, #photos/…, #account, #admin ----------
+/* ---------- routing: #dash (the landing page), #day/2026-10-15, #history/2026-10, #history/timeline/…, #gym/…, #foods/…, #supps/…, #photos/…, #account, #admin ----------
    History has two tabs: Calendar (#history) and Timeline (#history/timeline, the 'timeline' view); old #timeline links still work, and old #weight links open the Timeline (weight is logged on the Daily Tracker).
    #account (account admin, anyone) and #admin (super admin; tabs #admin/ai, #admin/people, #admin/email) share the #v-admin page. */
-const VIEWS=['day','history','gym','foods','supps','photos','timeline','account','admin'];
+const VIEWS=['dash','day','history','gym','foods','supps','photos','timeline','account','admin'];
 const viewEl=n=>$('#v-'+(n==='account'?'admin':n));
 function route(){
   if(/^#weight(\/|$)/.test(location.hash))history.replaceState(null,'','#history/timeline');
   if(/^#timeline(\/|$)/.test(location.hash))history.replaceState(null,'','#history/'+location.hash.slice(1));
   let [v,arg,...more]=location.hash.replace(/^#/,'').split('/');
   if(v==='history'&&arg==='timeline'){v='timeline';[arg,...more]=more;}
-  view=VIEWS.includes(v)&&(v!=='admin'||isAdmin)?v:'day';
+  view=VIEWS.includes(v)&&(v!=='admin'||isAdmin)?v:v?'day':'dash';
   const top=view==='timeline'?'history':view;
   document.querySelectorAll('.views a').forEach(a=>{if(a.dataset.view===top)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
   document.querySelectorAll('.htabs a').forEach(a=>{if(a.dataset.h===(view==='timeline'?'timeline':'cal'))a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
   VIEWS.forEach(n=>{viewEl(n).hidden=true;});viewEl(view).hidden=false;
   $('#acct').open=false;
-  if(view==='day'){openDay(isDate(arg)?arg:S.cur);}
+  if(view==='dash'){renderDash(arg?[arg]:[]);}
+  else if(view==='day'){openDay(isDate(arg)?arg:S.cur);}
   else if(view==='history'){if(/^\d{4}-\d{2}$/.test(arg||''))month=arg+'-01';renderHistory();}
   else if(view==='account'||view==='admin'){adRoute(arg);}
   else if(view==='gym'){renderGym(arg?[arg,...more]:[]);}
