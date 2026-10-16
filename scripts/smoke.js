@@ -62,6 +62,25 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await pg.click('[data-act=pbasis][data-v=total]');
         await pg.waitForFunction(() => /Protein min/.test(document.querySelector('#sum').textContent) && !/Direct protein min/.test(document.querySelector('#sum').textContent), null, { timeout: 5000 });
       }
+      /* balance inside a meal: off while editing by default; ticked on the meal, more protein moves its carbs before saving */
+      if (first) {
+        const mi = await pg.evaluate(() => [...document.querySelectorAll('#meals .meal')].findIndex(m =>
+          m.querySelector('input[data-act=amt][data-b=p]') && m.querySelector('.row:not(.locked) input[data-act=amt][data-b=c]')));
+        expect(mi >= 0, 'a meal with protein and unlocked carbs');
+        const meal = pg.locator('#meals .meal').nth(mi), calc = meal.locator('[data-act=mcalc]');
+        const carb = async () => meal.locator('.row:not(.locked) input[data-act=amt][data-b=c]').first().inputValue();
+        const c0 = await carb(), prot = meal.locator('input[data-act=amt][data-b=p]').first();
+        await prot.fill(String(+(await prot.inputValue()) + 60)); await prot.press('Tab');
+        await meal.locator('.savebar').waitFor();
+        expect(!(await calc.isChecked()) && await carb() === c0, 'nothing else in the meal should move by default');
+        await calc.check();
+        expect(await carb() !== c0, 'carbs should move once balancing the meal is ticked');
+        await calc.uncheck();
+        expect(await carb() === c0, 'unticking should put the carbs back');
+        await calc.check();
+        await meal.locator('[data-act=undo]').click();
+        expect(await carb() === c0 && !(await meal.locator('.savebar').count()), 'undo should put the meal back');
+      }
       await pg.click('a[data-view=history]'); await pg.waitForSelector('#v-history:not([hidden]) .cell.logged');
       await pg.click('a[data-view=weight]'); await pg.waitForSelector('#v-weight:not([hidden]) #chart svg');
       /* gym: make a workout, log two sets, edit one, look at chart, records and sessions */

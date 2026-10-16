@@ -247,7 +247,7 @@ function render(){
     const mt=sum([...m.p,...m.c,...(m.x||[])].map(i=>macOf(i.f,i.g)));
     const all=[...m.p,...m.c,...(m.x||[])];const saved=!m.dirty&&all.length&&all.every(i=>i.lock);
     return `<section class="meal${m.dirty?' dirty':''}"><header><span class="mn">Meal ${esc(m.id)}</span><h2>${esc(m.name)}</h2>${macLine(mt)}${saved?'<span class="chip ok">Locked</span>':''}</header>
-      ${m.dirty?`<div class="savebar" role="status"><span>Changes not saved – the rest of the day won't move until you save.</span><span class="sb"><button class="ghost" data-act="undo" data-m="${mi}">Undo changes</button><button class="btn" data-act="save" data-m="${mi}">Save meal</button></span></div>`:''}
+      ${m.dirty?`<div class="savebar" role="status"><span>Changes not saved – the rest of the day won't move until you save.</span><label class="tog" title="The meal's other unlocked foods move to keep its calories – handy after changing protein or fats"><input type="checkbox" id="mc-${S.cur}-${mi}" data-act="mcalc" data-m="${mi}"${m.calc?' checked':''}> Balance this meal as I edit</label><span class="sb"><button class="ghost" data-act="undo" data-m="${mi}">Undo changes</button><button class="btn" data-act="save" data-m="${mi}">Save meal</button></span></div>`:''}
       ${m.note?`<p class="mnote">${esc(m.note)}</p>`:''}
       <div class="boxes">${BOXES.map(([b,l])=>boxHtml(D,mi,b,l)).join('')}</div></section>`;
   }).join('');
@@ -469,17 +469,27 @@ function go(hash){if(location.hash==='#'+hash)route();else location.hash=hash;}
 function act(fn,opts){const D=day();const held=new Set();fn(D,held);
   D.meals.forEach(m=>{if(m.dirty)BOXES.forEach(([b])=>(m[b]||[]).forEach(i=>held.add(i)));}); /* unsaved meals stay as you left them */
   solve(D,held,opts||{});render();}
-/* edits inside a meal wait for 'Save meal' – nothing else moves until then */
+/* edits inside a meal wait for 'Save meal' – nothing else moves until then. With 'Balance this meal' ticked on the meal (m.calc,
+   off for every new edit), the meal's other foods move as you edit to keep its calories; what you changed or added (i.ed) stays. */
 function editMeal(mi,box,fn){const D=day();const m=D.meals[mi];
   if(!m._snap)m._snap=clone({p:m.p,c:m.c,x:m.x||[]});
-  fn(D,m);m.dirty=true;if(box==='p')m.dirtyProt=true;render();}
+  const before=new Set(BOXES.flatMap(([b])=>m[b]||[]));
+  fn(D,m);BOXES.forEach(([b])=>(m[b]||[]).forEach(i=>{if(!before.has(i))i.ed=true;}));
+  m.dirty=true;if(box==='p')m.dirtyProt=true;
+  if(m.calc)balanceMeal(m);
+  render();}
 function saveMeal(mi){const D=day();const m=D.meals[mi];const held=new Set();
-  BOXES.forEach(([b])=>(m[b]||[]).forEach(i=>{i.lock=true;i.a=i.g;held.add(i);}));
-  const protect=!m.dirtyProt;delete m._snap;delete m.dirty;delete m.dirtyProt;
+  BOXES.forEach(([b])=>(m[b]||[]).forEach(i=>{i.lock=true;i.a=i.g;delete i.ed;delete i.g0;held.add(i);}));
+  const protect=!m.dirtyProt;delete m._snap;delete m.dirty;delete m.dirtyProt;delete m.calc;
   D.meals.forEach(o=>{if(o.dirty)BOXES.forEach(([b])=>(o[b]||[]).forEach(i=>held.add(i)));});
   solve(D,held,{protect});render();}
 function undoMeal(mi){const D=day();const m=D.meals[mi];if(m._snap)Object.assign(m,clone(m._snap));
-  delete m._snap;delete m.dirty;delete m.dirtyProt;render();}
+  delete m._snap;delete m.dirty;delete m.dirtyProt;delete m.calc;render();}
+/* tick: balance the meal now; untick: the foods it moved go back to where you left them */
+function calcMeal(mi,on){const m=day().meals[mi];if(!m.dirty)return;
+  if(on){m.calc=true;balanceMeal(m);}
+  else{delete m.calc;BOXES.forEach(([b])=>(m[b]||[]).forEach(i=>{if(i.g0!=null){i.g=i.g0;delete i.g0;}}));}
+  render();}
 
 document.addEventListener('click',e=>{
   const b=e.target.closest('[data-act]'); if(!b||b.tagName==='INPUT'||b.tagName==='SELECT')return;
@@ -517,11 +527,12 @@ document.addEventListener('change',e=>{
   if(a==='pack'){setPack(el);render();return;}
   const get=D=>D.meals[+el.dataset.m][el.dataset.b][+el.dataset.i];
   if(a==='lock'){const D=day();get(D).lock=el.checked;render();}
-  else if(a==='amt'){editMeal(+el.dataset.m,el.dataset.b,D=>{const i=get(D);i.g=Math.max(0,+el.value||0);i.a=i.g;});}
+  else if(a==='amt'){editMeal(+el.dataset.m,el.dataset.b,D=>{const i=get(D);i.g=Math.max(0,+el.value||0);i.a=i.g;i.ed=true;});}
   else if(a==='swap'){editMeal(+el.dataset.m,el.dataset.b,D=>{const h=new Set();const i=get(D),box=D.meals[+el.dataset.m][el.dataset.b];const mac=el.dataset.b==='p'?'p':el.dataset.b==='x'?'f':'c';
-      const need=FOODS[i.f][mac]*i.g/100;placeMatched(box,el.value,mac,need,h,i);});}
+      const need=FOODS[i.f][mac]*i.g/100;placeMatched(box,el.value,mac,need,h,i);h.forEach(x=>{x.ed=true;});});}
   else if(a==='pie'){act(D=>{D.pie=el.checked;D.meals=planFor(wd(),D.bf,D.pie);D.base=clone(D.meals);D.targets={...(D.pie?PIE_TARGETS:COACH.S)};});}
   else if(a==='auto'){act(D=>{D.auto=el.checked;});}
+  else if(a==='mcalc'){calcMeal(+el.dataset.m,el.checked);}
   else if(el.dataset.add){const mi=+el.dataset.m,box=el.dataset.add,f=el.value;if(!f||!FOODS[f])return;
       const g=isLib(f)?(FOODS[f].unit==='×'?1:100):FOODS[f].min||(FOODS[f].step>=5?50:10);
       editMeal(mi,box,(D,m)=>{const n=it(f,g);(m[box]=m[box]||[]).push(n);});}

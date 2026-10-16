@@ -226,7 +226,8 @@ function solveWith(day,items,free,on){
   pinned.forEach((v,i)=>out.set(i,v));
   return out;
 }
-/* opts.protect: a carb-side change – direct protein foods are never moved, calories give way first */
+/* opts.protect: a carb-side change – direct protein foods are never moved, calories give way first.
+   opts.on: which of calories, protein, carbs, fat to match from the start (default calories and carbs). */
 function solve(day,held,opts={}){
   if(!day.auto) return;
   const items=allItems(day);
@@ -241,7 +242,7 @@ function solve(day,held,opts={}){
     if(F.order!=null) hi=Math.min(hi,Math.max(0,F.order-used(i.f,i)));
     i._hi=Math.max(hi,i._lo); i._x0=anc(i); i.g=anc(i);
   });
-  const on=[1,0,1,0]; let out;
+  const on=opts.on?opts.on.slice():[1,0,1,0]; let out;
   for(let pass=0;pass<3;pass++){
     out=solveWith(day,items,free,on);
     const t=sum(items.map(i=>macOf(i.f,out.has(i)?out.get(i):i.g)).concat(day.off.map(o=>({k:+o.k||0,p:+o.p||0,c:+o.c||0,f:+o.f||0}))));
@@ -253,6 +254,18 @@ function solve(day,held,opts={}){
   free.forEach(i=>{const st=FOODS[i.f].step;const g=out.get(i);
     i.g=Math.max(i._lo,Math.min(i._hi,Math.round(g/st)*st));
     delete i._lo;delete i._hi;delete i._x0;});
+}
+/* Balance inside a meal while it is being edited ('Balance this meal as I edit' on the meal): keep the meal's calories where
+   they were before the edit by moving its other foods. Foods you changed or added (i.ed) and locked foods stay put, direct
+   protein never moves, and nothing outside the meal is touched. i.g0 keeps where a moved food was, to put it back. */
+function balanceMeal(m){
+  if(!m._snap)return;
+  const items=x=>BOXES.flatMap(([b])=>x[b]||[]);
+  const k=sum(items(m._snap).map(i=>macOf(i.f,i.g))).k;
+  const held=new Set(items(m).filter(i=>i.ed));
+  items(m).forEach(i=>{if(!i.ed&&i.g0==null)i.g0=i.g;});
+  solve({auto:true,targets:{k,p:0,c:0,f:1e9},meals:[m],off:[]},held,{protect:true,on:[1,0,0,0]});
+  items(m).forEach(i=>{if(i.ed||i.g0===i.g)delete i.g0;});
 }
 /* Put an amount of a food into a box, overflowing into the next food when a serving cap is hit. */
 function placeMatched(box,f,macro,need,held,replace){
@@ -290,4 +303,4 @@ function packPortion(g,pack,meat){return g>0&&pack>0&&meat>0?g/meat*pack:null;}
 function fmtG(i){const u=FOODS[i.f].unit||'g';return Math.round(i.g)+u;}
 
 /* lets the server check food ids against the same data */
-if(typeof module!=='undefined') module.exports={FOODS,TYPE,COACH,packPortion,layerDefaults};
+if(typeof module!=='undefined') module.exports={FOODS,TYPE,COACH,packPortion,layerDefaults,balanceMeal,macOf,sum,it};
