@@ -1,6 +1,6 @@
 'use strict';
 /* Browser smoke test: starts a throwaway server, signs in, weighs a meal-prep pack, edits and saves a day, logs a weight,
-   opens History and Weight, logs gym sets, adds a shared food to the library and to a day, logs supplements, uploads a plan and invites someone on the Admin page, at desktop and phone widths. Fails on any page error.
+   opens History and Weight, logs gym sets, adds a shared food to the library and to a day, logs supplements, uploads and compares progress photos, uploads a plan and invites someone on the Admin page, at desktop and phone widths. Fails on any page error.
    Needs Playwright (npm i -g playwright, or available in the environment); skips if missing. */
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -182,6 +182,37 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       const sscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(sscroll <= 1, `horizontal overflow of ${sscroll}px on the supplements page at ${w}px wide`);
       await pg.click('#s-log .orow:last-child [data-sa=del]'); await pg.waitForFunction(n => document.querySelectorAll('#s-log .orow').length === n, sRows - 1, { timeout: 5000 });
+      /* progress photos: upload two days of pictures (shrunk in the browser, with thumbnails), edit one, compare the days */
+      await pg.click('a[data-view=photos]'); await pg.waitForSelector('#v-photos:not([hidden]) #p-form');
+      if (first) {
+        const pic = async (w, h, colour) => Buffer.from(await pg.evaluate(([w, h, colour]) => {
+          const c = document.createElement('canvas'); c.width = w; c.height = h;
+          const g = c.getContext('2d'); g.fillStyle = colour; g.fillRect(0, 0, w, h);
+          return c.toDataURL('image/png').split(',')[1];
+        }, [w, h, colour]), 'base64');
+        await pg.setInputFiles('#p-file', [{ name: 'front.png', mimeType: 'image/png', buffer: await pic(3000, 4000, '#c33') },
+          { name: 'side.png', mimeType: 'image/png', buffer: await pic(600, 800, '#3c3') }]);
+        await pg.fill('#p-date', '2026-09-01'); await pg.fill('#p-note', 'smoke start'); await pg.click('#p-form button[type=submit]');
+        await pg.waitForFunction(() => /Added 2 photos/.test(document.querySelector('#p-list').textContent), null, { timeout: 10000 });
+        await pg.setInputFiles('#p-file', { name: 'later.png', mimeType: 'image/png', buffer: await pic(600, 800, '#33c') });
+        await pg.fill('#p-date', '2026-10-01'); await pg.click('#p-form button[type=submit]');
+        await pg.waitForFunction(() => /Added 1 photo /.test(document.querySelector('#p-list').textContent), null, { timeout: 10000 });
+        const big = await pg.evaluate(async () => (await api('GET', '/api/photos')).photos.find(p => p.note === 'smoke start'));
+        expect(big && big.tv && big.size < 1500000, 'uploaded photo should be shrunk and have a thumbnail');
+      }
+      expect(await pg.locator('#p-list .pday').count() === 2 && await pg.locator('#p-list .ptile').count() === 3, 'catalog should show 3 photos over 2 days');
+      await pg.waitForFunction(() => [...document.querySelectorAll('#p-list .ptile img')].every(i => i.complete && i.naturalWidth > 0), null, { timeout: 5000 });
+      const pscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(pscroll <= 1, `horizontal overflow of ${pscroll}px on the photos page at ${w}px wide`);
+      await pg.click('#p-list .pday:last-child .ptile >> nth=0'); await pg.waitForSelector('#p-eform');
+      await pg.waitForFunction(() => { const i = document.querySelector('.pbig img'); return i && i.complete && i.naturalWidth > 0; }, null, { timeout: 5000 });
+      await pg.fill('#p-enote', 'smoke edited ' + w); await pg.click('#p-eform button[type=submit]');
+      await pg.waitForFunction(() => /Saved/.test((document.querySelector('#p-list') || {}).textContent || ''), null, { timeout: 5000 });
+      await pg.click('#p-body a[href="#photos/compare"]'); await pg.waitForSelector('#p-cmp .pcmp');
+      await pg.waitForFunction(() => document.querySelectorAll('#p-cmp .pside img').length === 2 && /30 days apart/.test(document.querySelector('#p-cmp').textContent), null, { timeout: 5000 });
+      await pg.selectOption('#p-cpose', 'side'); await pg.waitForSelector('#p-cmp .pnone');
+      const cmpscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(cmpscroll <= 1, `horizontal overflow of ${cmpscroll}px on the photo compare page at ${w}px wide`);
       /* admin (the only account is the first one, so it is the admin) */
       await pg.click('#acct>summary'); await pg.click('#adminlink'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-meals .admeal');
       if (first) {

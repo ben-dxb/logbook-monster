@@ -140,6 +140,21 @@ CREATE TABLE IF NOT EXISTS supplement_log (
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS supplement_log_day ON supplement_log(user_id, date);
+/* Progress photos: the image files live on disk in config.photoDir under random names (file, and a small
+   thumb made in the browser); this keeps who owns them, the date taken, the pose and a note. */
+CREATE TABLE IF NOT EXISTS photos (
+  id         INTEGER PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  date       TEXT NOT NULL,
+  pose       TEXT NOT NULL DEFAULT 'front',
+  note       TEXT NOT NULL DEFAULT '',
+  file       TEXT NOT NULL,
+  type       TEXT NOT NULL,
+  size       INTEGER NOT NULL,
+  thumb      TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS photos_day ON photos(user_id, date);
 `);
 
 /* Added after the first release: accounts an admin invited may sign in even when ALLOWED_EMAILS doesn't list them. */
