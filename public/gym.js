@@ -204,8 +204,8 @@ function gEditItems(){
   const D=gDraft;
   return D.items.map((i,ix)=>`<div class="gerow"><span class="gi">${ix+1}</span><b class="gen">${esc(i.e?exName(i.e):i.name)}${i.e?'':' <span class="chip info">new</span>'}</b>
         <input id="g-wt-${ix}" class="gtarget" data-g="wt" data-i="${ix}" value="${esc(i.target)}" maxlength="200" placeholder="Target, e.g. 3 × 8–12" aria-label="Target for ${esc(i.e?exName(i.e):i.name)}">
-        <span class="gmv"><button class="ghost" type="button" data-g="iup" data-i="${ix}" aria-label="Move up"${ix?'':' disabled'}>↑</button><button class="ghost" type="button" data-g="idown" data-i="${ix}" aria-label="Move down"${ix<D.items.length-1?'':' disabled'}>↓</button>
-        <button class="x" type="button" data-g="idel" data-i="${ix}" aria-label="Remove">×</button></span></div>`).join('')||gEmpty('No exercises yet – pick some below.');
+        <span class="gmv"><button class="ghost" type="button" data-g="iup" data-i="${ix}" aria-label="Move ${esc(i.e?exName(i.e):i.name)} up"${ix?'':' disabled'}>↑</button><button class="ghost" type="button" data-g="idown" data-i="${ix}" aria-label="Move ${esc(i.e?exName(i.e):i.name)} down"${ix<D.items.length-1?'':' disabled'}>↓</button>
+        <button class="x" type="button" data-g="idel" data-i="${ix}" aria-label="Remove ${esc(i.e?exName(i.e):i.name)}">×</button></span></div>`).join('')||gEmpty('No exercises yet – pick some below.');
 }
 /* the picker: your exercises that match the search and body part; tap one to add it (again for a second slot) */
 function gPickList(){
@@ -214,8 +214,8 @@ function gPickList(){
   const list=gByPart(GY.exercises.filter(e=>gHasPart(e,gPick.part)&&(!tl||e.name.toLowerCase().includes(tl))));
   const exact=tl&&GY.exercises.some(e=>e.name.toLowerCase()===tl);
   return (t&&!exact?`<button type="button" class="grow gprow gadd" data-g="picknew"><span class="gt"><b>+ Add “${esc(t)}” as a new exercise</b></span></button>`:'')
-    +list.map(e=>{const k=inW.get(e.id);return `<button type="button" class="grow gprow" data-g="pick" data-id="${e.id}" aria-label="Add ${esc(e.name)}"><span class="gt"><b>${esc(e.name)}</b>${gPartChips(e.parts)}</span>
-      ${k?`<span class="chip ok">✓${k>1?' ×'+k:''}</span>`:''}<span class="gplus" aria-hidden="true">+</span></button>`;}).join('')
+    +list.map(e=>{const k=inW.get(e.id);return `<button type="button" class="grow gprow" data-g="pick" data-id="${e.id}"><span class="gt"><b>${esc(e.name)}</b>${gPartChips(e.parts)}</span>
+      ${k?`<span class="chip ok">✓${k>1?' ×'+k:''}<span class="vh"> in this workout${k>1?' '+k+' times':''}</span></span>`:''}<span class="gplus" aria-hidden="true">+</span><span class="vh">, add${k?' again':''} to the workout</span></button>`;}).join('')
     +(list.length||t?'':`<p class="empty grow">${GY.exercises.length?'No exercises match.':'No exercises yet – type a name above to add one.'}</p>`);
 }
 /* after picking: redraw the workout's list and the picker without losing the picker's scroll */
@@ -225,7 +225,8 @@ function gPickRefresh(){
 }
 async function gSaveDraft(){
   const D=gDraft, msg=$('#g-emsg');
-  if(!D.name.trim()){msg.textContent='Give the workout a name.';$('#g-wname').focus();return;}
+  msg.textContent='';
+  if(!D.name.trim())return fieldError($('#g-wname'),'Give the workout a name');
   try{   /* new exercises go by name: the server makes them only if it takes the whole workout */
     const body={name:D.name,description:D.description,items:D.items.map(i=>i.e?{e:i.e,target:i.target}:{name:i.name,target:i.target})};
     const r=D.id==null?await api('POST','/api/gym/workouts',body):await api('PUT','/api/gym/workouts/'+D.id,body,D.ver);
@@ -403,7 +404,7 @@ function gCsvPanel(){
     ${R.dateOrderAsk||C.dateOrderAsked?`<label class="f gcsvopt"><span class="lbl">Dates like 03/04/2026 are</span><select id="g-csvorder"><option value="dmy"${C.dateOrder==='dmy'?' selected':''}>day/month (3 April)</option><option value="mdy"${C.dateOrder==='mdy'?' selected':''}>month/day (March 4)</option></select></label>`:''}
     ${R.unitAsk||C.unitAsked?`<label class="f gcsvopt"><span class="lbl">The file doesn’t say – weights are in</span><select id="g-csvunit"><option value="kg"${C.unit==='kg'?' selected':''}>kg</option><option value="lb"${C.unit==='lb'?' selected':''}>lb (converted to kg)</option></select></label>`:''}
     ${R.noTime?'<p class="sub">The file has dates but no times, so sets are placed at midday in file order.</p>':''}
-    ${R.sets.length?`<div class="gcsvtab" role="table" aria-label="Latest sets in the file">${R.sets.slice(-6).reverse().map(s=>`<span role="cell">${esc(fmtAt(s.at))}</span><b role="cell">${esc(s.name)}</b><span role="cell">${s.reps} × ${kgTxt(s.kg)} kg</span>`).join('')}</div><p class="sub">The latest ${Math.min(6,R.sets.length)} sets, as they will be saved.</p>`:''}
+    ${R.sets.length?`<table class="gcsvtab"><caption class="vh">Latest sets in the file</caption><thead><tr><th scope="col" class="vh">When</th><th scope="col" class="vh">Exercise</th><th scope="col" class="vh">Reps × weight</th></tr></thead><tbody>${R.sets.slice(-6).reverse().map(s=>`<tr><td>${esc(fmtAt(s.at))}</td><td><b>${esc(s.name)}</b></td><td>${s.reps} × ${kgTxt(s.kg)} kg</td></tr>`).join('')}</tbody></table><p class="sub">The latest ${Math.min(6,R.sets.length)} sets, as they will be saved.</p>`:''}
     ${R.skipped.length?`<details class="adnotes"><summary>${R.skipped.length} row${R.skipped.length===1?'':'s'} left out</summary><ul>${R.skipped.slice(0,30).map(x=>`<li>Line ${x.line}: ${esc(x.why)}</li>`).join('')}${R.skipped.length>30?`<li>…and ${R.skipped.length-30} more</li>`:''}</ul></details>`:''}
     <div class="gactions">${C.busy?`<span class="chip info" role="status">Importing ${C.sent.toLocaleString()} of ${R.sets.length.toLocaleString()}…</span>`
       :`<button class="btn" type="button" data-g="csvgo"${R.sets.length?'':' disabled'}>Import ${R.sets.length.toLocaleString()} sets</button><button class="ghost" type="button" data-g="csvdrop">Discard</button>`}</div>
@@ -428,8 +429,8 @@ async function gCsvImport(){
 /* ---------- actions ---------- */
 async function gLogSet(){
   const Q=gQuick, reps=+$('#g-reps').value, kg=+$('#g-kg').value, note=$('#g-note').value.trim();
-  if(!Number.isInteger(reps)||reps<0||reps>1000){alert('Reps must be a whole number.');return;}
-  if(!Number.isFinite(kg)||$('#g-kg').value===''){alert('Enter a weight (0 for bodyweight).');return;}
+  if(!fieldErrors($('#g-quick'),[[(!Number.isInteger(reps)||reps<0||reps>1000||$('#g-reps').value==='')&&$('#g-reps'),'Reps must be a whole number from 0 to 1000'],
+    [(!Number.isFinite(kg)||$('#g-kg').value==='')&&$('#g-kg'),'Enter a weight (0 for bodyweight)']]))return;
   /* shown at once as "Saving…", swapped for the server's set (and its 🏆) when it lands; a double tap on the same set adds it once,
      the next set goes straight away */
   const key=[Q.e,reps,kg,note].join('|');if(gSending.has(key))return;gSending.add(key);
@@ -486,12 +487,12 @@ document.addEventListener('click',async e=>{
   else if(g==='iup'||g==='idown'){const it=gDraft.items,j=g==='iup'?i-1:i+1;if(j<0||j>=it.length)return;[it[i],it[j]]=[it[j],it[i]];renderGym();}
   else if(g==='idel'){gDraft.items.splice(i,1);renderGym();}
   else if(g==='wsave'){once(b,gSaveDraft);}
-  else if(g==='wdel'){if(!confirm(`Delete the workout “${gDraft.name}”? Your exercises and sets stay.`))return;
-    try{await api('DELETE','/api/gym/workouts/'+gDraft.id);gDraft=null;await gLoad();go('gym');}catch(err){if(!err.signedOut)alert(err.message);}}
-  else if(g==='sdel'){if(!confirm('Delete this set?'))return;const id=+b.dataset.id,ex=+b.dataset.e;
+  else if(g==='wdel'){const D=gDraft;if(!await ask(`Delete the workout “${D.name}”? Your exercises and sets stay.`,{yes:'Delete workout',no:'Keep it',danger:true})||gDraft!==D)return;
+    try{await api('DELETE','/api/gym/workouts/'+D.id);gDraft=null;await gLoad();go('gym');}catch(err){if(!err.signedOut)alert(err.message);}}
+  else if(g==='sdel'){if(!await ask('Delete this set?',{yes:'Delete set',no:'Keep it',danger:true}))return;const id=+b.dataset.id,ex=+b.dataset.e;
     once(b,async()=>{try{await api('DELETE','/api/gym/sets/'+id);gDropSet(id);gChanged();await gRestat(ex);gKeep='e/'+ex;go('gym/e/'+ex);}
       catch(err){if(!err.signedOut)$('#g-smsg').textContent='Couldn’t delete the set: '+err.message;}});}
-  else if(g==='exdel'){const id=+gArgs[1],ex=exById(id);if(!ex||!confirm(`Delete ${ex.name} and all ${ex.sets} of its sets? This can’t be undone.`))return;
+  else if(g==='exdel'){const id=+gArgs[1],ex=exById(id);if(!ex||!await ask(`Delete ${ex.name} and all ${ex.sets} of its sets? This can’t be undone.`,{yes:'Delete exercise and sets',no:'Keep it',danger:true})||!exById(id))return;
     try{await api('DELETE','/api/gym/exercises/'+id);delete GSETS[id];gChanged();await gLoad();go('gym/x');}catch(err){if(!err.signedOut)alert(err.message);}}
   else if(g==='aiadd'){once(b,gAiAdd);}
   else if(g==='part'){gPick.part=b.dataset.p===gPick.part?'':b.dataset.p;renderGym();}
@@ -565,18 +566,22 @@ document.addEventListener('submit',async e=>{
   gDraft.items.push(ex?{e:ex.id,target:''}:{e:null,name:v,target:''});gPick.q='';await renderGym();$('#g-exname').focus();
 });
 async function gSubmit(f){
-  if(f.id==='g-newex'){const v=$('#g-find').value.replace(/\s+/g,' ').trim();if(!v)return;
-    try{const ex=await api('POST','/api/gym/exercises',{name:v});await gLoad();go('gym/e/'+ex.id);}catch(err){if(!err.signedOut)alert(err.message);}}
+  if(f.id==='g-newex'){const v=$('#g-find').value.replace(/\s+/g,' ').trim();if(!v)return fieldError($('#g-find'),'Type the exercise’s name');
+    try{const ex=await api('POST','/api/gym/exercises',{name:v});await gLoad();go('gym/e/'+ex.id);}catch(err){if(!err.signedOut)fieldError($('#g-find'),endStop(err.message));}}
   else if(f.id==='g-exform'){const id=+gArgs[1];
     const ticked=[...f.querySelectorAll('input[name=g-part]:checked')].map(x=>x.value), had=(exById(id)||{parts:[]}).parts;
     const parts=[...had.filter(p=>ticked.includes(p)),...ticked.filter(p=>!had.includes(p))];
+    if(!$('#g-exn').value.trim())return fieldError($('#g-exn'),'Give the exercise a name');
     try{await api('PUT','/api/gym/exercises/'+id,{name:$('#g-exn').value,notes:$('#g-exnotes').value,parts});gTagMsg='';gExOpen=false;await gLoad();renderGym();}
-    catch(err){if(!err.signedOut)$('#g-exmsg').textContent=err.message;}}
-  else if(f.id==='g-setform'){const id=+f.dataset.id, t=$('#g-st').value;
+    catch(err){if(!err.signedOut&&!errToField(err,[[/name|already/i,$('#g-exn')],[/notes/i,$('#g-exnotes')]]))$('#g-exmsg').textContent=err.message;}}
+  else if(f.id==='g-setform'){const id=+f.dataset.id, t=$('#g-st').value;$('#g-smsg').textContent='';
+    const reps=$('#g-sr'),kg=$('#g-sk');
+    if(!fieldErrors(f,[[(reps.value===''||!Number.isInteger(+reps.value))&&reps,'Reps must be a whole number from 0 to 1000'],[kg.value===''&&kg,'Enter a weight (0 for bodyweight)'],
+      [!isDate($('#g-sd').value)&&$('#g-sd'),'Pick a date from 2000 to a year from now'],[!/^\d\d:\d\d/.test(t)&&$('#g-st'),'Enter a time']]))return;
     const body={exercise:+$('#g-se').value,reps:+$('#g-sr').value,kg:+$('#g-sk').value,note:$('#g-sn').value,at:`${$('#g-sd').value}T${t.length===5?t+':00':t}`};
     const old=Object.keys(GSETS).find(k=>GSETS[k].sets.some(s=>s.id===id));
     try{const s=await api('PUT','/api/gym/sets/'+id,body,f.dataset.ver||null);   /* changed (or deleted) in another tab since: 409 / 404 */
       gDropSet(id);gPut(s);gChanged();await Promise.all([...new Set([+old||s.e,s.e])].map(gRestat));gKeep='e/'+s.e;go('gym/e/'+s.e);}
-    catch(err){if(err.signedOut)return;$('#g-smsg').textContent=err.message;
+    catch(err){if(err.signedOut)return;if(!errToField(err,[[/^reps/i,reps],[/^weight/i,kg],[/date and time/i,$('#g-sd')],[/exercise/i,$('#g-se')]]))$('#g-smsg').textContent=err.message;
       if(err.conflict||/No such/.test(err.message)){if(old)delete GSETS[old];gChanged();gLoad().catch(()=>{});}}}   /* the next look loads it as it is now */
 }

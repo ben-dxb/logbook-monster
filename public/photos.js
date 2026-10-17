@@ -476,11 +476,12 @@ async function pSave(form){
       ...(said&&said.pose===pose&&said.style===style?{ai:true}:{})},form.dataset.ver||undefined);
     PHOTOS=PHOTOS.filter(x=>x.id!==id);PHOTOS.push(p);pSort();
     pDirty=false;pMsg='Saved.';go('photos');
-  }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message;err.hidden=false;if(e.conflict||/No such/.test(e.message))pLoad().catch(()=>{});}}
+  }catch(e){btn.disabled=false;if(!e.signedOut){if(e.conflict||/No such/.test(e.message))pLoad().catch(()=>{});
+    if(!errToField(e,[[/date|day/i,$('#p-edate')],[/note/i,$('#p-enote')]])){err.textContent=endStop(e.message);err.hidden=false;}}}
 }
 async function pDelete(id){
   const p=pById(id);if(!p)return;
-  if(!confirm(`Delete this ${(pPoseName(p.pose)).toLowerCase()} photo from ${fmtLong(p.date)}? This can’t be undone.`))return;
+  if(!await ask(`Delete this ${(pPoseName(p.pose)).toLowerCase()} photo from ${fmtLong(p.date)}? This can’t be undone.`,{yes:'Delete photo',no:'Keep it',danger:true})||!pById(id))return;
   try{await api('DELETE','/api/photos/'+id);}catch(e){if(!e.signedOut)alert(e.message);return;}
   PHOTOS=PHOTOS.filter(x=>x.id!==id);pPick=pPick.filter(x=>x!==id);pDirty=false;pMsg='Deleted the photo.';go('photos');
 }
@@ -500,11 +501,15 @@ async function pAiTagAll(onlyNew){
     if(!list.length){pMsg='Every photo shown already has a pose, so there’s nothing for the AI to tag.';renderPhotoList();return;}
   }
   const mine=list.filter(p=>!p.poseAi).length;
-  if(mine&&!confirm(`${mine===list.length?(mine===1?'The photo':`All ${mine} photos`):`${mine} of the ${list.length} photos`} shown ${mine===1?'has a pose':'have poses'} you set yourself. Let the AI redo ${mine===1?'that':'those'} too?\n\nOK – redo ${mine===1?'it':'them'} too\nCancel – leave ${mine===1?'it':'them'} as ${mine===1?'it is':'they are'}`)){
+  /* either answer goes on to the next question: "leave them" only takes those photos out of the run */
+  if(mine&&!await ask(`${mine===list.length?(mine===1?'The photo':`All ${mine} photos`):`${mine} of the ${list.length} photos`} shown ${mine===1?'has a pose':'have poses'} you set yourself. Let the AI redo ${mine===1?'that':'those'} too?`,
+    {title:'Poses you set yourself',yes:`Redo ${mine===1?'it':'them'} too`,no:`Leave ${mine===1?'it as it is':'them as they are'}`})){
     list=list.filter(p=>p.poseAi);
     if(!list.length){pMsg='Every photo shown has a pose you set yourself, so there’s nothing for the AI to tag.';renderPhotoList();return;}
   }
-  if(!confirm(`Let the AI look at ${list.length===1?'this photo':`these ${list.length} photos`} and set ${list.length===1?'its':'their'} pose (front, left or right side, back or other) and pose type (relaxed, double biceps, most muscular…)?\n\n${P_AI_NOTE}`))return;
+  if(!await ask(`Let the AI look at ${list.length===1?'this photo':`these ${list.length} photos`} and set ${list.length===1?'its':'their'} pose (front, left or right side, back or other) and pose type (relaxed, double biceps, most muscular…)?\n\n${P_AI_NOTE}`,
+    {title:'Tag poses with AI',yes:`Tag ${list.length===1?'it':list.length+' photos'}`,no:'Not now'}))return;
+  if(pAiBusy)return;   /* started from another button while this asked */
   pAiBusy=true;pStopAi=false;pMsg='';
   /* the page can be drawn again meanwhile: the buttons and the status line are looked up each time */
   const show=()=>{['#p-aibtn','#p-aiuntag'].forEach(x=>{const b=$(x);if(b)b.disabled=true;});
@@ -726,7 +731,7 @@ document.addEventListener('input',e=>{
    anything else that changes the address puts the photo page back, with the changes, and asks there; closing or reloading the tab
    asks too. pDraft: the form as changed, for putting it back. */
 let pDraft=null;
-const pAsk=t=>Promise.resolve(confirm(t));   /* the browser's confirm until the shared ask() dialog is in */
+const pAsk=t=>ask(t,{title:'Unsaved changes',yes:'Leave without saving',no:'Stay',danger:true});
 const P_LEAVE='You changed this photo’s details without saving. Leave without saving them?';
 function pKeepDraft(){const f=$('#p-eform');if(f)pDraft={id:+f.dataset.id,hash:location.hash,ai:f.dataset.ai||'',v:['#p-edate','#p-epose','#p-estyle','#p-enote'].map(x=>$(x).value)};}
 document.addEventListener('click',e=>{

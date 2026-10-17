@@ -604,6 +604,10 @@ test('a password change ends the account’s other sessions and (only when ticke
   const s1 = await signIn('cat@example.com'), s2 = await signIn('cat@example.com');
   const link = (await s1('POST', '/api/shares', { label: 'cat', expires: inDays(7) })).body.url;
   assert.strictEqual((await call('GET', link + '/api/info')).status, 200);
+  await t.test('an empty current password is asked for, not called wrong (Phase 5)', async () => {
+    const r = await s1('POST', '/auth/password', { current: '', next: 'brand-new-password-3' });
+    assert.strictEqual(r.status, 400); assert.strictEqual(r.body.error, 'Enter your current password.');
+  });
   assert.strictEqual((await s1('POST', '/auth/password', { current: PASSWORD, next: 'brand-new-password-3', endLinks: true })).status, 200);
   await t.test('the old password no longer signs in', async () => {
     const cfg = await call('GET', '/auth/config');

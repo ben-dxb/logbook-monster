@@ -148,10 +148,10 @@ function renderAdmin(){
       <span class="ml" id="ad-mt-${mi}"></span>
       <div class="boxes">${AD_BOXES.map(([b,l])=>`<div class="box"><span class="lbl">${l}</span>
         ${(m[b]||[]).map((i,ii)=>{const u=(AD.foods[i.f]||FOODS[i.f]||{}).unit||'g';const k=`${mi}-${b}-${ii}`;
-          return `<div class="adrow"><select id="ad-f-${k}" data-ad="ifood" data-m="${mi}" data-b="${b}" data-i="${ii}" aria-label="Food">${foodOpts(i.f,b)}</select>
-          <span class="amt">${numIn('ad-g-'+k,i.g,`step="1" data-ad="igram" data-m="${mi}" data-b="${b}" data-i="${ii}"`,'Amount')}<em>${esc(u)}</em></span>
-          <label class="lock"><input type="checkbox" id="ad-l-${k}" data-ad="ilock" data-m="${mi}" data-b="${b}" data-i="${ii}"${i.lock?' checked':''}><span>Lock</span></label>
-          <button type="button" class="x" data-ad="idel" data-m="${mi}" data-b="${b}" data-i="${ii}" aria-label="Remove">×</button></div>`;}).join('')||'<p class="empty">Nothing here</p>'}
+          return `<div class="adrow"><select id="ad-f-${k}" data-ad="ifood" data-m="${mi}" data-b="${b}" data-i="${ii}" aria-label="Food, meal ${esc(m.id)} ${esc(l.toLowerCase())}">${foodOpts(i.f,b)}</select>
+          <span class="amt">${numIn('ad-g-'+k,i.g,`step="1" data-ad="igram" data-m="${mi}" data-b="${b}" data-i="${ii}"`,`Amount of ${adFoodName(i.f)} in ${u}`)}<em>${esc(u)}</em></span>
+          <label class="lock"><input type="checkbox" id="ad-l-${k}" data-ad="ilock" data-m="${mi}" data-b="${b}" data-i="${ii}"${i.lock?' checked':''}><span>Lock<span class="vh"> ${esc(adFoodName(i.f))}</span></span></label>
+          <button type="button" class="x" data-ad="idel" data-m="${mi}" data-b="${b}" data-i="${ii}" aria-label="Remove ${esc(adFoodName(i.f))} from meal ${esc(m.id)}">×</button></div>`;}).join('')||'<p class="empty">Nothing here</p>'}
         <div class="add"><select id="ad-a-${mi}-${b}" data-ad="iadd" data-m="${mi}" data-b="${b}" aria-label="Add a food"><option value="">${foodIds().length?'+ Add a food…':'+ Add foods in My foods first'}</option>${foodOpts(null,b)}</select></div>
       </div>`).join('')}</div></section>`).join('')
     +`${meals.length?'':'<p class="empty">No meals in this template yet.</p>'}<div class="adplanfoot"><span class="ml" id="ad-tot"></span><button type="button" class="ghost" data-ad="madd"${meals.length>=12?' disabled':''}>+ Add a meal</button></div>`;
@@ -160,7 +160,7 @@ function renderAdmin(){
   $('#ad-week').innerHTML=has?DAYS.map((d,i)=>`<label class="f"><span class="lbl">${d}</span><select id="ad-wd-${i}" data-ad="wday" data-i="${i}">${opts(AD.schedule[i])}</select></label>`).join('')
     :'<p class="empty">Add a day template first.</p>';
   $('#ad-targets').innerHTML=has?'<span></span><span class="lbl">kcal</span><span class="lbl">Protein g</span><span class="lbl">Carbs g</span><span class="lbl">Fat g</span>'+
-    AD.templates.map(({id,name})=>`<span class="adtl">${esc(name)}</span>`+MAC.map(m=>numIn(`ad-tg-${esc(id)}-${m}`,AD.targets[id][m],`data-ad="target" data-t="${esc(id)}" data-k="${m}"`,`${name} ${m}`)).join('')).join('')
+    AD.templates.map(({id,name})=>`<span class="adtl">${esc(name)}</span>`+MAC.map(m=>numIn(`ad-tg-${esc(id)}-${m}`,AD.targets[id][m],`data-ad="target" data-t="${esc(id)}" data-k="${m}"`,`${name}: ${{k:'kcal',p:'protein g',c:'carbs g',f:'fat g'}[m]}`)).join('')).join('')
     :'';
   $('#ad-targets').hidden=!has;
   /* free foods */
@@ -222,7 +222,8 @@ function adStatus(){
     :!AD.templates.length&&adEmpty(adVer)?(adVer?`<span class="chip">No plan from ${esc(adVer.from?fmtShort(adVer.from):'the start')}</span> ${adVer.from?'Your days from then have no meal plan until a later change.':'Your days have no meal plan.'} Add a day template or upload a plan, then save it.`
       :'<span class="chip">No plan saved yet</span> Add a day template or upload a plan, then save it.')
     :`<span class="chip ok">✓ Saved</span> ${adVer&&adVer.from?`Your days from ${esc(fmtShort(adVer.from))} start from this plan.`:'Your new days start from this plan.'} Days already in your history keep their own amounts.`;
-  $('#ad-save').disabled=!d||adBusy||adFromBad;$('#ad-discard').hidden=!d;
+  if(!$('#ad-save').hasAttribute('aria-busy'))$('#ad-save').disabled=!d||adBusy||adFromBad;$('#ad-discard').hidden=!d;
+  adSaveErrs();
 }
 
 /* ---------- editing ---------- */
@@ -271,21 +272,24 @@ document.addEventListener('click',e=>{
   else if(a==='tdup'){const from=adType;adType=adAddTpl(`${adTplName(from)} (copy)`.slice(0,40),from);renderAdmin();const i=$('#ad-tn');if(i){i.focus();i.select();}return;}
   else if(a==='tdel'){adDelTpl();return;}
   else if(a==='idel'){adMeal(b)[b.dataset.b].splice(+b.dataset.i,1);}
-  else if(a==='mdel'){const m=adMeal(b);if(!confirm(`Remove meal ${m.id} (${m.name}) from ${adTplName(adType)}?`))return;
-    AD.plan[adType].splice(+b.dataset.m,1);}
+  else if(a==='mdel'){const m=adMeal(b),ms=AD.plan[adType];
+    ask(`Remove meal ${m.id} (${m.name}) from ${adTplName(adType)}?`,{yes:'Remove meal',no:'Keep it',danger:true}).then(ok=>{
+      const i=ms.indexOf(m);if(!ok||i<0)return;ms.splice(i,1);renderAdmin();});return;}
   else if(a==='madd'){const ms=AD.plan[adType];const n=ms.reduce((x,m)=>Math.max(x,parseInt(m.id,10)||0),0)+1;
     ms.push({id:String(n),name:'New meal',p:[],c:[],x:[]});}
   else if(a==='freset'){AD.foods[b.dataset.id]=clone(AD_BASE.foods[b.dataset.id]);}
   else if(a==='fdel'){const id=b.dataset.id;
     if(adPlanUses(id)){alert(`${adFoodName(id)} is in your meal plan. Take it out of the plan first.`);return;}
-    if(!confirm(`Delete ${adFoodName(id)} from your foods?`))return;
-    delete AD.foods[id];adOpen.delete(id);}
+    const was=AD;
+    ask(`Delete ${adFoodName(id)} from your foods?`,{yes:'Delete food',no:'Keep it',danger:true}).then(ok=>{
+      if(!ok||AD!==was||adPlanUses(id))return;delete AD.foods[id];adOpen.delete(id);renderAdmin();});return;}
   else if(a==='csv'){adDownload(`logbook-monster-plan-${todayStr()}.csv`,planCsv(AD.plan),'text/csv');return;}
   else if(a==='json'){adDownload(`logbook-monster-plan-${todayStr()}.json`,JSON.stringify(adPayload(),null,2),'application/json');return;}
-  else if(a==='discard'){adPick(adVer);adLoad();adMsg='';adErrs=[];adNotes=[];}
+  else if(a==='discard'){adPick(adVer);adLoad();adMsg='';adErrs=[];adNotes=[];adSaveErr=[];}
   else if(a==='vedit'){const v=(DEFS.myVersions||[]).find(x=>(x.from||'')===b.dataset.from);if(!v)return;
-    if(adDirty()&&!confirm('Drop your unsaved changes and edit this plan instead?'))return;
-    adPick(v);adLoad();adMsg='';adErrs=[];adNotes=[];}
+    const go_=()=>{adPick(v);adLoad();adMsg='';adErrs=[];adNotes=[];adSaveErr=[];renderAdmin();};
+    if(adDirty()){ask('Drop your unsaved changes and edit this plan instead?',{yes:'Drop changes and edit',no:'Keep editing',danger:true}).then(ok=>{if(ok)go_();});return;}
+    go_();return;}
   else if(a==='vdel'){adDelete(b.dataset.from||null);return;}
   else if(a==='save'){adSave();return;}
   else if(a==='aiuse'){if(adAiPend)adAiUse();}
@@ -294,11 +298,13 @@ document.addEventListener('click',e=>{
   renderAdmin();
 });
 /* delete a day template; weekdays that used it move to the first one left */
-function adDelTpl(){
-  const id=adType,t=adTpl(id);if(!t)return;
+async function adDelTpl(){
+  const id=adType,t=adTpl(id),was=AD;if(!t)return;
   const days=DAYS.filter((_,i)=>AD.schedule[i]===id);
+  const rest0=AD.templates.filter(x=>x.id!==id);
+  if(!await ask(`Delete the ${t.name} template and its meals?`+(days.length&&rest0.length?` ${days.join(', ')} will use ${rest0[0].name} instead.`:'')+' Days already in your history keep their own amounts.',{yes:'Delete template',no:'Keep it',danger:true}))return;
+  if(AD!==was||!adTpl(id))return;
   const rest=AD.templates.filter(x=>x.id!==id);
-  if(!confirm(`Delete the ${t.name} template and its meals?`+(days.length&&rest.length?` ${days.join(', ')} will use ${rest[0].name} instead.`:'')+' Days already in your history keep their own amounts.'))return;
   AD.templates=rest;delete AD.plan[id];delete AD.targets[id];
   AD.schedule=AD.schedule.map(x=>x===id?(rest[0]?rest[0].id:null):x);
   adType=rest.length?rest[0].id:null;
@@ -306,7 +312,7 @@ function adDelTpl(){
 }
 $('#ad-addfood').addEventListener('submit',e=>{
   e.preventDefault();const v=id=>$('#'+id).value;
-  const n=v('ad-nf-n').trim();if(!n){$('#ad-nf-n').focus();return;}
+  const n=v('ad-nf-n').trim();if(!n)return fieldError($('#ad-nf-n'),'Give the food a name');
   const group=v('ad-nf-g'),p=+v('ad-nf-p')||0;
   const id=adNewId(n);
   AD.foods[id]={group,n,k:+v('ad-nf-k')||0,p,c:+v('ad-nf-c')||0,f:+v('ad-nf-f')||0,d:group==='p'?p:0,step:group==='x'?1:5,unit:'g',min:null,max:null,order:null,free:''};
@@ -337,49 +343,79 @@ $('#ad-admintotp').addEventListener('change',async e=>{
   catch(err){if(!err.signedOut)alert(err.message);aoLoad();}
   el.disabled=false;
 });
-$('#ad-capform').addEventListener('submit',async e=>{
-  e.preventDefault();
-  try{aoFill(await api('PUT','/api/admin/options',{aiDailyUser:+$('#ad-capuser').value,aiDailyAll:+$('#ad-capall').value}));$('#ad-capmsg').textContent='Limits saved.';}
-  catch(err){if(!err.signedOut)$('#ad-capmsg').textContent=err.message;}
+$('#ad-capform').addEventListener('submit',e=>{
+  e.preventDefault();const f=e.target,u=$('#ad-capuser'),all=$('#ad-capall'),need=x=>x.value.trim()===''?'Enter a number (0 = no limit)':'';
+  $('#ad-capmsg').textContent='';
+  if(!fieldErrors(f,[[u,need(u)],[all,need(all)]]))return;
+  once(f,async()=>{
+    try{aoFill(await api('PUT','/api/admin/options',{aiDailyUser:+u.value,aiDailyAll:+all.value}));$('#ad-capmsg').textContent='Limits saved.';}
+    catch(err){if(!err.signedOut&&!errToField(err,[[/aiDailyUser|per account/i,u],[/aiDailyAll|whole app/i,all]]))$('#ad-capmsg').textContent=err.message;}
+  },'Saving…');
 });
 $('#ad-file').addEventListener('change',e=>{const el=e.target;adUpload(el.files&&el.files[0]).finally(()=>{el.value='';});});
 window.addEventListener('beforeunload',e=>{if(adDirty()){e.preventDefault();e.returnValue='';}});
 
-/* what the server would refuse in your foods, said before sending */
+/* what the server would refuse in your foods, said before sending: each at its field (id ad-fd-<food>-<key>) */
 function adFoodErrs(){
   const out=[];
-  for(const r of Object.values(AD.foods)){const n=r.n||'A food';
-    if(r.min!=null&&r.max!=null&&+r.min>+r.max)out.push(`${n}: the min serving (${r.min}) is more than the max serving (${r.max}).`);
-    if((+r.d||0)>(+r.p||0))out.push(`${n}: direct protein (${+r.d||0}) is more than its protein (${+r.p||0}).`);}
+  for(const [id,r] of Object.entries(AD.foods)){const n=r.n||'A food';
+    if(r.min!=null&&r.max!=null&&+r.min>+r.max)out.push({id,k:'min',msg:`${n}: the min serving (${r.min}) is more than the max serving (${r.max})`});
+    if((+r.d||0)>(+r.p||0))out.push({id,k:'d',msg:`${n}: direct protein (${+r.d||0}) is more than its protein (${+r.p||0})`});}
   return out;
+}
+/* Why the last save didn't go, shown next to Save (in the bar, where you pressed it) and at each field it is about. A field's
+   error goes as soon as it's fixed; the list goes with the last of them. */
+let adSaveErr=[];
+const adErrEl=e=>e.id?$(`#ad-fd-${CSS.escape(e.id)}-${e.k}`):e.sel?$(e.sel):null;
+function adSaveErrs(){
+  const box=$('#ad-saveerr');if(!box)return;
+  if(adSaveErr.some(e=>e.id)){const now=AD?adFoodErrs():[];adSaveErr=adSaveErr.filter(e=>!e.id||now.some(x=>x.id===e.id&&x.k===e.k));}
+  if(adSaveErr.some(e=>e.sel==='#ad-from')&&!adFromBad)adSaveErr=adSaveErr.filter(e=>e.sel!=='#ad-from');
+  document.querySelectorAll('#ad-foods [aria-invalid="true"]').forEach(el=>{if(!adSaveErr.some(e=>adErrEl(e)===el))clearFieldError(el);});
+  adSaveErr.forEach(e=>{const el=adErrEl(e);if(el&&e.id&&el.getAttribute('aria-invalid')!=='true')fieldError(el,e.msg,{focus:false});});
+  box.hidden=!adSaveErr.length;box.innerHTML='';
+  if(!adSaveErr.length)return;
+  const p=document.createElement('p');p.textContent=adSaveErr.length>1||adSaveErr[0].id||adSaveErr[0].sel?'Couldn’t save – fix '+(adSaveErr.length>1?`these ${adSaveErr.length} things`:'this')+' first:':'Couldn’t save:';box.appendChild(p);
+  const ul=document.createElement('ul');
+  adSaveErr.forEach(e=>{const li=document.createElement('li'),el=adErrEl(e);
+    if(el){const b=document.createElement('button');b.type='button';b.className='link';b.textContent=e.msg;
+      b.addEventListener('click',()=>{const d=el.closest('details');if(d)d.open=true;el.focus();});li.appendChild(b);}
+    else li.textContent=endStop(e.msg);
+    ul.appendChild(li);});
+  box.appendChild(ul);
 }
 async function adSave(){
   if(adFromToday&&adFrom<todayStr())adFrom=todayStr();
-  if(adFromBad){adErrs=['Pick a date from 2000 to a year from today in “Takes effect from”.'];adMsg='Couldn’t save:';renderAdmin();return;}
+  adSaveErr=[];
+  if(adFromBad){adSaveErr=[{sel:'#ad-from',msg:'Pick a date from 2000 to a year from today in “Takes effect from”'}];renderAdmin();$('#ad-from').focus();return;}
   const errs=adFoodErrs();
-  if(errs.length){adErrs=errs;adMsg='Couldn’t save – fix these first:';renderAdmin();return;}
+  if(errs.length){errs.forEach(e=>adOpen.add(e.id));adSaveErr=errs;renderAdmin();const el=adErrEl(errs[0]);if(el)el.focus();return;}
   const p=adPayload();
   if(!p.templates.length&&!Object.keys(p.foods).length
-    &&!confirm(`This plan has no day templates or foods, so your days ${adFrom?`from ${fmtShort(adFrom)}`:'from the start'} will have no meal plan. Save it anyway?`))return;
+    &&!await ask(`This plan has no day templates or foods, so your days ${adFrom?`from ${fmtShort(adFrom)}`:'from the start'} will have no meal plan. Save it anyway?`,{yes:'Save an empty plan',no:'Don’t save',danger:true}))return;
+  if(adBusy)return;
   adBusy=true;adStatus();
+  const btn=$('#ad-save'),undo=busyOn(btn,'Saving…');
   try{const from=adFrom||null, cur=(DEFS.myVersions||[]).find(v=>(v.from||null)===from);   /* the change this save replaces, as this tab has it */
     adSaved_(await api('PUT','/api/my/defaults',{...adPayload(),from},(cur&&cur.updatedAt)||null),from);}
-  catch(err){if(!err.signedOut){adErrs=[err.message];adMsg='Couldn’t save:';}}
-  adBusy=false;renderAdmin();
+  catch(err){if(!err.signedOut)adSaveErr=[{msg:err.message}];}
+  adBusy=false;undo();renderAdmin();
+  if(adSaveErr.length){const b=$('#ad-saveerr button');(b||$('#ad-save')).focus();}
 }
 /* after a save: days (from the change's date) you haven't saved yet start again from the new plan */
 function adSaved_(r,from){
   setDefaults(r);
   for(const d of Object.keys(S.days)) if((!from||d>=from)&&!LOGGED.has(d)&&!pending.has(d)){delete S.days[d];delete SAVED.days[d];}
   adPick(from===undefined?undefined:(DEFS.myVersions||[]).find(v=>v.from===from));
-  adLoad();adMsg='';adErrs=[];
+  adLoad();adMsg='';adErrs=[];adSaveErr=[];
 }
 async function adDelete(from){
   const list=DEFS.myVersions||[],v=list.find(x=>x.from===from);if(!v)return;
   const prev=list[list.indexOf(v)-1];
-  if(!confirm(`Delete the plan change from ${adWhen(from)}? Those days go back to ${prev?`the plan from ${adWhen(prev.from)}`:'having no plan'}.`))return;
+  if(!await ask(`Delete the plan change from ${adWhen(from)}? Those days go back to ${prev?`the plan from ${adWhen(prev.from)}`:'having no plan'}.`,{yes:'Delete plan change',no:'Keep it',danger:true}))return;
+  if(!(DEFS.myVersions||[]).includes(v))return;
   const was=v===adVer;
-  if(was&&adDirty()&&!confirm('You have unsaved changes to this plan. Drop them?'))return;
+  if(was&&adDirty()&&!await ask('You have unsaved changes to this plan. Drop them?',{yes:'Drop my changes',no:'Keep them',danger:true}))return;
   const keep=adVer&&adVer.from;
   try{const r=await api('DELETE','/api/my/defaults/'+(from||'start'));
     setDefaults(r);
@@ -563,23 +599,33 @@ function adAiRender(){
       <input id="ad-tm-${t.id}" data-task="${t.id}" autocomplete="off" spellcheck="false" value="${esc(t.model)}" placeholder="${esc(adAi.model)} (default)">
       <span class="sub">${esc(t.hint)}</span></label>`).join('');
 }
-$('#ad-keyform').addEventListener('submit',async e=>{
-  e.preventDefault();const k=$('#ad-key').value.trim();if(!k){$('#ad-key').focus();return;}
-  try{adAi=await api('PUT','/api/admin/ai',{key:k});aiOn=adAi.configured;$('#ad-key').value='';$('#ad-keymsg').textContent='Key saved.';}
-  catch(err){if(!err.signedOut)$('#ad-keymsg').textContent=err.message;}
-  adAiRender();
+$('#ad-keyform').addEventListener('submit',e=>{
+  e.preventDefault();const f=e.target,inp=$('#ad-key'),k=inp.value.trim();$('#ad-keymsg').textContent='';
+  if(!k)return fieldError(inp,'Paste the key from OpenRouter');
+  once(f,async()=>{
+    try{adAi=await api('PUT','/api/admin/ai',{key:k});aiOn=adAi.configured;inp.value='';$('#ad-keymsg').textContent='Key saved.';}
+    catch(err){if(!err.signedOut&&!errToField(err,[[/key/i,inp]]))$('#ad-keymsg').textContent=err.message;}
+    adAiRender();
+  },'Saving…');
 });
-$('#ad-modelform').addEventListener('submit',async e=>{
-  e.preventDefault();const models={};
-  document.querySelectorAll('#ad-aitasks [data-task]').forEach(i=>{models[i.dataset.task]=i.value.trim();});
-  try{adAi=await api('PUT','/api/admin/ai',{model:$('#ad-model').value.trim(),models});aiOn=adAi.configured;$('#ad-keymsg').textContent='Models saved.';document.activeElement.blur();}
-  catch(err){if(!err.signedOut)$('#ad-keymsg').textContent=err.message;}
-  adAiRender();
+$('#ad-modelform').addEventListener('submit',e=>{
+  e.preventDefault();const f=e.target,models={},ins=[...document.querySelectorAll('#ad-aitasks [data-task]')];$('#ad-keymsg').textContent='';
+  ins.forEach(i=>{models[i.dataset.task]=i.value.trim();});
+  once(f,async()=>{
+    try{adAi=await api('PUT','/api/admin/ai',{model:$('#ad-model').value.trim(),models});aiOn=adAi.configured;$('#ad-keymsg').textContent='Models saved.';document.activeElement.blur();}
+    catch(err){if(err.signedOut)return;   /* "Food values: model should look like …" goes to that task's box */
+      const task=ins.find(i=>{const l=i.closest('label');const n=l&&l.querySelector('.lbl');return n&&err.message.startsWith(n.textContent+':');});
+      if(task)fieldError(task,err.message);else if(!errToField(err,[[/^model/i,$('#ad-model')]]))$('#ad-keymsg').textContent=err.message;
+      return;}
+    adAiRender();
+  },'Saving…');
 });
-$('#ad-keydel').addEventListener('click',async()=>{
-  if(!confirm('Remove the saved OpenRouter key? AI features stop working for everyone.'))return;
-  try{adAi=await api('PUT','/api/admin/ai',{key:''});aiOn=adAi.configured;$('#ad-keymsg').textContent='Key removed.';}catch(err){if(!err.signedOut)$('#ad-keymsg').textContent=err.message;}
-  adAiRender();
+$('#ad-keydel').addEventListener('click',e=>{const b=e.currentTarget;
+  ask('Remove the saved OpenRouter key? AI features stop working for everyone.',{yes:'Remove key',no:'Keep it',danger:true}).then(ok=>{if(!ok)return;
+    once(b,async()=>{
+      try{adAi=await api('PUT','/api/admin/ai',{key:''});aiOn=adAi.configured;$('#ad-keymsg').textContent='Key removed.';}catch(err){if(!err.signedOut)$('#ad-keymsg').textContent=err.message;}
+      adAiRender();
+    },'Removing…');});
 });
 $('#ad-aifile').addEventListener('change',async e=>{
   const el=e.target, file=el.files&&el.files[0];el.value='';if(!file||jobBusy('plan'))return;
@@ -669,7 +715,8 @@ async function pdCount(){
   const dl=$('#ad-pd-dl'), range=isDate(from)&&isDate(to)&&from<=to;
   dl.href=range?`/api/photos/zip?from=${from}&to=${to}`:'/api/photos/zip';dl.textContent=range?'Download the photos in this range':'Download all my photos';
   if(!isDate(from)||!isDate(to)){msg.textContent='';return;}
-  if(from>to){msg.textContent='The From date is after the To date.';return;}
+  clearFieldErrors($('#ad-pdel'));
+  if(from>to){msg.textContent='';fieldError($('#ad-pd-to'),'Pick a date on or after the From date',{focus:false});return;}
   msg.textContent='Counting…';
   try{const r=await api('GET',`/api/photos?from=${from}&to=${to}`);if(tok!==pdTok)return;
     pdN=r.photos.length;btn.disabled=!pdN;
@@ -679,7 +726,8 @@ async function pdCount(){
 ['#ad-pd-from','#ad-pd-to'].forEach(s=>$(s).addEventListener('change',pdCount));
 $('#ad-pdel').addEventListener('submit',async e=>{
   e.preventDefault();const from=$('#ad-pd-from').value, to=$('#ad-pd-to').value, btn=$('#ad-pd-btn');
-  if(!pdN||!confirm(`Delete ${pdN} progress photo${pdN>1?'s':''} taken from ${fmtLong(from)} to ${fmtLong(to)}? This can’t be undone.`))return;
+  if(!pdN||!await ask(`Delete ${pdN} progress photo${pdN>1?'s':''} taken from ${fmtLong(from)} to ${fmtLong(to)}? This can’t be undone.`,{yes:`Delete ${pdN} photo${pdN>1?'s':''}`,no:'Keep them',danger:true}))return;
+  if(from!==$('#ad-pd-from').value||to!==$('#ad-pd-to').value||!pdN)return;   /* the dates changed while it asked */
   btn.disabled=true;$('#ad-pdmsg').textContent='Deleting…';
   try{const r=await api('DELETE',`/api/photos?from=${from}&to=${to}`);
     PHOTOS=null;pPick=[];                      /* the Photos page loads again next time */
@@ -691,14 +739,15 @@ $('#ad-pdel').addEventListener('submit',async e=>{
 /* ---------- Delete my account: the email typed to confirm, password or code again (the recheck dialog), then signed out ---------- */
 $('#ad-del').addEventListener('submit',e=>{
   e.preventDefault();const email=$('#ad-del-email').value.trim(),msg=$('#ad-delmsg');
-  if(email.toLowerCase()!==String(ME).toLowerCase()){msg.textContent=`Type your email (${ME}) exactly to confirm.`;return;}
+  msg.textContent='';
+  const same=x=>x.value.trim().toLowerCase()===String(ME).toLowerCase()?'':`Type your email (${ME}) exactly to confirm`;
+  if(same($('#ad-del-email')))return fieldError($('#ad-del-email'),same($('#ad-del-email')),{check:same});
   once(e.target,async()=>{
-    msg.textContent='Deleting…';
     try{await api('DELETE','/api/my/account',{email});}
-    catch(err){if(!err.signedOut)msg.textContent=err.message;return;}
+    catch(err){if(!err.signedOut&&!errToField(err,[[/email/i,$('#ad-del-email')]]))msg.textContent=err.message;return;}
     pending.clear();try{localStorage.removeItem(stashKey());}catch{}
     location.href='/login?bye=1';
-  });
+  },'Deleting…');
 });
 
 /* ---------- Daily checklist: the Dashboard's list (server/checklist.js) ---------- */
@@ -734,7 +783,7 @@ $('#v-admin').addEventListener('click',async e=>{
   else if(a==='del'){clDraft.splice(i,1);clChanged();clRender();}
   else if(a==='up'||a==='down'){const j=a==='up'?i-1:i+1;[clDraft[i],clDraft[j]]=[clDraft[j],clDraft[i]];clChanged();clRender();}
   else if(a==='save'||a==='reset'){
-    if(a==='reset'&&!confirm('Go back to the default checklist? Your own items are replaced (ticks already made stay).'))return;
+    if(a==='reset'&&!await ask('Go back to the default checklist? Your own items are replaced (ticks already made stay).',{yes:'Use the default list',no:'Keep my list',danger:true}))return;
     const items=clDraft.filter(x=>x.label.trim()), msg=$('#ad-clmsg');
     b.disabled=true;
     try{CL=a==='reset'?await api('DELETE','/api/checklist',undefined,CL.updated):await api('PUT','/api/checklist',{items},CL.updated);
@@ -770,22 +819,22 @@ function shExpiry(){
 $('#ad-sh-for').addEventListener('change',()=>{const on=$('#ad-sh-for').value==='date';$('#ad-sh-untilf').hidden=!on;
   const i=$('#ad-sh-until');i.disabled=!on;i.min=todayStr();i.max=addDays(todayStr(),365);if(on&&!i.value)i.value=addDays(todayStr(),7);});
 $('#ad-share').addEventListener('submit',async e=>{
-  e.preventDefault();const msg=$('#ad-shmsg'), btn=$('#ad-sh-btn'), t=shExpiry();
-  if(!t){msg.textContent='Pick the day the link runs out.';return;}
-  btn.disabled=true;msg.textContent='';
-  try{shNew=await api('POST','/api/shares',{label:$('#ad-sh-label').value.trim(),expires:t.toISOString()});$('#ad-sh-label').value='';await shLoad();}
-  catch(err){if(!err.signedOut)msg.textContent=err.message;}
-  btn.disabled=false;
+  e.preventDefault();const msg=$('#ad-shmsg'), t=shExpiry();msg.textContent='';
+  if(!t)return fieldError($('#ad-sh-until'),'Pick the day the link runs out');
+  once(e.target,async()=>{
+    try{shNew=await api('POST','/api/shares',{label:$('#ad-sh-label').value.trim(),expires:t.toISOString()});$('#ad-sh-label').value='';await shLoad();}
+    catch(err){if(!err.signedOut&&!errToField(err,[[/expir|runs out|date/i,$('#ad-sh-for').value==='date'?$('#ad-sh-until'):$('#ad-sh-for')],[/label|name/i,$('#ad-sh-label')]]))msg.textContent=err.message;}
+  },'Making link…');
 });
 document.addEventListener('click',async e=>{
   const b=e.target.closest('[data-sh]');if(!b)return;const a=b.dataset.sh;
   if(a==='copy'){const i=$('#ad-sh-link');i.select();try{await navigator.clipboard.writeText(i.value);b.textContent='Copied';}catch{document.execCommand&&document.execCommand('copy');}return;}
   if(a==='send'){try{await navigator.share({title:'My Logbook Monster',url:$('#ad-sh-link').value});}catch{}return;}
   const x=SH&&SH.find(s=>String(s.id)===b.dataset.id);if(!x)return;
-  if(a==='off'&&!confirm(`Switch off ${x.label?`“${x.label}”`:'this link'}? It stops working straight away.`))return;
+  if(a==='off'&&!await ask(`Switch off ${x.label?`“${x.label}”`:'this link'}? It stops working straight away.`,{yes:'Switch off',no:'Keep it live',danger:true}))return;
   /* a new link (new secret) for 3 months in its place; the old one stops working, and the person sends the new one themselves */
   if(a==='renew'){
-    if(!confirm(`Renew ${x.label?`“${x.label}”`:'this link'}? You get a new link, live for 3 months, to send your coach – the current one stops working straight away.`))return;
+    if(!await ask(`Renew ${x.label?`“${x.label}”`:'this link'}? You get a new link, live for 3 months, to send your coach – the current one stops working straight away.`,{yes:'Renew link',no:'Keep the current one'}))return;
     once(b,async()=>{try{shNew=await api('POST',`/api/shares/${x.id}/renew`,{key:x.key});await shLoad();}catch(err){if(!err.signedOut){alert(err.message);await shLoad();}}});
     return;
   }
@@ -815,11 +864,13 @@ function auRender(){
 }
 function auResult(r){auLink={link:r.link,error:r.emailed?'':r.emailError,msg:r.emailed?`Invite emailed to ${r.email}.`:`Invite ready for ${r.email}.`};}
 $('#ad-invite').addEventListener('submit',async e=>{
-  e.preventDefault();const email=$('#ad-iv-email').value.trim();if(!email){$('#ad-iv-email').focus();return;}
-  $('#ad-iv-btn').disabled=true;
-  try{auResult(await api('POST','/api/admin/users',{email,name:$('#ad-iv-name').value.trim()}));$('#ad-iv-email').value=$('#ad-iv-name').value='';await auLoad();}
-  catch(err){if(!err.signedOut){auLink=null;$('#ad-ivmsg').innerHTML=`<p class="aderr">${esc(err.message)}</p>`;}}
-  $('#ad-iv-btn').disabled=false;
+  e.preventDefault();const inp=$('#ad-iv-email'),email=inp.value.trim();
+  if(!email)return fieldError(inp,'Enter their email address');
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return fieldError(inp,'Enter an email address like name@example.com',{check:x=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x.value.trim())?'':'Enter an email address like name@example.com'});
+  once(e.target,async()=>{
+    try{auResult(await api('POST','/api/admin/users',{email,name:$('#ad-iv-name').value.trim()}));inp.value=$('#ad-iv-name').value='';await auLoad();}
+    catch(err){if(!err.signedOut){auLink=null;$('#ad-ivmsg').innerHTML='';if(!errToField(err,[[/email|account|signed in/i,inp]]))$('#ad-ivmsg').innerHTML=`<p class="aderr">${esc(err.message)}</p>`;}}
+  },'Sending…');
 });
 document.addEventListener('click',async e=>{
   const b=e.target.closest('[data-au]');if(!b)return;const a=b.dataset.au;
@@ -829,7 +880,7 @@ document.addEventListener('click',async e=>{
   b.disabled=true;
   try{
     if(a==='resend'){auResult(await api('POST',`/api/admin/users/${u.id}/invite`));}
-    else if(a==='remove'){if(!confirm(auRemoveText(u))){b.disabled=false;return;}
+    else if(a==='remove'){if(!await ask(auRemoveText(u),{title:`Remove ${u.email}?`,yes:'Remove account',no:'Keep it',danger:true})){b.disabled=false;return;}
       await api('DELETE',`/api/admin/users/${u.id}`);auLink=null;}
     await auLoad();
   }catch(err){b.disabled=false;if(!err.signedOut){alert(err.message);if(err.status===404)await auLoad();}}
@@ -884,22 +935,33 @@ function amBody(){
   if($('#ad-m-pass').value)body.pass=$('#ad-m-pass').value;
   return body;
 }
-$('#ad-mailform').addEventListener('submit',async e=>{
-  e.preventDefault();const body=amBody();
-  if(!Object.keys(body).length){$('#ad-mailmsg').textContent='Nothing changed.';return;}
-  try{AM=await api('PUT','/api/admin/email',body);$('#ad-mailmsg').textContent='Email settings saved. Send a test to check them.';amFill();if(AU){AU.email=AM.configured;auRender();}}
-  catch(err){if(!err.signedOut)$('#ad-mailmsg').textContent=err.message;}
+const AM_EMAIL=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+$('#ad-mailform').addEventListener('submit',e=>{
+  e.preventDefault();const f=e.target,msg=$('#ad-mailmsg'),from=$('#ad-m-from');msg.textContent='';
+  const fv=from.value.trim();
+  if(!fieldErrors(f,[[fv&&!AM_EMAIL.test(fv)&&from,'Enter an email address like you@gmail.com',{check:x=>!x.value.trim()||AM_EMAIL.test(x.value.trim())?'':'Enter an email address like you@gmail.com'}]]))return;
+  const body=amBody();
+  if(!Object.keys(body).length){msg.textContent='Nothing changed.';return;}
+  once(f,async()=>{
+    try{AM=await api('PUT','/api/admin/email',body);msg.textContent='Email settings saved. Send a test to check them.';amFill();if(AU){AU.email=AM.configured;auRender();}}
+    catch(err){if(!err.signedOut&&!errToField(err,[[/send from|“send from”/i,from],[/sender name/i,$('#ad-m-name')],[/port/i,$('#ad-m-port')],[/server|host/i,$('#ad-m-host')],[/password/i,$('#ad-m-pass')],[/user/i,$('#ad-m-user')]]))msg.textContent=err.message;}
+  },'Saving…');
 });
-$('#ad-m-del').addEventListener('click',async()=>{
-  if(!confirm('Remove the saved email settings? Invites will stop being emailed.'))return;
-  try{AM=await api('PUT','/api/admin/email',{from:'',fromName:'',host:'',port:'',secure:null,user:'',pass:''});$('#ad-mailmsg').textContent='Email settings removed.';amFill();if(AU){AU.email=AM.configured;auRender();}}
-  catch(err){if(!err.signedOut)$('#ad-mailmsg').textContent=err.message;}
+$('#ad-m-del').addEventListener('click',e=>{const b=e.currentTarget;
+  ask('Remove the saved email settings? Invites will stop being emailed.',{yes:'Remove settings',no:'Keep them',danger:true}).then(ok=>{if(!ok)return;
+    once(b,async()=>{
+      try{AM=await api('PUT','/api/admin/email',{from:'',fromName:'',host:'',port:'',secure:null,user:'',pass:''});$('#ad-mailmsg').textContent='Email settings removed.';amFill();if(AU){AU.email=AM.configured;auRender();}}
+      catch(err){if(!err.signedOut)$('#ad-mailmsg').textContent=err.message;}
+    },'Removing…');});
 });
-$('#ad-mailtest').addEventListener('submit',async e=>{
-  e.preventDefault();$('#ad-m-testbtn').disabled=true;$('#ad-mailmsg').textContent='Sending…';
-  try{const r=await api('POST','/api/admin/email/test',{to:$('#ad-m-to').value.trim()});$('#ad-mailmsg').textContent=`Test email sent to ${r.to}. Check the inbox (and spam).`;}
-  catch(err){if(!err.signedOut)$('#ad-mailmsg').textContent=err.message;}
-  $('#ad-m-testbtn').disabled=false;
+$('#ad-mailtest').addEventListener('submit',e=>{
+  e.preventDefault();const to=$('#ad-m-to'),v=to.value.trim();
+  if(!AM_EMAIL.test(v))return fieldError(to,v?'Enter an email address like name@example.com':'Enter the address to send the test to');
+  $('#ad-mailmsg').textContent='Sending…';
+  once(e.target,async()=>{
+    try{const r=await api('POST','/api/admin/email/test',{to:v});$('#ad-mailmsg').textContent=`Test email sent to ${r.to}. Check the inbox (and spam).`;}
+    catch(err){if(!err.signedOut){$('#ad-mailmsg').textContent='';if(!errToField(err,[[/valid email/i,to]]))$('#ad-mailmsg').textContent=err.message;}}
+  },'Sending…');
 });
 
 /* ---------- Security log (server/audit.js): the whole log on Super admin › Security log, your own account's on Account admin ---------- */

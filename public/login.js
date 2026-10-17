@@ -54,12 +54,20 @@
     showErr('');
   });
 
+  const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const emailWhy = el => { const v = el.value.trim(); return !v ? 'Enter your email address' : EMAIL.test(v) ? '' : 'Enter an email address like name@example.com'; };
   $('form').addEventListener('submit', async e => {
     e.preventDefault();
     showErr('');
     const body = { email: $('email').value.trim(), password: $('password').value, name: $('name').value.trim() };
-    if (!body.email || !body.password) return showErr('Enter your email and password.');
-    $('submit').disabled = true;
+    const reg = mode === 'register';
+    if (!fieldErrors($('form'), [
+      [emailWhy($('email')) && $('email'), emailWhy($('email')), { check: emailWhy }],
+      [(!body.password || (reg && body.password.length < 10)) && $('password'), !body.password ? 'Enter your password' : 'Use at least 10 characters',
+        { check: el => !el.value ? 'Enter your password' : reg && el.value.length < 10 ? 'Use at least 10 characters' : '' }],
+    ])) return;
+    if ($('submit').disabled) return;
+    const done = busyOn($('submit'), reg ? 'Creating account…' : 'Signing in…');
     try {
       const send = () => fetch(`/auth/${mode}`, {
         method: 'POST', credentials: 'same-origin',
@@ -69,20 +77,23 @@
       let r = await send(), j = await r.json().catch(() => ({}));
       /* the sign-in token ran out: get a new one and try once more, without clearing the form */
       if (r.status === 403 && /session/i.test(j.error || '') && await refresh()) { r = await send(); j = await r.json().catch(() => ({})); }
-      if (r.ok && j.second) { csrf = j.csrf; askCode(); $('submit').disabled = false; return; }
+      if (r.ok && j.second) { csrf = j.csrf; done(); askCode(); return; }
       if (r.ok) { location.replace(home()); return; }
+      done();
       if (r.status === 403 && /session/i.test(j.error || '')) showErr('This page had expired. Check that cookies are allowed for this site, then press Sign in again.');
-      else showErr(j.error || 'Sign-in failed.');
+      else if (!errToField({ message: j.error || '' }, [[/^password|characters/i, $('password')], [/valid email|email address/i, $('email')]])) showErr(j.error || 'Sign-in failed.');
+      return;
     } catch { showErr('Can’t reach the server.'); }
-    $('submit').disabled = false;
+    done();
   });
 
   $('second').addEventListener('submit', async e => {
     e.preventDefault();
     showErr('');
     const v = $('code').value.trim();
-    if (!v) return showErr('Enter the code.');
-    $('codebtn').disabled = true;
+    if (!v) return fieldError($('code'), rec ? 'Enter one of your recovery codes' : 'Enter the 6-digit code');
+    if ($('codebtn').disabled) return;
+    const done = busyOn($('codebtn'), 'Checking…');
     try {
       const r = await fetch('/auth/second', {
         method: 'POST', credentials: 'same-origin',
@@ -95,10 +106,24 @@
         location.replace(home()); return;
       }
       if (j.restart || (r.status === 403 && /session/i.test(j.error || ''))) { location.reload(); return; }
-      showErr(j.error || 'That code didn’t work.');
-      $('code').select();
+      done();
+      if (r.status === 429) showErr(j.error || 'Too many tries.');
+      else { fieldError($('code'), j.error || 'That code didn’t work'); $('code').select(); }
+      return;
     } catch { showErr('Can’t reach the server.'); }
-    $('codebtn').disabled = false;
+    done();
+  });
+  /* a recovery code (XXXXX-XXXXX) has letters: the box stops asking for the number keypad */
+  let rec = false;
+  $('userec').addEventListener('click', () => {
+    rec = !rec;
+    const c = $('code');
+    c.inputMode = rec ? 'text' : 'numeric'; c.autocomplete = rec ? 'off' : 'one-time-code';
+    $('codelbl').textContent = rec ? 'Recovery code (like ABCDE-FGHIJ)' : 'Code from your authenticator app';
+    $('codehint').textContent = rec ? 'Found your phone?' : 'Lost your phone?';
+    $('userec').textContent = rec ? 'Use a code from the app' : 'Use a recovery code';
+    $('userec').setAttribute('aria-pressed', String(rec));
+    clearFieldErrors($('second')); c.value = ''; c.focus();
   });
   $('restart').addEventListener('click', async () => {
     try { await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin', headers: { 'x-csrf-token': csrf } }); } catch {}
