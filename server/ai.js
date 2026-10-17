@@ -112,11 +112,19 @@ const OVERLAP = 60 * 60 * 1000;
 const SLOTS = [['key', 'keySealed'], ['next', 'nextSealed'], ['old', 'oldSealed']];
 function stored() {
   const r = q.get.get(), s = r ? JSON.parse(r.data) : {};
-  for (const [k, f] of SLOTS) if (s[f]) { const v = box.unsealText(s[f]); if (v) { s[k] = v; delete s[f]; } }
+  let plain = false;
+  for (const [k, f] of SLOTS) {
+    if (s[k]) {   /* plain text, written by an older version after a rollback: it wins over a sealed one left from before */
+      plain = true;
+      if (s[f] && box.unsealText(s[f]) !== s[k]) { s[k + 'Id'] = creds.newKid(); if (k === 'key') creds.record('OPENROUTER', s[k + 'Id']); }
+      delete s[f];
+    } else if (s[f]) { const v = box.unsealText(s[f]); if (v) { s[k] = v; delete s[f]; } }
+  }
   if (s.oldUntil && Date.now() > s.oldUntil) {   /* its hour is up: dropped for good */
     for (const k of ['old', 'oldSealed', 'oldId', 'oldUntil']) delete s[k];
-    q.put.run(sealed(s));
+    plain = true;
   }
+  if (plain) q.put.run(sealed(s));
   return s;
 }
 function sealed(s) {
@@ -140,6 +148,8 @@ function slots() {
 }
 const KEY_RE = /^[\x21-\x7e]{10,300}$/;
 const keyOf = v => { const key = String(v || '').trim(); if (key && !KEY_RE.test(key)) throw new Error('That doesn’t look like an API key'); return key; };
+/* has this key (id) a recorded age? One moved over from before the ages were kept has none */
+const aged = (name, id) => { const r = creds.recorded(name); return !!(r && r.set_at && r.kid === id); };
 /* the active key changes: the one it replaces stays as old for OVERLAP */
 function setActive(s, key, id) {
   if (s.key && s.key !== key) Object.assign(s, { old: s.key, oldId: s.keyId, oldUntil: Date.now() + OVERLAP });
@@ -181,7 +191,10 @@ function save(body) {
   const s = stored();
   if (body.key !== undefined) {
     const key = keyOf(body.key);
-    if (key) { if (key !== s.key) { setActive(s, key); breaker.reset('key'); } }   /* a new key gets a fresh chance (an open breaker may be the old key refused) */
+    if (key) {
+      if (key !== s.key) { setActive(s, key); breaker.reset('key'); }   /* a new key gets a fresh chance (an open breaker may be the old key refused) */
+      else if (!aged('OPENROUTER', s.keyId)) { s.keyId = s.keyId || creds.newKid(); creds.record('OPENROUTER', s.keyId, new Date().toISOString()); }   /* the same key saved again: its age starts now if none was recorded */
+    }
     else { for (const k of ['key', 'keyId', 'old', 'oldId', 'oldUntil']) delete s[k]; creds.forget('OPENROUTER'); }
   }
   if (body.model !== undefined) {
@@ -493,7 +506,8 @@ async function send(c, t, o, system, content, maxTokens, wait, task) {
     const timedOut = signal.aborted && (signal.reason || {}).name === 'TimeoutError';
     if (timedOut) console.error(`AI request timed out (${c.model}, ${task || 'no task'})`);
     if (e.big) { console.error(`AI reply over ${LIMITS.maxReply} bytes (${c.model}, ${task || 'no task'})`); throw fail('other', 'The AI reply was too large', 502); }
-    if (timedOut) throw fail(t.file ? 'other' : 'fail', slow, 502);   /* a long file read running out of time isn't an outage */
+    /* a long file read running out of time isn't an outage – but a probe that times out hasn't shown the service is back */
+    if (timedOut) throw fail(t.file && !probe ? 'other' : 'fail', slow, 502);
     throw fail('fail', r ? 'The AI reply was cut off – try again' : 'Couldn’t reach OpenRouter', 502, { detail: `${r ? 'reply cut off' : 'no connection'}: ${e.message}` });
   }
   let j;

@@ -151,6 +151,12 @@ if (isProd && !process.env.BASE_URL) {
   console.warn(`BASE_URL isn’t set: invite links, emails and Google sign-in will point at ${baseUrl}. Set BASE_URL to the address people open, e.g. BASE_URL=https://logbook.example.com`);
 }
 
+/* An https address with secure cookies but no trusted proxy: behind a proxy every request reaches the app as plain http, so the
+   session cookie is never set and sign-in answers ok yet nobody stays signed in. docker-compose.yml sets TRUST_PROXY=1. */
+if (isProd && config.cookieSecure && baseUrl.startsWith('https://') && (!config.trustProxy || config.trustProxy === '0' || /^false$/i.test(config.trustProxy))) {
+  console.warn('BASE_URL is https but TRUST_PROXY isn’t set: behind a reverse proxy (Caddy, nginx) nobody can sign in, because the secure session cookie is never sent over the proxy’s plain-http hop. Set TRUST_PROXY=1 (one proxy in front) in .env – docker-compose.yml already does.');
+}
+
 /* Who may hold an account. With ALLOWED_EMAILS set, only those addresses can sign in at all. */
 config.emailAllowed = email => !config.allowedEmails.length || config.allowedEmails.includes(String(email).toLowerCase());
 config.mayCreateAccount = email => config.emailAllowed(email) && (config.allowRegistration || config.allowedEmails.includes(String(email).toLowerCase()));
