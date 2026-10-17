@@ -335,6 +335,10 @@ const ROUTES = [
   { key: 'POST /api/photos/:id/ai-pose', u: () => `/api/photos/${c.p1}/ai-pose`, body: () => ({ save: true }), own: [{ expect: [404] }] },
   { key: 'GET /api/photos/:id/file', u: () => `/api/photos/${c.p1}/file`, own: [{ expect: [404] }] },
   { key: 'GET /api/photos/:id/thumb', u: () => `/api/photos/${c.p2}/thumb`, own: [{ expect: [404] }] },
+  { key: 'PUT /api/photos/:id/mid', u: () => `/api/photos/${c.p2}/mid`, body: () => jpeg('hijackmid'), own: [{ expect: [404] }] },
+  { key: 'GET /api/photos/:id/mid', u: () => `/api/photos/${c.p2}/mid`, own: [{ expect: [404] }] },
+  /* the ZIP of the caller's own pictures: bob's, never ann's */
+  { key: 'GET /api/photos/zip', own: [{ check: r => { assert.ok(r.text.includes('access-jpeg-bob') && !/access-jpeg-p[12]/.test(r.text)); } }] },
   /* server/timeline.js */
   /* (bob has by now made his own exercise and supplement log entry under ann's names, so these look for ann's own values) */
   { key: 'GET /api/timeline/day/:date', own: [{ check: r => {
@@ -359,7 +363,7 @@ const ROUTES = [
   { key: 'POST /api/jobs/:id/seen', u: () => `/api/jobs/${c.job}/seen`, own: [{ expect: [404] }] },
   { key: 'POST /api/jobs/away', own: SELF },
   /* server/shares.js – the coach's side, and the timeline and photo routers mounted under it */
-  { key: 'GET /coach/:token/api/info', scope: 'coach', check: r => assert.strictEqual(r.body.name, 'ann') },
+  { key: 'GET /coach/:token/api/info', scope: 'coach', check: r => assert.strictEqual(r.body.name, '', 'no name set: not a piece of the email either') },
   { key: 'GET /coach/:token/api/defaults', scope: 'coach', check: r => assert.deepStrictEqual(r.body.myVersions.map(v => [v.from, v.plan.R[0].name]), [[null, 'annmark bowl'], [FROM, 'annmark later bowl']]) },
   { key: 'GET /coach/:token/api/days', scope: 'coach', check: r => assert.deepStrictEqual(r.body.map(d => d.tname), ['annmark day']) },
   { key: 'GET /coach/:token/api/weights', scope: 'coach', check: r => assert.deepStrictEqual(r.body, [{ date: DATE, kg: 81.37 }]) },
@@ -375,6 +379,8 @@ const ROUTES = [
     extra: [{ name: 'the latest of each pose', u: () => `/coach/${c.token}/api/photos?latest=1`, expect: 404 }] },
   { key: 'POST /coach/:token/api/photos', scope: 'coach', u: () => `/coach/${c.token}/api/photos?date=${DATE}&pose=back`, body: () => jpeg('coach') },
   { key: 'PUT /coach/:token/api/photos/:id/thumb', scope: 'coach', u: () => `/coach/${c.token}/api/photos/${c.p2}/thumb`, body: () => jpeg('coachthumb') },
+  { key: 'PUT /coach/:token/api/photos/:id/mid', scope: 'coach', u: () => `/coach/${c.token}/api/photos/${c.p2}/mid`, body: () => jpeg('coachmid') },
+  { key: 'GET /coach/:token/api/photos/zip', scope: 'coach', expect: 404 },
   { key: 'PUT /coach/:token/api/photos/:id', scope: 'coach', u: () => `/coach/${c.token}/api/photos/${c.p1}`, body: () => ({ date: DATE, pose: 'back', note: 'coach' }) },
   { key: 'DELETE /coach/:token/api/photos', scope: 'coach', u: () => `/coach/${c.token}/api/photos?from=2000-01-01&to=2100-01-01` },
   { key: 'DELETE /coach/:token/api/photos/:id', scope: 'coach', u: () => `/coach/${c.token}/api/photos/${c.p1}` },
@@ -389,6 +395,11 @@ const ROUTES = [
     extra: [
       { name: 'another account’s photo', u: () => `/coach/${c.token}/api/photos/${c.bobPhoto}/thumb`, expect: 404 },
       { name: 'a photo the Timeline never shows', u: () => `/coach/${c.token}/api/photos/${c.p1}/thumb`, expect: 404 },
+    ] },
+  { key: 'GET /coach/:token/api/photos/:id/mid', scope: 'coach', u: () => `/coach/${c.token}/api/photos/${c.p2}/mid`,
+    extra: [
+      { name: 'another account’s photo', u: () => `/coach/${c.token}/api/photos/${c.bobPhoto}/mid`, expect: 404 },
+      { name: 'a photo the Timeline never shows', u: () => `/coach/${c.token}/api/photos/${c.p1}/mid`, expect: 404 },
     ] },
 ];
 for (const r of ROUTES) {

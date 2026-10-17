@@ -69,7 +69,7 @@ async function sweep(fix) {
   let names;
   try { names = await fs.promises.readdir(config.photoDir); } catch { return 0; }
   const used = new Set();
-  for (const r of db.prepare('SELECT file, thumb FROM photos').all()) { used.add(r.file); if (r.thumb) used.add(r.thumb); }
+  for (const r of db.prepare('SELECT file, thumb, mid FROM photos').all()) { used.add(r.file); if (r.thumb) used.add(r.thumb); if (r.mid) used.add(r.mid); }
   const now = Date.now();
   let n = 0, bytes = 0;
   for (const name of names) {

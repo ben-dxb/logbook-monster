@@ -15,36 +15,45 @@ const rateLimit = require('express-rate-limit');
 const { isDate, writeError } = require('./dates');
 const version = require('./version');
 const audit = require('./audit');
+const { writeZip } = require('./zip');
 
 fs.mkdirSync(config.photoDir, { recursive: true, mode: 0o700 });
 
 /* updated: the version a change is checked against (server/version.js) – when it was last changed, or uploaded */
-const COLS = 'id, date, pose, style, pose_ai, note, size, created_at AS created, COALESCE(updated_at, created_at) AS updated, file, thumb';
+const COLS = 'id, date, pose, style, pose_ai, note, size, created_at AS created, COALESCE(updated_at, created_at) AS updated, file, thumb, mid, width, height';
 const q = {
   list: db.prepare(`SELECT ${COLS} FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date DESC, id DESC`),
   get: db.prepare(`SELECT ${COLS} FROM photos WHERE user_id = ? AND id = ?`),
   /* the newest of each pose up to a date (the Dashboard's card) */
   latest: db.prepare(`SELECT ${COLS} FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY pose ORDER BY date DESC, id DESC) AS n
     FROM photos WHERE user_id = ? AND date <= ?) WHERE n = 1 ORDER BY date DESC, id DESC`),
-  files: db.prepare('SELECT file, type, thumb, thumb_size FROM photos WHERE user_id = ? AND id = ?'),
+  files: db.prepare('SELECT file, type, thumb, thumb_size, mid, mid_size FROM photos WHERE user_id = ? AND id = ?'),
   /* through a coach link: only a photo some Timeline day card shows – the latest (highest id) of its pose on its date */
-  shown: db.prepare(`SELECT file, type, thumb FROM photos p WHERE user_id = ? AND id = ?
+  shown: db.prepare(`SELECT file, type, thumb, mid FROM photos p WHERE user_id = ? AND id = ?
     AND NOT EXISTS (SELECT 1 FROM photos o WHERE o.user_id = p.user_id AND o.pose = p.pose AND o.date = p.date AND o.id > p.id)`),
-  allFiles: db.prepare('SELECT file, thumb FROM photos WHERE user_id = ?'),
+  allFiles: db.prepare('SELECT file, thumb, mid FROM photos WHERE user_id = ?'),
   count: db.prepare('SELECT COUNT(*) AS n FROM photos WHERE user_id = ?'),
-  bytes: db.prepare('SELECT COALESCE(SUM(size + thumb_size), 0) AS n FROM photos WHERE user_id = ?'),
-  add: db.prepare('INSERT INTO photos (user_id, date, pose, style, pose_ai, note, file, type, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+  bytes: db.prepare('SELECT COALESCE(SUM(size + thumb_size + mid_size), 0) AS n FROM photos WHERE user_id = ?'),
+  add: db.prepare('INSERT INTO photos (user_id, date, pose, style, pose_ai, note, file, type, size, width, height, ckey) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+  /* an upload sent again with the key it went with the first time (its answer was lost): the photo it made */
+  byKey: db.prepare(`SELECT ${COLS} FROM photos WHERE user_id = ? AND ckey = ?`),
   put: db.prepare('UPDATE photos SET date = ?, pose = ?, style = ?, pose_ai = ?, note = ?, updated_at = ? WHERE user_id = ? AND id = ?'),
   /* the AI's pose: only while the pose is still the one the request was asked about, or still the AI's – never over a hand edit made meanwhile */
   aiPose: db.prepare('UPDATE photos SET pose = ?, style = ?, pose_ai = 2, updated_at = ? WHERE user_id = ? AND id = ? AND (pose_ai > 0 OR (pose = ? AND style = ?))'),
-  /* only while the thumbnail is still the one read: of replacements made at the same time one wins, the others delete their own file */
+  /* only while the version is still the one read: of replacements made at the same time one wins, the others delete their own file */
   thumb: db.prepare('UPDATE photos SET thumb = ?, thumb_size = ? WHERE user_id = ? AND id = ? AND thumb IS ?'),
+  mid: db.prepare('UPDATE photos SET mid = ?, mid_size = ? WHERE user_id = ? AND id = ? AND mid IS ?'),
+  /* photos stored before their size was kept (filled in from their files at start-up; 0 × 0 when a file can't be read) */
+  noSize: db.prepare('SELECT id, file FROM photos WHERE width IS NULL AND id > ? ORDER BY id LIMIT 200'),
+  size: db.prepare('UPDATE photos SET width = ?, height = ? WHERE id = ?'),
+  /* the download: every photo of an account (or those in a date range), oldest first */
+  zip: db.prepare('SELECT id, date, pose, file, type FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date, id'),
   del: db.prepare('DELETE FROM photos WHERE user_id = ? AND id = ?'),
-  delRange: db.prepare('DELETE FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? RETURNING file, thumb'),
+  delRange: db.prepare('DELETE FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? RETURNING file, thumb, mid'),
   all: db.prepare('SELECT id, date, pose, style, pose_ai, note, size, created_at AS created FROM photos WHERE user_id = ? ORDER BY date, id'),
 };
 
-const MAX_PHOTOS = 3000, MAX_BYTES = 10 * 1024 * 1024, MAX_THUMB = 512 * 1024;
+const MAX_PHOTOS = 3000, MAX_BYTES = 10 * 1024 * 1024, MAX_THUMB = 512 * 1024, MAX_MID = 2 * 1024 * 1024;
 /* all of an account's photo files together, thumbnails included */
 const MAX_TOTAL = config.quota.photos;
 const GB = n => `${Math.round(n / 1073741824 * 10) / 10} GB`;
@@ -121,6 +130,33 @@ function cleanWebp(b) {
 const clean = (b, type) => (type === 'image/jpeg' ? cleanJpeg(b) : type === 'image/png' ? cleanPng(b) : cleanWebp(b));
 const EXT = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' };
 
+/* A picture's width and height from its header (JPEG's frame header, PNG's IHDR, WebP's VP8 / VP8L / VP8X), or null */
+function dims(b) {
+  const type = sniff(b);
+  try {
+    if (type === 'image/png') return b.length >= 24 ? { w: b.readUInt32BE(16), h: b.readUInt32BE(20) } : null;
+    if (type === 'image/webp') {
+      const kind = b.toString('latin1', 12, 16);
+      if (kind === 'VP8X' && b.length >= 30) return { w: b.readUIntLE(24, 3) + 1, h: b.readUIntLE(27, 3) + 1 };
+      if (kind === 'VP8L' && b.length >= 25) { const v = b.readUInt32LE(21); return { w: (v & 0x3fff) + 1, h: ((v >>> 14) & 0x3fff) + 1 }; }
+      if (kind === 'VP8 ' && b.length >= 30) return { w: b.readUInt16LE(26) & 0x3fff, h: b.readUInt16LE(28) & 0x3fff };
+      return null;
+    }
+    if (type !== 'image/jpeg') return null;
+    let i = 2;
+    while (i + 9 <= b.length && b[i] === 0xff) {
+      const m = b[i + 1];
+      if (m === 0xff) { i++; continue; }
+      if (m === 0xd8 || (m >= 0xd0 && m <= 0xd7) || m === 0x01) { i += 2; continue; }   /* markers without a length */
+      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { w: b.readUInt16BE(i + 7), h: b.readUInt16BE(i + 5) };
+      if (m === 0xda || m === 0xd9) return null;
+      i += 2 + b.readUInt16BE(i + 2);
+    }
+  } catch {}
+  return null;
+}
+const sized = d => (d && d.w > 0 && d.h > 0 ? d : null);
+
 function meta(b) {
   const o = b || {};
   const bad = writeError(o.date, 'Pick the date the photo was taken');
@@ -139,6 +175,27 @@ const newName = ext => crypto.randomBytes(16).toString('hex') + ext;
 const fileAt = name => path.join(config.photoDir, path.basename(name));
 /* a file that can't be deleted is logged, not an error for the person – its row is gone already */
 const unlink = name => { if (name) fs.promises.unlink(fileAt(name)).catch(e => { if (e.code !== 'ENOENT') console.error(`Couldn’t delete photo file ${path.basename(name)}:`, e.code || e.message); }); };
+
+/* Photos stored before width and height were kept: read from the start of each file, a batch at a time, once (after this every
+   row has them – 0 when the file is missing or unreadable, which the app treats as unknown). */
+async function fillSizes() {
+  for (let after = 0; ;) {
+    const rows = q.noSize.all(after);
+    if (!rows.length) return;
+    for (const r of rows) {
+      let d = null;
+      try {
+        const fh = await fs.promises.open(fileAt(r.file));
+        try { const buf = Buffer.alloc(256 * 1024); const { bytesRead } = await fh.read(buf, 0, buf.length, 0); d = sized(dims(buf.subarray(0, bytesRead))); }
+        finally { await fh.close(); }
+      } catch {}
+      q.size.run(d ? d.w : 0, d ? d.h : 0, r.id);
+      after = r.id;
+    }
+    await new Promise(r => setImmediate(r));
+  }
+}
+setImmediate(() => fillSizes().catch(e => console.error('Reading the sizes of older photos failed:', e.message)));
 
 const router = express.Router();
 const send = (res, e) => { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); };
@@ -177,44 +234,60 @@ function reserve(uid, n, bytes) {
     if (!b.n && !b.bytes) busy.delete(uid);
   };
 }
+/* x-photo-key: the app's own key for this upload (one per file picked, kept while it retries): a photo already stored under it
+   comes back as it is (again: true) instead of going in twice – the first try went in but its answer never arrived (p5-photos-01). */
+const keyOf = req => { const k = req.get('x-photo-key'); if (k == null || k === '') return null; if (!/^[A-Za-z0-9_-]{8,64}$/.test(k)) throw fail('Bad upload key'); return k; };
 router.post('/', uploadLimit, rawImage(MAX_BYTES), async (req, res) => {
   try {
+    const key = keyOf(req), had = key && q.byKey.get(req.user.id, key);
+    if (had) return res.json({ ...view(had), again: true });
     const m = meta({ ...req.query, note: noteOf(req) });
     const type = sniff(req.body);
     if (!type) throw fail('That isn’t a JPEG, PNG or WebP picture');
-    const file = newName(EXT[type]), bytes = clean(req.body, type);
+    const file = newName(EXT[type]), bytes = clean(req.body, type), d = sized(dims(bytes));
     const release = reserve(req.user.id, 1, bytes.length);
     try {
       await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 });
+      let id;
       try {
-        const { lastInsertRowid } = q.add.run(req.user.id, m.date, m.pose, m.style, req.query.ai === '1' ? 1 : 0, m.note, file, type, bytes.length);
-        release();
-        res.json(view(q.get.get(req.user.id, Number(lastInsertRowid))));
-      } catch (e) { unlink(file); throw e; }
+        id = Number(q.add.run(req.user.id, m.date, m.pose, m.style, req.query.ai === '1' ? 1 : 0, m.note, file, type, bytes.length, d ? d.w : 0, d ? d.h : 0, key).lastInsertRowid);
+      } catch (e) {
+        unlink(file);
+        const again = key && q.byKey.get(req.user.id, key);   /* the same upload twice at once: the other one went in */
+        if (again) return res.json({ ...view(again), again: true });
+        throw e;
+      }
+      release();
+      res.json(view(q.get.get(req.user.id, id)));
     } finally { release(); }
   } catch (e) { send(res, e); }
 });
 
-/* the small version for the catalog, made in the browser; a JPEG */
-router.put('/:id/thumb', uploadLimit, rawImage(MAX_THUMB), async (req, res) => {
-  try {
-    const id = idOf(req.params.id), row = q.files.get(req.user.id, id);
-    if (!row) throw fail('No such photo', 404);
-    if (sniff(req.body) !== 'image/jpeg') throw fail('The thumbnail must be a JPEG');
-    const file = newName('.jpg'), bytes = cleanJpeg(req.body);
-    /* the old file stays on disk until the swap, so the new one counts in full while it is written */
-    const release = reserve(req.user.id, 0, bytes.length);
-    let swapped = false;
+/* The smaller versions, made in the browser from the picture picked; JPEGs. thumb: the catalog's tile (480 px). mid: the photo and
+   Compare pages and the coach's day card (1000 px) – the full file only when zoomed in or opened. Both count toward the account's room. */
+function smaller(which) {
+  return async (req, res) => {
     try {
-      await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 });
-      swapped = q.thumb.run(file, bytes.length, req.user.id, id, row.thumb).changes > 0;
-    } catch (e) { unlink(file); throw e; } finally { release(); }
-    unlink(swapped ? row.thumb : file);      /* whichever lost */
-    const now = q.get.get(req.user.id, id);
-    if (!now) throw fail('No such photo', 404);   /* deleted meanwhile */
-    res.json(view(now));                        /* not swapped: another replacement got there first, and its thumbnail stands */
-  } catch (e) { send(res, e); }
-});
+      const id = idOf(req.params.id), row = q.files.get(req.user.id, id);
+      if (!row) throw fail('No such photo', 404);
+      if (sniff(req.body) !== 'image/jpeg') throw fail(`The ${which === 'mid' ? 'middle size' : 'thumbnail'} must be a JPEG`);
+      const file = newName('.jpg'), bytes = cleanJpeg(req.body);
+      /* the old file stays on disk until the swap, so the new one counts in full while it is written */
+      const release = reserve(req.user.id, 0, bytes.length);
+      let swapped = false;
+      try {
+        await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 });
+        swapped = q[which].run(file, bytes.length, req.user.id, id, row[which]).changes > 0;
+      } catch (e) { unlink(file); throw e; } finally { release(); }
+      unlink(swapped ? row[which] : file);      /* whichever lost */
+      const now = q.get.get(req.user.id, id);
+      if (!now) throw fail('No such photo', 404);   /* deleted meanwhile */
+      res.json(view(now));                        /* not swapped: another replacement got there first, and its version stands */
+    } catch (e) { send(res, e); }
+  };
+}
+router.put('/:id/thumb', uploadLimit, rawImage(MAX_THUMB), smaller('thumb'));
+router.put('/:id/mid', uploadLimit, rawImage(MAX_MID), smaller('mid'));
 
 router.put('/:id', (req, res) => {
   try {
@@ -250,7 +323,7 @@ router.delete('/', (req, res) => {
 router.delete('/:id', (req, res) => {
   const id = idOf(req.params.id), row = q.files.get(req.user.id, id);
   if (row && q.del.run(req.user.id, id).changes) {
-    unlink(row.file); unlink(row.thumb);
+    unlink(row.file); unlink(row.thumb); unlink(row.mid);
     audit.log(req, 'photo.deleted', { id });
   }
   res.json({ ok: true });
@@ -306,28 +379,53 @@ function serve(which) {
   return (req, res) => {
     const row = (req.share ? q.shown : q.files).get(req.user.id, idOf(req.params.id));
     if (!row) return res.status(404).json({ error: 'No such photo' });
-    const thumb = which === 'thumb' && row.thumb;
+    const small = which !== 'file' && row[which];   /* a version not made yet: the full picture */
     /* through a coach link (req.share, server/shares.js) nothing is kept, so a switched-off link leaves no pictures behind */
-    res.set({ 'Cache-Control': req.share ? 'no-store' : 'private, no-cache', 'Content-Type': thumb ? 'image/jpeg' : row.type });
-    res.sendFile(fileAt(thumb || row.file), { cacheControl: false }, err => {
+    res.set({ 'Cache-Control': req.share ? 'no-store' : 'private, no-cache', 'Content-Type': small ? 'image/jpeg' : row.type });
+    res.sendFile(fileAt(small || row.file), { cacheControl: false }, err => {
       if (err && !res.headersSent) res.status(404).json({ error: 'That photo’s file is missing' });
     });
   };
 }
+/* GET /api/photos/zip(?from=…&to=…): the account's own pictures as they were uploaded (camera data already taken out), named by
+   date (2026-09-01-front-12.jpg), in a ZIP streamed a file at a time. Limited like the data export, and logged. Never through
+   a coach link. */
+const zipLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, limit: config.exportRateLimit, standardHeaders: 'draft-7', legacyHeaders: false,
+  keyGenerator: req => 'u' + req.user.id, message: { error: 'You’ve downloaded your photos a lot this hour – wait a while and try again.' },
+});
+router.get('/zip', (req, res, next) => (req.share ? res.status(404).json({ error: 'Not found' }) : next()), zipLimit, async (req, res) => {
+  const from = isDate(req.query.from) ? req.query.from : '0000-01-01', to = isDate(req.query.to) ? req.query.to : '9999-12-31';
+  const rows = q.zip.all(req.user.id, from, to);
+  audit.log(req, 'photos.downloaded', { n: rows.length, ...(req.query.from || req.query.to ? { from, to } : {}) });
+  res.attachment(`logbook-monster-photos-${(req.today || new Date().toISOString().slice(0, 10))}.zip`);
+  res.type('application/zip');
+  const write = b => (res.destroyed ? Promise.reject(new Error('gone')) : res.write(b) ? null : new Promise(r => {
+    const go = () => { res.off('drain', go); res.off('close', go); r(); };
+    res.on('drain', go); res.on('close', go);
+  }));
+  const entries = rows.map(r => ({
+    name: `${r.date}-${r.pose}-${r.id}${EXT[r.type] || '.jpg'}`, when: new Date(`${r.date}T12:00:00`),
+    read: () => fs.promises.readFile(fileAt(r.file)).catch(e => { console.error(`Photo file ${path.basename(r.file)} left out of a download:`, e.code || e.message); return null; }),
+  }));
+  try { await writeZip(entries, write); res.end(); }
+  catch (e) { if (e.message !== 'gone') console.error(e); res.destroy(); }
+});
 router.get('/:id/file', serve('file'));
 router.get('/:id/thumb', serve('thumb'));
+router.get('/:id/mid', serve('mid'));
 
-/* v and tv are a piece of each file's random name: the app puts them in the picture URLs, so a replaced
-   thumbnail or a reused id is never served from the browser's cache. */
+/* v, tv and mv are a piece of each file's random name: the app puts them in the picture URLs, so a replaced
+   version or a reused id is never served from the browser's cache. w, h: the stored picture's size (null: not known). */
 function view(r) {
   return { id: r.id, date: r.date, pose: r.pose, style: r.style || '', poseAi: !!r.pose_ai, aiSaw: r.pose_ai === 2, note: r.note, size: r.size, created: r.created, updated: r.updated,
-    v: r.file.slice(0, 8), tv: r.thumb ? r.thumb.slice(0, 8) : null };
+    v: r.file.slice(0, 8), tv: r.thumb ? r.thumb.slice(0, 8) : null, mv: r.mid ? r.mid.slice(0, 8) : null, w: r.width || null, h: r.height || null };
 }
 
-/* The export lists the photos; the pictures stay on the server (download them one by one from the app). */
+/* The export lists the photos; the pictures themselves come as a ZIP from GET /api/photos/zip. */
 const exportFor = user => q.all.all(user.id);
 /* When an account is removed its rows go with it (ON DELETE CASCADE); this takes the files too. */
 const filesOf = userId => q.allFiles.all(userId);
-const removeFiles = rows => rows.forEach(r => { unlink(r.file); unlink(r.thumb); });
+const removeFiles = rows => rows.forEach(r => { unlink(r.file); unlink(r.thumb); unlink(r.mid); });
 
 module.exports = { router, exportFor, filesOf, removeFiles, view, POSES };
