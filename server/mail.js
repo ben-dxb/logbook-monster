@@ -120,6 +120,7 @@ function transportOptions(c, to) {
 /* A short reason for the browser; the server's own reply only goes to the log. */
 function reason(err) {
   const code = err && err.code;
+  if (/missing credentials/i.test(String(err && err.message))) return 'there’s a username but no password – add the password on the Email tab';
   if (code === 'EAUTH') return 'it refused the username or password';
   if (code === 'ETLS' || /STARTTLS|TLS|certificate/i.test(String(err && err.message))) return 'a secure (TLS) connection couldn’t be made';
   if (['ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'EDNS', 'ECONNREFUSED'].includes(code)) return 'couldn’t connect – check the server and port';
@@ -147,4 +148,4 @@ function notify(msg) {
   send(msg).catch(e => console.error('Email notification failed:', e.message));
 }
 
-module.exports = { status, save, send, notify, configured, current, EMAIL_RE, internal, transportOptions };
+module.exports = { reason, status, save, send, notify, configured, current, EMAIL_RE, internal, transportOptions };

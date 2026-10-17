@@ -16,6 +16,7 @@ let SAI=false, sAi=null, sAiMsg='';   /* AI set up; the regime being checked; it
 
 const sById=id=>SUPPS&&SUPPS.find(s=>s.id===id);
 const sNum=n=>String(Math.round(n*1000)/1000);
+let sMade=null;   /* {name, id}: a library copy "Save to my supplement library" made whose log entry didn't go through yet */
 /* "1 capsule", "2 capsules", "500 mg" */
 const sUnitTxt=(u,n)=>/s$/.test(u)&&+n===1?u.slice(0,-1):u;
 const sDose=(n,u)=>`${sNum(n)} ${sUnitTxt(u,n)}`;
@@ -107,13 +108,18 @@ async function sSubmit(form){
   btn.disabled=true;
   try{
     if(save){
-      const n=await api('POST','/api/supps',{name:desc,amount,unit,notes:'',public:false});
-      SUPPS.push(n);sSort();
-      await sAdd({date:sDate,supplement:n.id,amount,unit});
-    }else await sAdd(s?{date:sDate,supplement:s.id,note:desc,amount,unit}:{date:sDate,name:desc,amount,unit});
+      /* the entry is logged even if the library copy can't be made; a copy made before a failed log is used again, not made twice */
+      let n=sMade&&sMade.name===desc?sById(sMade.id):null, libErr='';
+      if(!n)try{n=await api('POST','/api/supps',{name:desc,amount,unit,notes:'',public:false});SUPPS.push(n);sSort();sMade={name:desc,id:n.id};}
+        catch(e){if(e.signedOut)throw e;libErr=e.message;}
+      await sAdd(n?{date:sDate,supplement:n.id,amount,unit}:{date:sDate,name:desc,amount,unit});
+      sMade=null;sUnit=unit;sPick='';await renderSupps([sDate]);
+      if(libErr&&$('#s-err')){$('#s-err').textContent='Logged, but it couldn’t be saved to your supplement library: '+libErr;$('#s-err').hidden=false;}
+      return;
+    }
+    await sAdd(s?{date:sDate,supplement:s.id,note:desc,amount,unit}:{date:sDate,name:desc,amount,unit});
     if(!s)sUnit=unit;
-    if(save){sPick='';renderSupps([sDate]);}
-    else{$('#s-desc').value='';if(!s)$('#s-amt').value='';btn.disabled=false;}
+    $('#s-desc').value='';if(!s)$('#s-amt').value='';btn.disabled=false;
   }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message;err.hidden=false;}}
 }
 
@@ -190,7 +196,7 @@ async function sAiAdd(btn){
 function renderSuppList(){
   const el=$('#s-list');if(!el)return;
   const q=sQuery.trim().toLowerCase();
-  const list=SUPPS.filter(s=>(sFilter==='all'||(sFilter==='mine')===s.mine)&&(!q||s.name.toLowerCase().includes(q)||s.notes.toLowerCase().includes(q)));
+  const list=SUPPS.filter(s=>(sFilter==='all'||(sFilter==='mine'?s.mine:s.public))&&(!q||s.name.toLowerCase().includes(q)||s.notes.toLowerCase().includes(q)));
   let h=sMsg?`<p class="note fmsg" role="status">${esc(sMsg)}</p>`:'';
   if(!SUPPS.length)h+=gEmpty('Nothing here yet. Tap “New supplement” to add one, or tick “Save to my supplement library” when you log one.');
   else if(!list.length)h+=gEmpty(sFilter==='shared'&&!q?'Nobody has shared a supplement yet.':sFilter==='mine'&&!q?'You haven’t added any supplements yet.':'No supplements match.');
@@ -210,7 +216,7 @@ function sCard(s){
   </article>`;
 }
 function sEditPage(s){
-  const v=s||{name:'',amount:'',unit:'mg',notes:'',public:false};
+  const v=s||{name:'',amount:null,unit:'mg',notes:'',public:false};   /* the optional amount starts empty, not 0 */
   return gHead('#supps/lib',s?'Edit supplement':'New supplement')+`
     <form id="s-lform" class="panel fform" data-id="${s?s.id:''}">
       <label class="f fwide"><span class="lbl">Name</span><input id="s-name" maxlength="80" required value="${esc(v.name)}" placeholder="e.g. Creatine monohydrate"></label>
@@ -277,6 +283,10 @@ document.addEventListener('input',e=>{
   else if(sAi&&['name','amount','notes'].includes(e.target.dataset.sai)){
     const x=sAi.items[+e.target.dataset.i], k=e.target.dataset.sai, v=e.target.value;
     x[k]=k==='amount'?(v===''?null:+v):v;
+    if(k==='name'){   /* renamed onto (or off) one of yours: the chip says whether it'll be updated or added */
+      const n=v.replace(/\s+/g,' ').trim().toLowerCase(), m=(SUPPS||[]).find(s=>s.mine&&s.name.toLowerCase()===n);x.existing=m?m.id:null;
+      const c=e.target.closest('.sainame')&&e.target.closest('.sainame').querySelector('.chip');
+      if(c){c.className='chip '+(m?'ok':'info');c.textContent=m?'in library':'new';}}
   }
 });
 document.addEventListener('submit',e=>{

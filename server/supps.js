@@ -61,7 +61,9 @@ function amountOf(v, optional) {
   if (optional && (v === '' || v == null)) return null;
   const n = +v;
   if (!isNum(v) || n <= 0 || n > 1e6) throw fail('Amount must be a number above 0');
-  return Math.round(n * 1000) / 1000;
+  const r = Math.round(n * 1000) / 1000;
+  if (!r) throw fail('That amount is too small to keep – use a smaller unit (mg or mcg)');   /* never stored as 0 */
+  return r;
 }
 
 function clean(b) {

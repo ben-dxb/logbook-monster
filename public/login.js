@@ -11,6 +11,9 @@
   };
   let csrf = '', mode = 'login';
   const showErr = msg => { $('err').textContent = msg; $('err').hidden = !msg; };
+  const home = () => '/' + (location.hash || '#dash');   /* the address says where you land */
+  /* a fresh sign-in token (after cookies were cleared or the page sat open too long), keeping what's typed */
+  const refresh = () => fetch('/auth/config', { credentials: 'same-origin' }).then(r => r.json()).then(c => { csrf = c.csrf; return !!csrf; }, () => false);
 
   const code = new URLSearchParams(location.search).get('error');
   if (code) { showErr(ERRORS[code] || 'Sign-in failed.'); history.replaceState(null, '', '/login' + location.hash); }
@@ -25,7 +28,7 @@
   };
 
   fetch('/auth/config', { credentials: 'same-origin' }).then(r => r.json()).then(c => {
-    if (c.signedIn) { location.replace('/' + location.hash); return; }
+    if (c.signedIn) { location.replace(home()); return; }
     csrf = c.csrf;
     $('google').hidden = $('or').hidden = !c.google;
     $('switch').hidden = !c.registration;
@@ -50,16 +53,18 @@
     if (!body.email || !body.password) return showErr('Enter your email and password.');
     $('submit').disabled = true;
     try {
-      const r = await fetch(`/auth/${mode}`, {
+      const send = () => fetch(`/auth/${mode}`, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'content-type': 'application/json', 'x-csrf-token': csrf },
         body: JSON.stringify(body),
       });
-      const j = await r.json().catch(() => ({}));
+      let r = await send(), j = await r.json().catch(() => ({}));
+      /* the sign-in token ran out: get a new one and try once more, without clearing the form */
+      if (r.status === 403 && /session/i.test(j.error || '') && await refresh()) { r = await send(); j = await r.json().catch(() => ({})); }
       if (r.ok && j.second) { csrf = j.csrf; askCode(); $('submit').disabled = false; return; }
-      if (r.ok) { location.replace('/' + location.hash); return; }
-      if (r.status === 403 && /session/i.test(j.error || '')) { location.reload(); return; }
-      showErr(j.error || 'Sign-in failed.');
+      if (r.ok) { location.replace(home()); return; }
+      if (r.status === 403 && /session/i.test(j.error || '')) showErr('This page had expired. Check that cookies are allowed for this site, then press Sign in again.');
+      else showErr(j.error || 'Sign-in failed.');
     } catch { showErr('Can’t reach the server.'); }
     $('submit').disabled = false;
   });
@@ -79,7 +84,7 @@
       const j = await r.json().catch(() => ({}));
       if (r.ok) {
         if (j.recovery) alert('You used a recovery code – it won’t work again. If you’ve lost your authenticator app, switch the second step off and set it up again from the account menu.');
-        location.replace('/' + location.hash); return;
+        location.replace(home()); return;
       }
       if (j.restart || (r.status === 403 && /session/i.test(j.error || ''))) { location.reload(); return; }
       showErr(j.error || 'That code didn’t work.');

@@ -245,7 +245,7 @@ function check(buf, type) {
 
 /* Instructions plus text only (no file). */
 function askText(system, text, opts = {}) {
-  if (!current().key) throw Object.assign(new Error('AI isn’t set up – the super admin can add an OpenRouter API key on the Super admin page'), { status: 400 });
+  if (!current().key) throw Object.assign(new Error('AI isn’t set up in this app yet'), { status: 400 });
   return call(system, String(text), opts.maxTokens, opts.timeout, opts.task);
 }
 
@@ -269,8 +269,13 @@ async function call(system, content, maxTokens, timeout, task) {
     throw Object.assign(new Error(e.name === 'TimeoutError' ? 'The AI took too long – try again' : 'Couldn’t reach OpenRouter'), { status: 502 });
   }
   if (!r.ok || j.error) {
-    const msg = (j.error && j.error.message) || `HTTP ${r.status}`;
-    throw Object.assign(new Error(r.status === 401 ? 'OpenRouter didn’t accept the API key' : `OpenRouter: ${String(msg).slice(0, 200)}`), { status: 502 });
+    /* a plain sentence for whoever asked (often not the super admin); the provider's own words go to the log */
+    const msg = (j.error && j.error.message) || `HTTP ${r.status}`, code = (j.error && +j.error.code) || r.status;
+    console.error(`AI request failed (${c.model}, ${code}): ${String(msg).slice(0, 300)}`);
+    throw Object.assign(new Error(code === 401 || code === 403 ? 'The AI service didn’t accept the app’s key – ask the person who runs this app to check it'
+      : code === 402 ? 'The AI service account has run out of credit – ask the person who runs this app to top it up'
+      : code === 429 ? 'The AI service is busy – try again in a minute'
+      : 'The AI service couldn’t answer just now – try again later'), { status: 502 });
   }
   const choice = (j.choices && j.choices[0]) || {};
   const text = choice.message && choice.message.content;
@@ -280,7 +285,7 @@ async function call(system, content, maxTokens, timeout, task) {
   catch (e) {
     console.error(`AI reply unusable (${model}, finish_reason ${choice.finish_reason}, ${String(parts || '').length} chars): ${e.message}`);
     if (choice.finish_reason === 'length') throw unusable('The AI reply was longer than the app allows and got cut off – try a shorter file');
-    if (!String(parts || '').trim()) throw unusable(`The AI (${String(model).slice(0, 100)}) sent back an empty reply – try again, or pick another model for this task on the Super admin page`);
+    if (!String(parts || '').trim()) throw unusable('The AI sent back an empty reply – try again in a minute');
     throw e;
   }
 }

@@ -19,7 +19,7 @@ const q = {
   sums: db.prepare('SELECT date, summary FROM days WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date'),
   weights: db.prepare('SELECT date, kg FROM weights WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date'),
   weightAt: db.prepare('SELECT date, kg FROM weights WHERE user_id = ? AND date <= ? ORDER BY date DESC LIMIT 1'),
-  photoAt: db.prepare(`SELECT id, date, pose, style, note, size, created_at AS created, file, thumb FROM photos
+  photoAt: db.prepare(`SELECT id, date, pose, style, pose_ai, note, size, created_at AS created, file, thumb FROM photos
     WHERE user_id = ? AND pose = ? AND date <= ? ORDER BY date DESC, id DESC LIMIT 1`),
   suppLog: db.prepare('SELECT date, name, amount, unit, note FROM supplement_log WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date, id'),
   setsOn: db.prepare(`SELECT s.exercise_id AS e, x.name, s.reps, s.kg, s.at FROM sets s JOIN exercises x ON x.id = s.exercise_id
@@ -38,6 +38,8 @@ const r1 = n => Math.round(n * 10) / 10;
 /* Epley: a single rep is the weight itself. Sets above 20 reps say little about a one-rep max. */
 const e1rm = (kg, reps) => (reps === 1 ? kg : kg * (1 + reps / 30));
 const countsForStrength = s => s.kg > 0 && s.reps >= 1 && s.reps <= 20;
+
+const { inUnit } = require('./units');
 
 /* ---------- one day ---------- */
 function dayCard(user, date) {
@@ -129,7 +131,8 @@ function series(user, from, to) {
     out.push({ key: 'ex:' + x.id, name: x.name + ' e1RM', unit: 'kg', group: 'Gym', points: exPts.get(x.id) || [] });
   }
 
-  /* supplements followed on the chart: the day's total of the unit they're most often logged in */
+  /* supplements followed on the chart: the day's total in the unit they're most often logged in; doses in
+     another unit are converted when they can be (g/mg/mcg, and IU for vitamin D), the rest counted in `left` */
   const followed = supps.trendsOf(user);
   if (followed.length) {
     const log = q.suppLog.all(user.id, from, to);
@@ -139,8 +142,9 @@ function series(user, from, to) {
       mine.forEach(e => units.set(e.unit, (units.get(e.unit) || 0) + 1));
       const unit = [...units.entries()].sort((a, b) => b[1] - a[1])[0];
       const byDay = new Map();
-      if (unit) mine.filter(e => e.unit === unit[0]).forEach(e => byDay.set(e.date, (byDay.get(e.date) || 0) + e.amount));
-      out.push({ key: 'sup:' + name.toLowerCase(), name, unit: unit ? unit[0] : '', group: 'Supplements', zero: true,
+      let left = 0;
+      if (unit) mine.forEach(e => { const v = inUnit(name, e.amount, e.unit, unit[0]); if (v == null) left++; else byDay.set(e.date, (byDay.get(e.date) || 0) + v); });
+      out.push({ key: 'sup:' + name.toLowerCase(), name, unit: unit ? unit[0] : '', group: 'Supplements', zero: true, left,
         points: [...byDay.entries()].map(([d, v]) => [d, Math.round(v * 1000) / 1000]) });
     }
   }

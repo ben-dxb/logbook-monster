@@ -95,9 +95,9 @@ async function restoreStash(){
       }else if(isDate(key)&&v&&Array.isArray(v.meals)){
         const r=srv[key],sj=r?JSON.stringify(r.data):null;
         if(sj===j)continue;   /* already saved */
-        const same=old?!r||utc(r.updated)<st.at:job[2]===sj||(!!r&&job[2]===JSON.stringify(migrate(r.data)));
+        const same=old?!r||utc(r.updated)<st.at:job[2]===sj||(!!r&&job[2]===JSON.stringify(migrate(r.data,key)));
         if(!same){skipped.push(fmtLong(key));continue;}
-        const D=migrate(v);S.days[key]=D;SAVED.days[key]=sj;
+        const D=migrate(v,key);S.days[key]=D;SAVED.days[key]=sj;
       }else continue;
       pending.set(key,j);keep.push([key,j,key==='@settings'?SAVED.settings:SAVED.days[key]]);
     }catch{}   /* a broken entry is dropped */
@@ -108,29 +108,32 @@ async function restoreStash(){
 }
 
 /* Older saves have no chosen amounts: take them from the plan */
-function migrate(D){
+function migrate(D,date){
   D.meals.forEach((m,mi)=>['p','c','x'].forEach(b=>(m[b]||(m[b]=[])).forEach(i=>{
     if(i.a==null){const bm=D.base&&D.base[mi];const bi=bm&&bm.id===m.id?(bm[b]||[]).find(x=>x.f===i.f):null;i.a=bi?bi.g:i.g;}})));
   D.off=D.off||[];
   libLoad(D);
+  if(date)libSync(D,date);
   return D;
 }
-const pending=new Map(); let saveTimer=null, saveState='idle', saveErr='', inFlight=false;
+const pending=new Map(), SENDING=new Map(); let saveTimer=null, saveState='idle', saveErr='', inFlight=false;
 const settingsJson=()=>JSON.stringify({pud:S.pud,snackOv:S.snackOv||{},pBasis:S.pBasis||'total'});
 function summaryOf(date,D){useDefs(date);const t=dayTotals(D),type=D.type||typeOn(date);return {...t,targets:{...D.targets},type,tname:templateName(type)};}
 
 /* Called after every render: anything that differs from what the server has gets queued. */
 function persist(){
   for(const [date,D] of Object.entries(S.days)){
-    libSync(D);
+    libSync(D,date);
     if(CONFLICT.has(date))continue;
     const j=JSON.stringify(D);
     if(SAVED.days[date]===undefined){SAVED.days[date]=j;continue;}   /* first sight of an unsaved plan: baseline */
-    if(SAVED.days[date]!==j) pending.set(date,j);
+    /* against what the server will have once a save in flight lands, so an edit undone quickly is saved too, and one undone before it went is never sent */
+    if((SENDING.has(date)?SENDING.get(date):SAVED.days[date])!==j) pending.set(date,j);else pending.delete(date);
   }
   const sj=settingsJson();
   if(SAVED.settings!==null&&SAVED.settings!==sj) pending.set('@settings',sj);
   if(pending.size){saveState='pending';clearTimeout(saveTimer);saveTimer=setTimeout(flush,600);}
+  else if(saveState==='pending'&&!inFlight){saveState='saved';clearTimeout(saveTimer);}   /* undone before it was sent */
   renderStatus();
 }
 async function flush(){
@@ -138,19 +141,20 @@ async function flush(){
   const jobs=[...pending.entries()];pending.clear();
   if(!jobs.length)return;
   inFlight=true;saveState='saving';renderStatus();
+  jobs.forEach(([k,j])=>{if(k!=='@settings')SENDING.set(k,j);});   /* what the server will have once these land */
   try{
     for(const [key,j] of jobs){
       if(key==='@settings'){await api('PUT','/api/settings',JSON.parse(j));SAVED.settings=j;continue;}
       const D=JSON.parse(j);const summary=summaryOf(key,D);
       let r;
       try{r=await api('PUT','/api/days/'+key,{data:D,summary},VER[key]??null);}
-      catch(e){if(!e.conflict)throw e;CONFLICT.add(key);pending.delete(key);continue;}   /* kept on screen; reload to see the other copy */
-      VER[key]=r.updated;SAVED.days[key]=j;LOGGED.add(key);SUMS[key]={date:key,...summary};
+      catch(e){SENDING.delete(key);if(!e.conflict)throw e;CONFLICT.add(key);pending.delete(key);continue;}   /* kept on screen; reload to see the other copy */
+      SENDING.delete(key);VER[key]=r.updated;SAVED.days[key]=j;LOGGED.add(key);SUMS[key]={date:key,...summary};
     }
     saveState=pending.size?'pending':'saved';saveErr='';
     if(pending.size)saveTimer=setTimeout(flush,600);else if(stashOut)dropStash();
   }catch(e){
-    jobs.forEach(([k,j])=>{if(!pending.has(k))pending.set(k,j);});
+    SENDING.clear();jobs.forEach(([k,j])=>{if(!pending.has(k)&&SAVED.days[k]!==j)pending.set(k,j);});
     inFlight=false;
     if(e.signedOut)return;               /* toLogin() stashes everything still pending */
     saveState='error';saveErr=e.message;
@@ -167,7 +171,7 @@ async function loadDay(date){
   if(LOGGED.has(date)){
     showLoading(true);
     try{const r=await api('GET','/api/days/'+date);
-      if(r&&!S.days[date]){S.days[date]=migrate(r.data);SAVED.days[date]=JSON.stringify(S.days[date]);VER[date]=r.updated;}
+      if(r&&!S.days[date]){S.days[date]=migrate(r.data,date);SAVED.days[date]=JSON.stringify(S.days[date]);VER[date]=r.updated;}
     }catch(e){showLoading(false);if(!e.signedOut)alert('Couldn’t load that day: '+e.message);return false;}
     showLoading(false);
   }
@@ -269,6 +273,9 @@ function packHtml(D,mi,i){
     <label class="pf"><span class="lbl">${name} in it</span><span class="amt"><input id="${id}-m" type="number" inputmode="decimal" min="0" step="1" value="${esc(pk.m!=null?pk.m:F.order)}" data-act="pack" data-f="${fa}" data-k="m"${ro}><em>g</em></span></label>
     <span class="pout" data-packout="${fa}" data-g="${esc(i.g)}" aria-live="polite">${packOut(i,pk,F)}</span></div>`;
 }
+/* the old built-in snacks only for an account on the old built-in plan (its foods are "Health Road …") or that changed their values */
+const oldPlan=()=>((typeof DEFS!=='undefined'&&DEFS.myVersions)||[]).some(v=>v&&v.foods&&Object.values(v.foods).some(f=>f&&/^Health Road /.test(f.n||'')));
+const snacksShown=()=>SNACKS.filter(x=>!x.old||(S.snackOv&&S.snackOv[x.id])||oldPlan());
 function macLine(t){return `<span class="ml"><b>${r0(t.k)}</b> kcal · P ${r1(t.p)} · C ${r1(t.c)} · F ${r1(t.f)}</span>`;}
 function boxHtml(D,mi,box,label){
   const items=D.meals[mi][box]||(D.meals[mi][box]=[]);const t=sum(items.map(i=>macOf(i.f,i.g)));
@@ -362,11 +369,12 @@ function render(){
       `<b>Whole batch:</b> ${r0(t.k)} kcal · P ${r1(t.p)} · C ${r1(t.c)} · F ${r1(t.f)}<br>`+
       `<b>Biggest serving:</b> ${sv}g (${r0(sv*P.k/100)} kcal · P ${r1(sv*P.p/100)} · C ${r1(sv*P.c/100)} · F ${r1(sv*P.f/100)})`;}
   renderLibForm();
-  if(!$('#sn').options.length){$('#sn').innerHTML=SNACKS.map(x=>`<option value="${x.id}">${esc(x.n)}</option>`).join('');}
+  if(!$('#sn').options.length){$('#sn').innerHTML=snacksShown().map(x=>`<option value="${x.id}">${esc(x.n)}</option>`).join('');}
   $('#su').textContent=snackVal($('#sn').value).u==='g'?'Grams':'How many';
   $('#snackvals').innerHTML='<div class="sv"><span class="lbl">Per item / 100g</span><span class="lbl">kcal</span><span class="lbl">P</span><span class="lbl">C</span><span class="lbl">F</span>'+
-    SNACKS.filter(x=>x.id!=='pudding').map(x=>{const v=snackVal(x.id);return `<span>${esc(x.n)}${x.u==='g'?' (per 100g)':''}${x.est&&!(S.snackOv||{})[x.id]?' <span class="est">estimate</span>':''}</span>`+
+    snacksShown().filter(x=>x.id!=='pudding').map(x=>{const v=snackVal(x.id);return `<span>${esc(x.n)}${x.u==='g'?' (per 100g)':''}${x.est&&!(S.snackOv||{})[x.id]?' <span class="est">estimate</span>':''}</span>`+
     ['k','p','c','f'].map(m=>`<input id="sv-${x.id}-${m}" type="number" inputmode="decimal" min="0" step="0.1" value="${esc(v[m])}" data-act="sv" data-s="${x.id}" data-m="${m}" aria-label="${esc(x.n)} ${m}">`).join('');}).join('')+'</div>';
+  $('#snackvals').parentElement.hidden=!snacksShown().some(x=>x.id!=='pudding');
   persist();
 }
 
@@ -401,12 +409,17 @@ function planFill(D){
   const vs=(typeof DEFS!=='undefined'&&DEFS.myVersions)||[];
   allItems(D).forEach(({f})=>{if(FOODS[f])return;
     const v=!isLib(f)&&[...vs].reverse().find(x=>x.foods&&x.foods[f]&&typeof x.foods[f]==='object');
-    FOODS[f]={...(v?planFoodRec(f,v.foods[f]):{n:`Unknown food (${f})`,k:0,p:0,c:0,f:0,d:0,step:1}),gone:true};});
+    const own_=!isLib(f)&&D.lib&&own(D.lib,f);
+    FOODS[f]={...(own_&&typeof own_==='object'?own_:v?planFoodRec(f,v.foods[f]):{n:`Unknown food (${f})`,k:0,p:0,c:0,f:0,d:0,step:1}),gone:true};});
 }
 /* After the library changes or the admin defaults are applied (which drop foods the calculator didn't ship with). */
 function libRegister(){LIB.forEach(f=>{FOODS[libFid(f)]=libFoodRec(f);});Object.values(S.days).forEach(libLoad);LIBV++;}
-function libSync(D){let lib=null;
-  allItems(D).forEach(i=>{if(isLib(i.f)&&FOODS[i.f]){lib=lib||{};lib[i.f]=(D.lib&&D.lib[i.f])||{...FOODS[i.f]};}});
+/* The day's copy also keeps each plan food it uses as the plan on its date had it, so the day still shows its foods'
+   names and values after the plan changes or is deleted (only used when the plan in effect lacks the food). */
+function libSync(D,date){let lib=null;const v=date&&typeof mineOn==='function'?mineOn(date):null;
+  allItems(D).forEach(({f})=>{let F=D.lib&&own(D.lib,f);
+    if(!F){if(isLib(f))F=FOODS[f]&&{...FOODS[f]};else{const r=v&&own(v.foods,f);if(r&&typeof r==='object')F=planFoodRec(f,r);}}
+    if(F)(lib=lib||{})[f]=F;});
   if(lib)D.lib=lib;else delete D.lib;}
 const libOptions=()=>[['meal','Library meals'],['ingredient','Library ingredients']].map(([k,l])=>{
   const list=LIB.filter(f=>(f.kind==='meal')===(k==='meal'));
@@ -583,7 +596,8 @@ document.addEventListener('click',e=>{
   else if(a==='eat'){eatMeal(+b.dataset.m);}
   else if(a==='uneat'){uneatMeal(+b.dataset.m);}
   else if(a==='odel'){act(D=>{D.off.splice(+b.dataset.i,1);});}
-  else if(a==='pbasis'){if(S.pBasis!==b.dataset.v){S.pBasis=b.dataset.v;if(S.days[S.cur])act(()=>{});if(view!=='day'){pbSync();persist();}}}   /* a day not loaded takes it when it opens */
+  else if(a==='pbasis'){if(S.pBasis!==b.dataset.v){S.pBasis=b.dataset.v;
+    if(view==='day'&&S.days[S.cur])act(()=>{});else{pbSync();persist();}}}   /* only the day on screen re-balances now; any other day when it's next changed */
   else if(a==='reset'){if(!resetArmed){resetArmed=true;render();return;}resetArmed=false;
     if(anyEaten(day())&&!confirm('Some meals are marked eaten. Reset the whole day to the plan anyway? That undoes them.')){render();return;}
     S.days[S.cur]=freshOn(S.cur,day().type);render();}
@@ -650,7 +664,7 @@ async function offAdd(){
   let food=null;
   if($('#o-save').checked){   /* keep it in the food library as one item, to add again on other days */
     try{food=await api('POST','/api/foods',{name:o.n,unit:'each',k:o.k,p:o.p,c:o.c,f:o.f});LIB.push(food);LIB.sort((a,b)=>a.name.localeCompare(b.name));libRegister();}
-    catch(err){if(!err.signedOut)alert('Couldn’t save it to your food library: '+err.message);return;}
+    catch(err){if(err.signedOut)return;alert('It’s added to this day, but it couldn’t be saved to your food library: '+err.message);}   /* the day's entry is never lost */
   }
   act(D=>{if(food)libAdd(D,food,1);else D.off.push(o);});
   ['o-n','o-k','o-p','o-c','o-f'].forEach(id=>$('#'+id).value='');$('#o-save').checked=false;
@@ -709,15 +723,17 @@ $('#tfbody').addEventListener('submit',async e=>{
     catch(err){if(!err.signedOut)$('#tfmsg').textContent=err.message;}}
 });
 
-/* ---------- start ---------- */
-(async()=>{
-  let skipped=[];
+/* ---------- start ----------
+   after every script has run (DOMContentLoaded), so start-up never reaches a page's globals (fAiOn, renderDash…) before they exist */
+document.addEventListener('DOMContentLoaded',async()=>{
+  let skipped=[],libErr='';
   try{
     const me=await api('GET','/api/me');csrf=me.csrf;ME=me.email;UID=me.id;
     $('#who').textContent=me.name||me.email;$('#who').title=me.email;
     if(!me.hasPassword){$('#pwcur').hidden=true;$('#pwbox').querySelector('summary').textContent='Set a password';}
     isAdmin=!!me.admin;aiOn=!!me.ai;planFiles=me.planFiles!==false;$('#adminlink').hidden=!isAdmin;
-    const [settings,sums,weights,defs,lib]=await Promise.all([api('GET','/api/settings'),api('GET','/api/days'),api('GET','/api/weights'),api('GET','/api/defaults'),api('GET','/api/foods')]);
+    const [settings,sums,weights,defs,lib]=await Promise.all([api('GET','/api/settings'),api('GET','/api/days'),api('GET','/api/weights'),api('GET','/api/defaults'),
+      api('GET','/api/foods').catch(e=>{if(e.signedOut)throw e;libErr=e.message;return null;})]);   /* without the food library the rest still works */
     LIB=(lib&&lib.foods)||[];fAiOn=!!(lib&&lib.ai);
     setDefaults(defs);
     S.pud={...PUD_DEFAULT,...((settings||{}).pud||{})};S.snackOv=(settings||{}).snackOv||{};
@@ -727,10 +743,11 @@ $('#tfbody').addEventListener('submit',async e=>{
     (weights||[]).forEach(w=>{WEIGHTS[w.date]=w.kg;});
     recalcPudding();
     skipped=await restoreStash();
-  }catch(e){if(!e.signedOut){$('#loading').textContent='Couldn’t load your data: '+e.message;}return;}
+  }catch(e){if(!e.signedOut){$('#loading').textContent='Couldn’t load your data: '+e.message+' – reload the page to try again.';}return;}
   showLoading(false);
+  if(libErr){$('#bootnote').textContent=`Your food library couldn’t load (${libErr}), so its foods are missing until you reload the page.`;$('#bootnote').hidden=false;}
   route();
   if(pending.size)flush();   /* changes kept from a sign-out go now, whatever page you land on */
   if(skipped.length)alert(`Changes you made before you were signed out weren’t put back, because ${skipped.join(', ')} changed on another device or tab since. The newer copy is kept.`);
   jobsInit();
-})();
+});
