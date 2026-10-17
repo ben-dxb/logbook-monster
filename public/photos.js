@@ -8,7 +8,7 @@
    each dated from its own data (ExifDate, exifdate.js) unless the person turns that off; the date picked is used for
    any without one. Uses helpers from app.js and gym.js (gHead, gEmpty). */
 
-let PHOTOS=null, PPOSES=['front','left','right','back','other'], PSTYLES=[], PWT={};
+let PHOTOS=null, PPOSES=[], PSTYLES=[], PWT={};
 let pPose='all', pDate=todayStr(), pUpPose='other', pMsg='', pTok=0, pBusy=false;
 let pSel=false, pPick=[];                          /* picking photos to compare, and the ones picked (up to 2) */
 let pAi=false, pAiBusy=false;                     /* AI set up (an admin's OpenRouter key), and a "Tag with AI" run going */

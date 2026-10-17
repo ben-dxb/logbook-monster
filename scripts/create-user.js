@@ -4,10 +4,11 @@
 const readline = require('readline');
 const { hashPassword, passwordProblem } = require('../server/passwords');
 const db = require('../server/db');
+const { EMAIL_RE } = require('../server/mail');
 
 const args = process.argv.slice(2), no2fa = args.includes('--no-2fa');
 const email = String(args.find(a => !a.startsWith('--')) || '').trim().toLowerCase();
-if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+if (!EMAIL_RE.test(email)) {
   console.error('Usage: npm run create-user -- you@example.com [--no-2fa]');
   process.exit(1);
 }

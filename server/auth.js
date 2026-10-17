@@ -27,7 +27,7 @@ const q = {
   failClear: db.prepare('DELETE FROM login_failures WHERE email = ?'),
 };
 
-const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
+const { EMAIL_RE } = mail;
 const b64url = buf => buf.toString('base64url');
 const randomToken = () => b64url(crypto.randomBytes(32));
 const safeEqual = (a, b) => {

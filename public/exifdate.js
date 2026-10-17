@@ -60,6 +60,6 @@ async function ofFile(file){
   try{return fromBytes(new Uint8Array(await file.slice(0,HEAD).arrayBuffer()));}catch{return null;}
 }
 
-return {fromBytes,ofFile,day};
+return {fromBytes,ofFile};
 })();
 if(typeof module!=='undefined')module.exports=ExifDate;

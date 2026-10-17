@@ -5,7 +5,7 @@
 const clone=o=>JSON.parse(JSON.stringify(o));
 /* ---------- foods in use, per 100g (or 100ml): the account's plan foods (applyDefaults) and library foods (app.js).
    Rice pudding is always here – its values come from the batch on the Daily Tracker. */
-const PUDDING={n:'Rice pudding (batch)',k:0,p:0,c:0,f:0,d:0,step:5,cat:'c',max:285,spill:'dates'};
+const PUDDING={n:'Rice pudding (batch)',k:0,p:0,c:0,f:0,d:0,step:5,max:285,spill:'dates'};
 const FOODS={pudding:clone(PUDDING)};
 /* when a serving cap is hit, the rest spills into another food the plan has */
 const SPILL={pudding:'dates',dates:'syrup'};
@@ -64,14 +64,13 @@ const FREE_KINDS=['sauce','veg'];
 const FREE={sauce:false,veg:false};
 const isFree=f=>{const F=FOODS[f];return !!(F&&F.free&&FREE[F.free]);};
 const SWAP_LISTS={p:PROTEIN_SWAPS,c:CARB_SWAPS,x:FAT_SWAPS};
-const FOOD_FIELDS=['n','k','p','c','f','d','step','unit','min','max','order','group','free'];
 const ZERO_TARGETS={k:0,p:0,c:0,f:0};
 /* a plan's own entry only: a template or food id like "constructor" never finds Object.prototype's */
 const own=(o,k)=>o&&typeof o==='object'&&Object.prototype.hasOwnProperty.call(o,k)?o[k]:undefined;
 function foodGroup(id){for(const g in SWAP_LISTS)if(SWAP_LISTS[g].includes(id))return g;return '';}
 /* a calculator food from a plan's food record */
 function planFoodRec(id,r){
-  const F={cat:r.group==='p'?'p':'c'};
+  const F={};
   ['n','k','p','c','f','d','step'].forEach(k=>{F[k]=+r[k]||0;});
   F.n=String(r.n||id);F.step=+r.step||1;['min','max','order'].forEach(k=>{if(r[k]!=null)F[k]=+r[k];});
   if(r.unit==='ml')F.unit='ml';
@@ -251,7 +250,7 @@ function warnings(day){
   const w=[];const items=allItems(day);
   day.meals.forEach(m=>[...m.p,...m.c,...(m.x||[])].forEach(i=>{
     const F=FOODS[i.f];if(!F)return;
-    if(F.max!=null&&!F.order&&i.g>F.max+0.1&&!m.pie) w.push(i.f==='pudding'?`Meal ${m.id}: rice pudding is ${fmtG(i)} – over ${F.max}g goes past ${CASEIN_MAX}g casein`:`Meal ${m.id}: ${F.n} is ${fmtG(i)} – the limit is ${F.max}${F.unit||'g'} a serving`);
+    if(F.max!=null&&!F.order&&i.g>F.max+0.1) w.push(i.f==='pudding'?`Meal ${m.id}: rice pudding is ${fmtG(i)} – over ${F.max}g goes past ${CASEIN_MAX}g casein`:`Meal ${m.id}: ${F.n} is ${fmtG(i)} – the limit is ${F.max}${F.unit||'g'} a serving`);
     if(F.min!=null&&i.g>0&&i.g<F.min) w.push(`Meal ${m.id}: ${F.n} is under ${F.min}${F.unit||'g'} – the minimum serving`);
   }));
   /* foods delivered in a set amount a day (daily order) */
@@ -266,5 +265,5 @@ function warnings(day){
 function packPortion(g,pack,meat){return g>0&&pack>0&&meat>0?g/meat*pack:null;}
 function fmtG(i){const u=FOODS[i.f].unit||'g';return Math.round(i.g)+u;}
 
-/* lets the server check food ids against the same data */
-if(typeof module!=='undefined') module.exports={FOODS,TYPE,COACH,TEMPLATES,FREE,FREE_KINDS,packPortion,applyDefaults,planOf,planData,freshDay,balanceMeal,macOf,dayTotals,sum,it,solve,warnings};
+/* for the server (FREE_KINDS) and the tests */
+if(typeof module!=='undefined') module.exports={FOODS,FREE_KINDS,packPortion,applyDefaults,balanceMeal,macOf,sum,it};

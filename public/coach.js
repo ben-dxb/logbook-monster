@@ -72,7 +72,7 @@ let cDays=14, SUMS={}, WTS={};
 const cUntil=iso=>new Date(iso).toLocaleString(undefined,{weekday:'short',day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'});
 async function cLoadDays(){
   const to=todayStr(), from=addDays(to,-cDays+1);
-  const [sums,wts]=await Promise.all([api('GET',`/api/days?from=${from}&to=${to}`),api('GET',`/api/weights?from=${addDays(from,-30)}&to=${to}`)]);
+  const [sums,wts]=await Promise.all([api('GET',`/api/days?from=${from}&to=${to}`),api('GET',`/api/weights?from=${from}&to=${to}`)]);
   SUMS={};(sums||[]).forEach(s=>{SUMS[s.date]=s;});
   WTS={};(wts||[]).forEach(w=>{WTS[w.date]=w.kg;});
   cRenderDays();

@@ -1,7 +1,7 @@
 'use strict';
 /* Browser smoke test: starts a throwaway server, signs in, weighs a meal-prep pack, edits and saves a day, logs a weight,
    opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, shares a read-only coach link and opens it signed out, sets up two-step sign-in and signs in with a code and a recovery code, confirms a sensitive admin change on an old sign-in, uploads a plan and adds a day template on Account admin, sets up AI models and invites someone on the Super admin tabs, builds a plan from nothing as the new account, switches a day to another template, edits one day in two tabs, at desktop and phone widths. Fails on any page error.
-   Needs Playwright (npm i -g playwright, or available in the environment); skips if missing. */
+   Needs Playwright and its Chromium (README, Run it locally); without them it fails, so `npm run check` never passes untested. */
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -9,9 +9,18 @@ const path = require('node:path');
 
 let chromium;
 try { ({ chromium } = require('playwright')); } catch {
-  try { ({ chromium } = require(path.join(execSync('npm root -g').toString().trim(), 'playwright'))); } catch {}
+  try { ({ chromium } = require(path.join(execSync('npm root -g', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(), 'playwright'))); } catch {}
 }
-if (!chromium) { console.log('smoke: Playwright not installed – skipped'); process.exit(0); }
+const HOWTO = `
+  Install it once, then run npm run check again (Windows: in PowerShell or cmd, the same commands):
+    npm install -g playwright
+    playwright install chromium
+  To run only the API tests meanwhile: npm test`;
+const noBrowser = why => {
+  console.error(`\n**************************************************************\n  smoke FAILED: the browser test could not run – ${why}.${HOWTO}\n**************************************************************\n`);
+  process.exit(1);
+};
+if (!chromium) noBrowser('Playwright is not installed');
 
 const [PORT] = require('../test/_ports').freePorts(1), BASE = `http://127.0.0.1:${PORT}`;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'logbook-monster-smoke-'));
@@ -213,7 +222,8 @@ async function recheck(browser) {
 
 (async () => {
   for (let i = 0; i < 50; i++) { try { if ((await fetch(BASE + '/healthz')).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
-  const browser = await chromium.launch();
+  let browser;
+  try { browser = await chromium.launch(); } catch (e) { cleanup(); noBrowser(`Chromium did not start (${String(e.message).split('\n')[0]})`); }
   try {
     for (const [w, h, first] of [[1100, 900, true], [390, 844, false]]) {
       const ctx = await browser.newContext({ viewport: { width: w, height: h } });
@@ -290,7 +300,7 @@ async function recheck(browser) {
         const probeDay = await pg.evaluate(async () => {
           const d = addDays(todayStr(), -4), D = freshOn(d), t = n => `"><b id="PR-PROBE-${n}">x</b>`;
           const lf = 'L:9:' + t('lfid');
-          D.lib = { [lf]: { n: 'Probe lib', k: 100, p: 20, c: 1, f: 1, d: 0, cat: 'p', order: 200, step: '5' + t('step'), unit: 'g' + t('unit') } };
+          D.lib = { [lf]: { n: 'Probe lib', k: 100, p: 20, c: 1, f: 1, d: 0, order: 200, step: '5' + t('step'), unit: 'g' + t('unit') } };
           D.meals[0].p.push({ f: lf, g: 100, a: 100, lock: true }, { f: 'x' + t('fid'), g: 50, a: 50, lock: true });
           D.packs = { [lf]: { w: '300' + t('pw'), m: '150' + t('pm') } };
           D.off.push({ n: 'Probe bar', k: 1, p: 0, c: 0, f: 0, qty: 1, lib: 9, u: 'g' + t('ou') });

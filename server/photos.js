@@ -290,4 +290,4 @@ const exportFor = user => q.all.all(user.id);
 const filesOf = userId => q.allFiles.all(userId);
 const removeFiles = rows => rows.forEach(r => { unlink(r.file); unlink(r.thumb); });
 
-module.exports = { router, exportFor, filesOf, removeFiles, view, POSES, STYLES, sniff, clean };
+module.exports = { router, exportFor, filesOf, removeFiles, view, POSES };

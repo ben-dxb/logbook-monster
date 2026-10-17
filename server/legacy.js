@@ -116,4 +116,4 @@ function effective(app, mine) {
   return out;
 }
 
-module.exports = { FOODS, effective, plan };
+module.exports = { effective };

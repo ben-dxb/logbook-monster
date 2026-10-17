@@ -235,7 +235,7 @@ function fEditPage(f){
       <label class="f fwide"><span class="lbl">Name</span><input id="f-name" maxlength="80" required value="${esc(v.name)}" placeholder="e.g. Protein pancakes, or Chicken breast (raw)"></label>
       <div class="f fwide"><span class="lbl">This is a</span><div class="seg" role="group" aria-label="Type">${kinds}</div></div>
       <label class="f fwide"><span class="lbl">Values are</span><select id="f-unit">${unit}</select></label>
-      <label class="f fwide"><span class="lbl">Free food</span><select id="f-free">${[['','No – always counted'],['sauce','Sauce'],['veg','Green veg']].map(([x,l])=>`<option value="${x}"${(v.free||'')===x?' selected':''}>${l}</option>`).join('')}</select>
+      <label class="f fwide"><span class="lbl">Free food</span><select id="f-free">${[['','No – always counted'],...Object.entries(F_FREE)].map(([x,l])=>`<option value="${x}"${(v.free||'')===x?' selected':''}>${l}</option>`).join('')}</select>
         <span class="muted">A sauce or green veg counts no macros when your plan sets that kind free (Account admin).</span></label>
       <label class="f fstate"><span class="lbl">Weighed</span><select id="f-state">${[['','Neither (ready to eat)'],['raw','Raw / dry'],['cooked','Cooked']].map(([x,l])=>`<option value="${x}"${(v.state||'')===x?' selected':''}>${l}</option>`).join('')}</select></label>
       <label class="f fstate"><span class="lbl">Cooked weight, % of raw</span><input id="f-yield" type="number" inputmode="numeric" min="10" max="1000" step="1" value="${esc(v.yield==null?'':v.yield)}" placeholder="e.g. 75 chicken, 280 rice"></label>
