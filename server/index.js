@@ -10,6 +10,7 @@ const auth = require('./auth');
 const api = require('./api');
 const shares = require('./shares');
 const audit = require('./audit');
+const assets = require('./assets');
 
 const app = express();
 app.disable('x-powered-by');
@@ -95,7 +96,9 @@ app.use('/api', api);
 app.use('/coach/:token/api', shares.coach);
 
 const pub = path.join(__dirname, '..', 'public');
-const page = file => (req, res) => res.set('Cache-Control', 'no-store').sendFile(path.join(pub, file));
+/* the pages point at versioned scripts and styles (server/assets.js): no-cache + ETag, so the route below runs on every load */
+const files = assets.create(pub, { live: !config.isProd });
+const page = file => (req, res) => files.send(res, file);
 const signedIn = req => !!(req.session && req.session.userId);
 
 /* a session for an account that can no longer sign in is ended here, and /login says why */
@@ -104,7 +107,7 @@ app.get('/login', (req, res, next) => (auth.refused(req) ? gone(req, res) : sign
 app.get('/invite', page('invite.html'));
 app.get('/coach/:token', (req, res, next) => { res.set('X-Robots-Tag', 'noindex, nofollow'); page('coach.html')(req, res, next); });
 app.get(['/', '/index.html'], (req, res, next) => (auth.refused(req) ? gone(req, res) : signedIn(req) ? page('index.html')(req, res, next) : res.redirect('/login')));
-/* The HTML pages are served only by the routes above (sign-in check, no-store). A copy reached through the static files –
+/* The HTML pages are served only by the routes above (sign-in check, no-cache). A copy reached through the static files –
    /login.html, or /%69ndex.html, which the routes above don't match but the file server decodes – goes to its route instead. */
 const PAGES = { 'index.html': '/', 'login.html': '/login', 'invite.html': '/invite' };
 app.use((req, res, next) => {
@@ -114,7 +117,7 @@ app.use((req, res, next) => {
   const to = PAGES[path.posix.basename(p).toLowerCase()];
   return to ? res.redirect(to) : res.status(404).json({ error: 'Not found' });
 });
-app.use(express.static(pub, { index: false, maxAge: config.isProd ? '1h' : 0 }));
+app.use(files.headers, express.static(pub, { index: false, cacheControl: false }));
 
 app.use((err, req, res, next) => {
   if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Request too large' });

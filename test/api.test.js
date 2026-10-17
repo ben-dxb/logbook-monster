@@ -798,5 +798,5 @@ test('static copies of the HTML pages go to their routes (all-config-013, auth-c
   assert.strictEqual((await get('/%E0%A4%A.html'))[0], 400);
   assert.strictEqual((await get('/app.js'))[0], 200);
   const login = await fetch(BASE + '/login');
-  assert.strictEqual(login.headers.get('cache-control'), 'no-store');
+  assert.strictEqual(login.headers.get('cache-control'), 'no-cache', 'checked with the server on every load (versioned assets: server/assets.js)');
 });

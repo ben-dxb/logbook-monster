@@ -18,7 +18,7 @@ const jWhat=j=>`${J_KIND[j.kind].name}${j.label?` (${j.label})`:''}`;
 /* Send the file; resolves once the server has started reading it. */
 async function jobStart(url,kind,file){
   if('Notification' in window&&Notification.permission==='default'){try{Notification.requestPermission();}catch{}}
-  let r;
+  let r;wrote();
   try{r=await fetch(url+(url.includes('?')?'&':'?')+'bg=1',{method:'POST',credentials:'same-origin',body:file,
     headers:{'content-type':file.type||'application/pdf','x-csrf-token':csrf,...TZH,'x-file-name':encodeURIComponent(jCut(file.name,120))}});}
   catch{throw new Error('Can’t reach the server – is it still running?');}
