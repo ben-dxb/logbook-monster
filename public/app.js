@@ -573,4 +573,5 @@ document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(
   }catch(e){if(!e.signedOut){$('#loading').textContent='Couldn’t load your data: '+e.message;}return;}
   showLoading(false);
   route();
+  jobsInit();
 })();

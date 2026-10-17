@@ -280,7 +280,16 @@ footer{font-size:12px;color:var(--muted)}
   .adrow{grid-template-columns:minmax(0,1fr) auto 24px;grid-template-areas:"sel sel x" "amt lock .";row-gap:4px;padding-bottom:6px;border-bottom:1px solid var(--soft)}
   .adrow select{grid-area:sel}.adrow .amt{grid-area:amt}.adrow .lock{grid-area:lock}.adrow .x{grid-area:x}
 }
-@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+/* AI reads running in the background (jobs.js) */
+.jobs{position:fixed;right:16px;bottom:16px;z-index:50;display:grid;gap:8px;width:min(380px,calc(100vw - 32px))}
+.job{display:flex;align-items:center;gap:10px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-left:4px solid var(--info);
+  border-radius:10px;padding:10px 12px;box-shadow:0 6px 20px rgba(0,0,0,.14)}
+.job.ok{border-left-color:var(--good)}.job.bad{border-left-color:var(--bad)}
+.job p{margin:0;flex:1;min-width:0;overflow-wrap:anywhere}.job .sub{display:block}
+.jacts{display:flex;align-items:center;gap:8px;flex:none}
+.jspin{display:inline-block;animation:jspin 1.6s linear infinite}
+@keyframes jspin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}.jspin{animation:none}}
 
 /* ---------- gym ---------- */
 .gbody{display:flex;flex-direction:column;gap:12px}

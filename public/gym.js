@@ -8,7 +8,7 @@ const GSETS={};                  /* exercise id -> its sets, oldest first */
 const GDAY={};                   /* date -> sets that day */
 let gSessions=null, gArgs=[], gTok=0, gTimer=null, gBackE='#gym';
 let gCsv=null;                    /* a history CSV being checked: {file, text, res, dateOrder, unit, busy, done, total} */
-let gDraft=null, gAi=null, gAiBusy=false, gMsg='', gReorder=false, gTab='sets', gShow=30, gQuick=null;
+let gDraft=null, gAi=null, gMsg='', gReorder=false, gTab='sets', gShow=30, gQuick=null;
 let gPick={q:'',part:''}, gTagBusy='', gTagMsg='', gExOpen=false;   /* the exercise picker's search and body-part filter; AI tagging */
 
 /* ---------- helpers ---------- */
@@ -104,8 +104,8 @@ async function renderGym(args){
 /* ---------- workouts list ---------- */
 function gHomePage(){
   const ws=GY.workouts;
-  const aiRow=GY.ai
-    ?`<label class="grow gadd gfile${gAiBusy?' off':''}"><span>✦ ${gAiBusy?'Reading your plan – this can take a minute or two…':'Read a workout plan with AI (PDF or photo)…'}</span>
+  const gAiBusy=jobBusy('workout'), aiRow=GY.ai
+    ?`<label class="grow gadd gfile${gAiBusy?' off':''}"><span>✦ ${gAiBusy?'Reading your plan – this can take a minute or two. You can leave this page; you’ll be told when it’s ready.':'Read a workout plan with AI (PDF or photo)…'}</span>
         <input id="g-aifile" type="file" accept=".pdf,application/pdf,image/png,image/jpeg,image/webp"${gAiBusy?' disabled':''}></label>`
     :`<div class="grow gadd off"><span>✦ Read a workout plan with AI – ${isAdmin?'add an OpenRouter key on the <a href="#admin">Super admin page</a> to turn this on':'the super admin needs to add an OpenRouter key first'}</span></div>`;
   return `<div class="gbar"><h2>My workouts</h2>${ws.length>1?`<button class="ghost" type="button" data-g="reorder" aria-pressed="${gReorder}">${gReorder?'Done':'Reorder'}</button>`:''}</div>
@@ -402,18 +402,17 @@ async function gLogSet(){
 }
 async function gAiRead(file){
   if(file.size>10*1024*1024){gMsg='That file is over 10 MB.';renderGym();return;}
-  gAiBusy=true;gMsg='';gAi=null;renderGym();
-  try{
-    let r;
-    try{r=await fetch('/api/gym/ai-import',{method:'POST',credentials:'same-origin',headers:{'content-type':file.type||'application/pdf','x-csrf-token':csrf},body:file});}
-    catch{throw new Error('Can’t reach the server – is it still running?');}
-    if(r.status===401){location.href='/login'+location.hash;return;}
-    const j=await r.json().catch(()=>({}));
-    if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);
-    gAi={file:file.name,notes:j.notes||[],workouts:j.workouts.map(w=>({...w,on:true}))};
-  }catch(err){gMsg='The AI couldn’t read that: '+err.message;}
-  gAiBusy=false;renderGym();
+  gMsg='';gAi=null;
+  try{await jobStart('/api/gym/ai-import','workout',file);}   /* read in the background: jobs.js brings the result to J_OPEN.workout */
+  catch(err){if(err.signedOut)return;gMsg='The AI couldn’t read that: '+err.message;}
+  renderGym();
 }
+J_BUSY.workout=()=>{if(view==='gym'&&!gArgs[0])renderGym();};
+J_OPEN.workout=job=>{
+  if(job.status!=='done'){gAi=null;gMsg='The AI couldn’t read that: '+(job.error||'Something went wrong');}
+  else{const j=job.result;gMsg='';gAi={file:job.label||'your plan',notes:j.notes||[],workouts:j.workouts.map(w=>({...w,on:true}))};}
+  renderGym();
+};
 async function gAiAdd(){
   const list=gAi.workouts.filter(w=>w.on).map(w=>({name:w.name,description:w.description,exercises:w.exercises.map(x=>({name:x.name,target:x.target,parts:x.parts||[]}))}));
   try{const r=await api('POST','/api/gym/import',{workouts:list});GY={...r,parts:GY.parts,ai:GY.ai};
@@ -467,7 +466,7 @@ document.addEventListener('change',e=>{
     f.text().then(t=>{gCsv={file:f.name,text:t};gCsvRead();renderGym();},()=>{gCsv={file:f.name,res:null,err:'Couldn’t read that file.'};renderGym();});}
   else if(el.id==='g-csvorder'&&gCsv){gCsv.dateOrder=el.value;gCsv.dateOrderAsked=true;gCsvRead();renderGym();}
   else if(el.id==='g-csvunit'&&gCsv){gCsv.unit=el.value;gCsv.unitAsked=true;gCsvRead();renderGym();}
-  else if(el.id==='g-aifile'){const f=el.files&&el.files[0];el.value='';if(f&&!gAiBusy)gAiRead(f);}
+  else if(el.id==='g-aifile'){const f=el.files&&el.files[0];el.value='';if(f&&!jobBusy('workout'))gAiRead(f);}
   else if(el.dataset.g==='aion'&&gAi){gAi.workouts[+el.dataset.i].on=el.checked;renderGym();}
   else if(el.dataset.g==='trend')gTrend(el);
 });

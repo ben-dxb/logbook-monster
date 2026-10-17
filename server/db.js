@@ -183,6 +183,19 @@ CREATE TABLE IF NOT EXISTS checklists (
   items      TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS ai_jobs (
+  id          INTEGER PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL,
+  label       TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL DEFAULT 'running',
+  result      TEXT,
+  error       TEXT,
+  seen        INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ai_jobs_user ON ai_jobs(user_id, id);
 CREATE TABLE IF NOT EXISTS checklist_log (
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   date       TEXT NOT NULL,

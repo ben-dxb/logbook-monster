@@ -15,6 +15,7 @@ const checklist = require('./checklist');
 const photos = require('./photos');
 const timeline = require('./timeline');
 const shares = require('./shares');
+const jobs = require('./jobs');
 
 const q = {
   getSettings: db.prepare('SELECT data FROM settings WHERE user_id = ?'),
@@ -91,9 +92,10 @@ router.delete('/my/defaults/:from', (req, res) => {
 
 /* AI: the OpenRouter key and models (super admin), and reading a plan PDF into an account's plan format. */
 const adminOnly = (req, res, next) => (defaults.isAdmin(req.user) ? next() : res.status(403).json({ error: 'Only the super admin can do this' }));
-const readPlan = async (req, res) => {
-  try { res.json(await ai.importPlan(Buffer.isBuffer(req.body) ? req.body : null, String(req.get('content-type') || '').split(';')[0].trim(), req.user)); }
-  catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); if (!e.status) console.error(e); }
+/* ?bg=1 runs it in the background (server/jobs.js) */
+const readPlan = (req, res) => {
+  const buf = Buffer.isBuffer(req.body) ? req.body : null, type = String(req.get('content-type') || '').split(';')[0].trim();
+  return jobs.respond(req, res, 'plan', () => ai.check(buf, type), () => ai.importPlan(buf, type, req.user));
 };
 router.get('/admin/ai', adminOnly, (req, res) => res.json(ai.status()));
 router.put('/admin/ai', adminOnly, (req, res) => {
@@ -215,6 +217,7 @@ router.use('/checklist', checklist.router);
 router.use('/photos', photos.router);
 router.use('/timeline', timeline.router);
 router.use('/shares', shares.mine);
+router.use('/jobs', jobs.router);
 
 /* Everything you've stored, as one JSON file. */
 router.get('/export', (req, res) => {
