@@ -471,8 +471,8 @@ async function gLogSet(){
   if(!fieldErrors($('#g-quick'),[[(!Number.isInteger(reps)||reps<0||reps>1000||$('#g-reps').value==='')&&$('#g-reps'),'Reps must be a whole number from 0 to 1000'],
     [(!Number.isFinite(kg)||$('#g-kg').value==='')&&$('#g-kg'),'Enter a weight (0 for bodyweight)']]))return;
   /* shown at once as "Saving…", swapped for the server's set (and its 🏆) when it lands; a double tap on the same set adds it once,
-     the next set goes straight away */
-  const key=[Q.e,reps,kg,note].join('|');if(gSending.has(key))return;gSending.add(key);
+     the next set goes straight away. A second tap within 400 ms (as once()) is the same tap even when the first has already landed – unless it failed (Retry). */
+  const key=[Q.e,reps,kg,note].join('|');if(gSending.has(key)||(gLastTap.k===key&&Date.now()-gLastTap.t<400))return;gSending.add(key);gLastTap={k:key,t:Date.now()};
   const t={id:1e15+(++gTmp),e:Q.e,reps,kg,note,at:nowAt(),updated:null,tmp:true};
   gPut(t);Object.assign(Q,{reps,kg,note:''});gChanged();
   if(gTab!=='sets')gTab='sets';
@@ -481,7 +481,7 @@ async function gLogSet(){
   try{const s=await api('POST','/api/gym/sets',{exercise:t.e,reps,kg,note,at:t.at});
     gDropSet(t.id);if(!(GSETS[s.e]?GSETS[s.e].sets:[]).some(x=>x.id===s.id))gPut(s);gChanged();await gRestat(s.e);
     say(`Logged ${reps} × ${kgTxt(kg)} kg${GSETS[s.e]&&GSETS[s.e].pr.has(s.id)?' – a record':''}.`);}
-  catch(err){gDropSet(t.id);if(!err.signedOut)failed=err;}
+  catch(err){gDropSet(t.id);if(!err.signedOut)failed=err;if(gLastTap.k===key)gLastTap.t=0;}
   gSending.delete(key);
   await gShowSets(t.e);
   const here=view==='gym'&&gArgs[0]==='e'&&+gArgs[1]===t.e;
@@ -492,7 +492,7 @@ async function gLogSet(){
     if(!exById(t.e))return;if(gArgs[0]!=='e'||+gArgs[1]!==t.e){go('gym/e/'+t.e);return;}
     $('#g-reps').value=reps;$('#g-kg').value=kgTxt(kg);$('#g-note').value=note;Object.assign(gQuick,{reps,kg,note});gLogSet();});
 }
-const gSending=new Set();let gTmp=0;
+const gSending=new Set();let gTmp=0,gLastTap={k:'',t:0};
 /* the exercise's page again from what's loaded, keeping the box you're in */
 function gShowSets(id){
   if(view!=='gym'||gArgs[0]!=='e'||+gArgs[1]!==id)return Promise.resolve();
