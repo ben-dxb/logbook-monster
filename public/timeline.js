@@ -49,9 +49,9 @@ function tPage(){
     <form id="t-pick" class="panel tpick">
       <label class="f"><span class="lbl">Go to a day</span><input type="date" id="t-date" value="${todayStr()}" max="${addDays(todayStr(),366)}"></label>
       <button class="btn" type="submit">Show that day</button>
-      <button class="ghost" type="button" data-ta="go" data-d="${todayStr()}">Today</button>
-      <button class="ghost" type="button" data-ta="go" data-d="${addDays(todayStr(),-1)}">Yesterday</button>
-      <button class="ghost" type="button" data-ta="go" data-d="${addDays(todayStr(),-7)}">A week ago</button>
+      <button class="ghost" type="button" data-ta="go" data-n="0">Today</button>
+      <button class="ghost" type="button" data-ta="go" data-n="-1">Yesterday</button>
+      <button class="ghost" type="button" data-ta="go" data-n="-7">A week ago</button>
     </form>
     <section class="panel" aria-labelledby="t-th">
       <div class="charthead"><h2 id="t-th">Trends</h2><div class="seg" role="group" aria-label="Range" id="t-range">${rng}</div></div>
@@ -258,7 +258,7 @@ document.addEventListener('click',e=>{
   else if(a==='ai')tSummarise();
   else if(a==='exsave')tExSave();
   else if(a==='exnone')document.querySelectorAll('#t-exlist input').forEach(i=>{i.checked=false;});
-  else if(a==='go')go('history/timeline/'+b.dataset.d);
+  else if(a==='go')go('history/timeline/'+addDays(todayStr(),+b.dataset.n));   /* today when clicked, not when drawn */
   else if(a==='close')tCloseCard();
   else if(a==='cmove'&&tCardDate){const d=addDays(tCardDate,+b.dataset.n);history.replaceState(null,'','#history/timeline/'+d);tOpen(d);}
 });

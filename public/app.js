@@ -40,21 +40,51 @@ async function api(method,url,body){
   return j;
 }
 
-/* Signed out with changes still waiting: keep them in this browser and send them after you sign back in. */
-const STASH='logbook-monster-unsaved';
+/* Signed out with changes still waiting: keep them in this browser, under your account id, and send them after you sign back in
+   (wherever you sign in). Each change keeps the server copy it was made on; it is sent only if the server still has that copy. */
+const STASH='logbook-monster-unsaved', STASH_DAYS=14;
+let UID=null, stashOut=false;
+const stashKey=()=>STASH+':'+UID;
 function toLogin(){
-  if(pending.size&&ME){try{localStorage.setItem(STASH,JSON.stringify({email:ME,at:Date.now(),jobs:[...pending.entries()]}));}catch{}}
+  if(pending.size&&UID!=null){try{localStorage.setItem(stashKey(),JSON.stringify({at:Date.now(),
+    jobs:[...pending.entries()].map(([k,j])=>[k,j,k==='@settings'?SAVED.settings:LOGGED.has(k)?SAVED.days[k]:null])}));}catch{}}
   pending.clear();location.href='/login'+location.hash;   /* come back to the same day after signing in */
 }
-function restoreStash(){
-  let st;try{st=JSON.parse(localStorage.getItem(STASH)||localStorage.getItem('mealswap-unsaved')||'null');localStorage.removeItem('mealswap-unsaved');}catch{}
-  if(!st||st.email!==ME||!Array.isArray(st.jobs))return;
-  try{localStorage.removeItem(STASH);}catch{}
-  if(Date.now()-st.at>14*86400000)return;
-  for(const [key,j] of st.jobs){
-    if(key==='@settings'){const v=JSON.parse(j);S.pud={...PUD_DEFAULT,...(v.pud||{})};S.snackOv=v.snackOv||{};S.pBasis=v.pBasis==='direct'?'direct':'total';recalcPudding();}
-    else if(isDate(key)){S.days[key]=migrate(JSON.parse(j));SAVED.days[key]=null;}
+function dropStash(){stashOut=false;try{localStorage.removeItem(stashKey());}catch{}}
+/* returns what wasn't put back because it changed elsewhere since */
+async function restoreStash(){
+  let st=null;
+  try{   /* stashes older than STASH_DAYS go, whoever they belong to; older ones are keyed by email */
+    for(let i=localStorage.length-1;i>=0;i--){const k=localStorage.key(i);if(!/^(logbook-monster|mealswap)-unsaved/.test(k))continue;
+      let o=null;try{o=JSON.parse(localStorage.getItem(k));}catch{}
+      if(!o||!(Date.now()-o.at<=STASH_DAYS*86400000))localStorage.removeItem(k);}
+    st=JSON.parse(localStorage.getItem(stashKey())||'null');
+    for(const k of [STASH,'mealswap-unsaved']){const o=JSON.parse(localStorage.getItem(k)||'null');if(o&&o.email===ME){if(!st)st=o;localStorage.removeItem(k);}}
+  }catch{}
+  const jobs=(st&&Array.isArray(st.jobs)?st.jobs:[]).filter(x=>Array.isArray(x)&&typeof x[1]==='string');
+  const srv={};   /* the server's copy of each stashed day, read before anything changes (a failure leaves the stash for next time) */
+  for(const [k] of jobs)if(isDate(k)&&LOGGED.has(k))try{srv[k]=await api('GET','/api/days/'+k);}catch(e){if(e.signedOut)throw e;return [];}
+  const keep=[],skipped=[],utc=s=>s?Date.parse(s.replace(' ','T')+'Z'):0;
+  for(const job of jobs){
+    try{
+      const [key,j]=job,old=job.length<3,v=JSON.parse(j);
+      if(key==='@settings'){
+        if(j===SAVED.settings)continue;
+        if(!old&&job[2]!==SAVED.settings){skipped.push('your settings');continue;}
+        S.pud={...PUD_DEFAULT,...(v.pud||{})};S.snackOv=v.snackOv||{};S.pBasis=v.pBasis==='direct'?'direct':'total';recalcPudding();
+      }else if(isDate(key)&&v&&Array.isArray(v.meals)){
+        const r=srv[key],sj=r?JSON.stringify(r.data):null;
+        if(sj===j)continue;   /* already saved */
+        const same=old?!r||utc(r.updated)<st.at:job[2]===sj||(!!r&&job[2]===JSON.stringify(migrate(r.data)));
+        if(!same){skipped.push(fmtLong(key));continue;}
+        const D=migrate(v);S.days[key]=D;SAVED.days[key]=sj;
+      }else continue;
+      pending.set(key,j);keep.push([key,j,key==='@settings'?SAVED.settings:SAVED.days[key]]);
+    }catch{}   /* a broken entry is dropped */
   }
+  if(keep.length){try{localStorage.setItem(stashKey(),JSON.stringify({at:st.at,jobs:keep}));}catch{}stashOut=true;}
+  else if(st)dropStash();
+  return skipped;
 }
 
 /* Older saves have no chosen amounts: take them from the plan */
@@ -95,7 +125,7 @@ async function flush(){
       SAVED.days[key]=j;LOGGED.add(key);SUMS[key]={date:key,...summary};
     }
     saveState=pending.size?'pending':'saved';saveErr='';
-    if(pending.size)saveTimer=setTimeout(flush,600);
+    if(pending.size)saveTimer=setTimeout(flush,600);else if(stashOut)dropStash();
   }catch(e){
     jobs.forEach(([k,j])=>{if(!pending.has(k))pending.set(k,j);});
     inFlight=false;
@@ -143,7 +173,9 @@ async function unlogDay(){
 const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const r0=x=>Math.round(x), r1=x=>(Math.round(x*10)/10).toFixed(1);
-function day(){useDefs(S.cur);if(!S.days[S.cur])S.days[S.cur]=freshDay(wdOf(S.cur));return S.days[S.cur];}
+/* the day on the Daily Tracker; a saved day is never started again from the plan before it has loaded (openDay loads it) */
+const dayReady=()=>!!S.days[S.cur]||!LOGGED.has(S.cur);
+function day(){useDefs(S.cur);if(!S.days[S.cur]){if(!dayReady())throw new Error('That day hasn’t loaded yet');S.days[S.cur]=freshDay(wdOf(S.cur));}return S.days[S.cur];}
 /* a day's template name, short enough for the week strip and the calendar */
 function tplLabel(d){const D=S.days[d],s=SUMS[d];return (s&&s.tname)||tnameOn(d,(D&&D.type)||(s&&s.type)||typeOn(d));}
 const wd=()=>wdOf(S.cur);
@@ -222,7 +254,7 @@ function renderWeightInline(){
 /* the protein-basis buttons (Daily Tracker and Account admin) show the account setting */
 function pbSync(){document.querySelectorAll('[data-act="pbasis"]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===(pKey()==='d'?'direct':'total'))));}
 function render(){
-  if(view!=='day')return;
+  if(view!=='day'||!dayReady())return;
   const D=day(), T=dayTotals(D), tg=D.targets, t=D.type||TYPE[wd()], td=todayStr();
   $('#dtitle').textContent=S.cur===td?'Today':S.cur===addDays(td,-1)?'Yesterday':S.cur===addDays(td,1)?'Tomorrow':parse(S.cur).toLocaleDateString(undefined,{weekday:'long'});
   $('#dsub').textContent=fmtLong(S.cur)+(templateName(t)?` · ${templateName(t)}`:'');
@@ -402,7 +434,16 @@ async function setWeight(date,kg){
    #account (account admin, anyone) and #admin (super admin; tabs #admin/ai, #admin/people, #admin/email) share the #v-admin page. */
 const VIEWS=['dash','day','history','gym','foods','supps','photos','timeline','account','admin'];
 const viewEl=n=>$('#v-'+(n==='account'?'admin':n));
+/* a tab left open past midnight: whatever was on 'today' moves to the new today (the date of the action, not of the page load) */
+let TODAY=todayStr();
+function rollToday(){const t=todayStr(),was=TODAY;if(t===was)return;TODAY=t;
+  if(S.cur===was)S.cur=t;
+  if(month===was.slice(0,7)+'-01')month=t.slice(0,7)+'-01';
+  if(typeof sDate==='string'&&sDate===was)sDate=t;   /* Supplements log day, photo upload date */
+  if(typeof pDate==='string'&&pDate===was)pDate=t;
+}
 function route(){
+  rollToday();
   if(/^#weight(\/|$)/.test(location.hash))history.replaceState(null,'','#history/timeline');
   if(/^#timeline(\/|$)/.test(location.hash))history.replaceState(null,'','#history/'+location.hash.slice(1));
   let [v,arg,...more]=location.hash.replace(/^#/,'').split('/');
@@ -426,12 +467,12 @@ function route(){
 function go(hash){if(location.hash==='#'+hash)route();else location.hash=hash;}
 
 /* ---------- actions (calculator) ---------- */
-function act(fn,opts){const D=day();const held=new Set();fn(D,held);
+function act(fn,opts){if(!dayReady())return;const D=day();const held=new Set();fn(D,held);
   D.meals.forEach(m=>{if(m.dirty)BOXES.forEach(([b])=>(m[b]||[]).forEach(i=>held.add(i)));}); /* unsaved meals stay as you left them */
   solve(D,held,opts||{});render();}
 /* edits inside a meal wait for 'Save meal' – nothing else moves until then. With 'Balance this meal' ticked on the meal (m.calc,
    off for every new edit), the meal's other foods move as you edit to keep its calories; what you changed or added (i.ed) stays. */
-function editMeal(mi,box,fn){const D=day();const m=D.meals[mi];
+function editMeal(mi,box,fn){if(!dayReady())return;const D=day();const m=D.meals[mi];
   if(m.eaten){render();return;}           /* an eaten meal is locked until you undo it */
   if(!m._snap)m._snap=clone({p:m.p,c:m.c,x:m.x||[]});
   const before=new Set(BOXES.flatMap(([b])=>m[b]||[]));
@@ -464,6 +505,7 @@ function calcMeal(mi,on){const m=day().meals[mi];if(!m.dirty)return;
 document.addEventListener('click',e=>{
   const b=e.target.closest('[data-act]'); if(!b||b.tagName==='INPUT'||b.tagName==='SELECT')return;
   const a=b.dataset.act;
+  if(b.closest('#v-day')&&!dayReady()&&!['prev','next','today'].includes(a))return;   /* still loading */
   if(a!=='reset'&&resetArmed){resetArmed=false;}
   if(a==='day'||a==='open'){go('day/'+b.dataset.d);}
   else if(a==='prev'){go('day/'+addDays(S.cur,-1));}
@@ -480,7 +522,7 @@ document.addEventListener('click',e=>{
   else if(a==='eat'){eatMeal(+b.dataset.m);}
   else if(a==='uneat'){uneatMeal(+b.dataset.m);}
   else if(a==='odel'){act(D=>{D.off.splice(+b.dataset.i,1);});}
-  else if(a==='pbasis'){if(S.pBasis!==b.dataset.v){S.pBasis=b.dataset.v;act(()=>{});if(view!=='day'){pbSync();persist();}}}
+  else if(a==='pbasis'){if(S.pBasis!==b.dataset.v){S.pBasis=b.dataset.v;if(S.days[S.cur])act(()=>{});if(view!=='day'){pbSync();persist();}}}   /* a day not loaded takes it when it opens */
   else if(a==='reset'){if(!resetArmed){resetArmed=true;render();return;}resetArmed=false;
     if(anyEaten(day())&&!confirm('Some meals are marked eaten. Reset the whole day to the plan anyway? That undoes them.')){render();return;}
     S.days[S.cur]=freshOn(S.cur,day().type);render();}
@@ -490,12 +532,15 @@ function setPack(el){const D=day(),f=el.dataset.f;D.packs=D.packs||{};const p=D.
   const v=el.value.trim();if(v===''||!(+v>=0))delete p[el.dataset.k];else p[el.dataset.k]=+v;
   if(!Object.keys(p).length)delete D.packs[f];if(!Object.keys(D.packs).length)delete D.packs;
   return {f,pk:p};}
-document.addEventListener('input',e=>{const el=e.target;if(el.dataset.act!=='pack')return;
+/* the Daily Tracker's own controls only (other views have ids like t-…) */
+const onTracker=el=>!!el.closest('#v-day')&&dayReady();
+document.addEventListener('input',e=>{const el=e.target;if(el.dataset.act!=='pack'||!onTracker(el))return;
   const {f,pk}=setPack(el);
   document.querySelectorAll(`[data-packout="${f}"]`).forEach(o=>{o.innerHTML=packOut({g:+o.dataset.g},pk,FOODS[f]);});
   persist();});
 document.addEventListener('change',e=>{
   const el=e.target, a=el.dataset.act;
+  if(!onTracker(el)&&el.id!=='datepick')return;
   if(a==='pack'){setPack(el);render();return;}
   const get=D=>D.meals[+el.dataset.m][el.dataset.b][+el.dataset.i];
   if(a==='lock'){const D=day();get(D).lock=el.checked;render();}
@@ -554,10 +599,10 @@ $('#coach').addEventListener('click',()=>act(D=>{const t=hasTemplate(D.type)?D.t
 window.addEventListener('hashchange',route);
 $('#logout').addEventListener('click',async()=>{
   if(pending.size){clearTimeout(saveTimer);await flush();}
-  let keep=null;try{keep=localStorage.getItem(STASH);}catch{}
+  const keep=[];try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k.startsWith(STASH))keep.push([k,localStorage.getItem(k)]);}}catch{}
   try{await api('POST','/auth/logout',{});}catch{}
-  /* sign-out clears this site's storage (Clear-Site-Data); put back changes still waiting to be sent */
-  try{if(keep)localStorage.setItem(STASH,keep);}catch{}
+  /* sign-out clears this site's storage (Clear-Site-Data); put back changes still waiting to be sent (anyone's) */
+  try{keep.forEach(([k,v])=>localStorage.setItem(k,v));}catch{}
   if(pending.size&&ME)toLogin();else location.href='/login';
 });
 $('#pwform').addEventListener('submit',async e=>{
@@ -570,8 +615,9 @@ document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(
 
 /* ---------- start ---------- */
 (async()=>{
+  let skipped=[];
   try{
-    const me=await api('GET','/api/me');csrf=me.csrf;ME=me.email;
+    const me=await api('GET','/api/me');csrf=me.csrf;ME=me.email;UID=me.id;
     $('#who').textContent=me.name||me.email;$('#who').title=me.email;
     if(!me.hasPassword){$('#pwcur').hidden=true;$('#pwbox').querySelector('summary').textContent='Set a password';}
     isAdmin=!!me.admin;aiOn=!!me.ai;planFiles=me.planFiles!==false;$('#adminlink').hidden=!isAdmin;
@@ -584,9 +630,11 @@ document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(
     (sums||[]).forEach(s=>{SUMS[s.date]=s;LOGGED.add(s.date);});
     (weights||[]).forEach(w=>{WEIGHTS[w.date]=w.kg;});
     recalcPudding();
-    restoreStash();
+    skipped=await restoreStash();
   }catch(e){if(!e.signedOut){$('#loading').textContent='Couldn’t load your data: '+e.message;}return;}
   showLoading(false);
   route();
+  if(pending.size)flush();   /* changes kept from a sign-out go now, whatever page you land on */
+  if(skipped.length)alert(`Changes you made before you were signed out weren’t put back, because ${skipped.join(', ')} changed on another device or tab since. The newer copy is kept.`);
   jobsInit();
 })();

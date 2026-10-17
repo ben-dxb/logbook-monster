@@ -90,7 +90,7 @@ router.use(rateLimit({
 }));
 
 router.get('/me', (req, res) => {
-  res.json({ email: req.user.email, name: req.user.name, hasPassword: !!req.user.password_hash,
+  res.json({ id: req.user.id, email: req.user.email, name: req.user.name, hasPassword: !!req.user.password_hash,
     google: !!req.user.google_sub, admin: defaults.isAdmin(req.user), ai: ai.status().configured, ...options(), csrf: csrfToken(req, res) });
 });
 
