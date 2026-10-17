@@ -971,7 +971,7 @@ const LG_EV={'signin.ok':'Signed in','signin.failed':'Failed sign-in','signin.lo
   'recheck.failed':'Failed to confirm it’s you',signout:'Signed out','password.changed':'Password changed','google.linked':'Google linked','invite.created':'Invite made','invite.accepted':'Invite accepted',
   'account.removed':'Account removed','account.deleted':'Deleted their own account','ai.settings':'AI settings changed','email.settings':'Email settings changed','options.changed':'Options changed',
   export:'Data downloaded','day.deleted':'Day deleted','checklist.reset':'Checklist reset','photos.deleted':'Photos deleted','photo.deleted':'Photo deleted','photos.downloaded':'Photos downloaded','food.removed':'Shared food removed',
-  'supp.removed':'Shared supplement removed','coach.created':'Coach link made','coach.off':'Coach link switched off','coach.used':'Coach link opened','ai.cap':'AI daily limit reached',
+  'supp.removed':'Shared supplement removed','coach.created':'Coach link made','coach.off':'Coach link switched off','coach.used':'Coach link opened','ai.cap':'AI daily limit reached','ai.breaker':'AI service paused or back',
   'secret.next':'Next key saved','secret.tested':'Key tested','secret.promoted':'Next key promoted','secret.stale':'Key due for rotation','coach.renewed':'Coach link renewed','coach.reminded':'Coach link reminder sent'};
 let LG=null, ML=null;
 const lgDetail=d=>Object.entries(d||{}).filter(([k])=>k!=='eh').map(([k,v])=>`${k}: ${Array.isArray(v)?v.join(', ')||'–':v}`).join(' · ');

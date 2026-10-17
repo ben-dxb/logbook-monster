@@ -15,6 +15,7 @@ const rateLimit = require('express-rate-limit');
 const { isDate, writeError } = require('./dates');
 const version = require('./version');
 const audit = require('./audit');
+const storage = require('./storage');
 const { writeZip } = require('./zip');
 
 fs.mkdirSync(config.photoDir, { recursive: true, mode: 0o700 });
@@ -173,8 +174,14 @@ function meta(b) {
 /* File names are random and never come from the request, so they can't point outside the folder. */
 const newName = ext => crypto.randomBytes(16).toString('hex') + ext;
 const fileAt = name => path.join(config.photoDir, path.basename(name));
-/* a file that can't be deleted is logged, not an error for the person – its row is gone already */
+/* a file that can't be deleted is logged, not an error for the person – its row is gone already, so the photo file sweep
+   (server/upkeep.js, at start and daily) removes it once it can */
 const unlink = name => { if (name) fs.promises.unlink(fileAt(name)).catch(e => { if (e.code !== 'ENOENT') console.error(`Couldn’t delete photo file ${path.basename(name)}:`, e.code || e.message); }); };
+/* a write that fails part-way (a full disk) leaves an empty or partial file behind: removed before the error goes on */
+async function write(file, bytes) {
+  try { await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 }); }
+  catch (e) { if (e.code !== 'EEXIST') unlink(file); throw e; }
+}
 
 /* Photos stored before width and height were kept: read from the start of each file, a batch at a time, once (after this every
    row has them – 0 when the file is missing or unreadable, which the app treats as unknown). */
@@ -198,7 +205,11 @@ async function fillSizes() {
 setImmediate(() => fillSizes().catch(e => console.error('Reading the sizes of older photos failed:', e.message)));
 
 const router = express.Router();
-const send = (res, e) => { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); };
+const send = (res, e) => {
+  const full = storage.full(e);
+  if (!e.status) console.error(full ? `Photo storage full: ${e.code || e.message}` : e);
+  res.status(full ? 507 : e.status || 500).json({ error: full ? storage.FULL : e.status ? e.message : 'Something went wrong' });
+};
 const rawImage = limit => express.raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit });
 
 router.get('/', (req, res) => {
@@ -247,7 +258,7 @@ router.post('/', uploadLimit, rawImage(MAX_BYTES), async (req, res) => {
     const file = newName(EXT[type]), bytes = clean(req.body, type), d = sized(dims(bytes));
     const release = reserve(req.user.id, 1, bytes.length);
     try {
-      await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 });
+      await write(file, bytes);
       let id;
       try {
         id = Number(q.add.run(req.user.id, m.date, m.pose, m.style, req.query.ai === '1' ? 1 : 0, m.note, file, type, bytes.length, d ? d.w : 0, d ? d.h : 0, key).lastInsertRowid);

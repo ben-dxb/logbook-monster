@@ -8,6 +8,7 @@ const db = require('./db');
 const config = require('./config');
 const mail = require('./mail');
 const trendCache = require('./trendcache');
+const storage = require('./storage');
 
 /* kind -> what it is and where its result is opened in the app */
 const KINDS = {
@@ -68,11 +69,12 @@ function tell(user, kind, label, error) {
     text: error
       ? `The AI couldn’t read your ${what}: ${error}\n\nTry again in Logbook Monster: ${config.baseUrl}/${k.page}\n`
       : `The AI has finished reading your ${what}.\n\nOpen Logbook Monster to check it and add it: ${config.baseUrl}/${k.page}\n\nNothing is saved until you do. It waits there for ${UNSEEN_DAYS} days.\n`,
-  });
+  }, { keep: mail.JOB_KEEP });   /* stale after a few hours: dropped from the outbox rather than sent late */
 }
 
-/* Start work() as a job for this person; returns the job. One read at a time. */
-function start(user, kind, label, work) {
+/* Start work() as a job for this person; returns the job. One read at a time. ai is the request's req.ai (server/ai.js):
+   a read whose AI calls all failed gives back its count on the route's hourly limit. */
+function start(user, kind, label, work, ai) {
   if (!KINDS[kind]) throw new Error('Unknown job kind ' + kind);
   idle(user);
   q.old.run();
@@ -81,8 +83,9 @@ function start(user, kind, label, work) {
   /* Nothing after the answer has gone may throw out of here: an error with no one to catch it would stop the whole server. */
   const failed = (e, plain = 'Something went wrong') => {
     if (!e.status) console.error(`AI ${kind} read ${id}:`, e);
-    const msg = e.status ? String(e.message).slice(0, 500) : plain;
+    const msg = e.status ? String(e.message).slice(0, 500) : storage.full(e) ? storage.FULL : plain;
     try { q.failed.run(msg, id); } catch (e2) { console.error(`AI ${kind} read ${id}: couldn’t record that it failed:`, e2); lost.set(id, msg); }
+    try { if (ai && !ai.calls && ai.refund) ai.refund(); } catch (e2) { console.error(e2); }
     try { tell(user, kind, label, msg); } catch (e2) { console.error(e2); }
   };
   Promise.resolve().then(work).then(result => {
@@ -101,12 +104,18 @@ async function respond(req, res, kind, precheck, work) {
     if (req.query.bg === '1') {
       let label = '';
       try { label = decodeURIComponent(String(req.get('x-file-name') || '')).replace(/[\x00-\x1f]/g, ''); } catch {}
-      return res.status(202).json({ job: start(req.user, kind, label, work) });
+      if (req.ai) req.ai.bg = true;   /* the AI gets longer to answer: no one is waiting on the request */
+      return res.status(202).json({ job: start(req.user, kind, label, work, req.ai) });
     }
     idle(req.user);
     reading.set(req.user.id, kind);
     try { res.json(await work()); } finally { reading.delete(req.user.id); }
-  } catch (e) { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); }
+  } catch (e) {
+    if (res.headersSent) return console.error(e);
+    const full = storage.full(e);
+    if (!e.status && !full) console.error(e);
+    res.status(full ? 507 : e.status || 500).json({ error: full ? storage.FULL : e.status ? e.message : 'Something went wrong' });
+  }
 }
 
 const router = express.Router();

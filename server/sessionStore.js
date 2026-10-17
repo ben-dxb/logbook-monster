@@ -15,6 +15,7 @@ class SqliteStore extends session.Store {
     super();
     this.maxAge = maxAge;
     this.stored = new Map();   /* hashed sid → expires as stored */
+    this.touchLogged = 0;
     this.q = {
       get: db.prepare('SELECT sess, expires FROM sessions WHERE sid = ? AND expires > ?'),
       set: db.prepare('INSERT INTO sessions (sid, sess, expires, user_id) VALUES (?, ?, ?, ?) ON CONFLICT(sid) DO UPDATE SET sess = excluded.sess, expires = excluded.expires, user_id = excluded.user_id'),
@@ -24,7 +25,7 @@ class SqliteStore extends session.Store {
     };
     this.timer = setInterval(() => {
       const now = Date.now();
-      this.q.prune.run(now);
+      try { this.q.prune.run(now); } catch (e) { console.error('Session prune failed:', e.message); }
       for (const [k, e] of this.stored) if (e <= now) this.stored.delete(k);
     }, 60 * 60 * 1000);
     this.timer.unref();
@@ -50,12 +51,16 @@ class SqliteStore extends session.Store {
       cb && cb(null);
     } catch (e) { cb && cb(e); }
   }
+  /* Best effort: it runs as the answer is sent, so a failure (a full or read-only disk) can't be reported to anyone – passing it on
+     made Express answer a second time. Logged at most once a minute; the session simply isn't extended. */
   touch(sid, sess, cb) {
     try {
       const k = key(sid), e = this.expiry(sess), was = this.stored.get(k);
       if (!(was !== undefined && Math.abs(e - was) < TOUCH)) { this.q.touch.run(e, k); this.stored.set(k, e); }
-      cb && cb(null);
-    } catch (e) { cb && cb(e); }
+    } catch (e) {
+      if (Date.now() - this.touchLogged >= 60000) { this.touchLogged = Date.now(); console.error('Session touch failed (not extended):', e.message); }
+    }
+    cb && cb(null);
   }
   forget(k) { this.q.destroy.run(k); this.stored.delete(k); }
   destroy(sid, cb) {

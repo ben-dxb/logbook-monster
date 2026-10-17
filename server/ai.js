@@ -15,10 +15,14 @@ const TYPES_IN = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
 /* Each kind of AI task can use its own OpenRouter model; one left blank uses the default model.
    max: the output cap (tokens) sent when the caller gives none; wait: how long to wait for the reply (ms). */
 const MIN = 60000;
+/* A file read (file: true) waits 3 minutes for its answer, or 5 when it runs in the background (jobs.js): a long plan reply
+   (12,000 tokens at 40–60 a second) can take 200–300 s, and the request isn't streamed, so nothing arrives before the end.
+   Every other task has to get its answer's first byte within FIRST_BYTE as well as the whole of it within wait. */
+const FILE_WAIT = 3 * MIN, BG_WAIT = 5 * MIN, FIRST_BYTE = 45000;
 const TASKS = {
-  plan: { name: 'Meal plan import', hint: 'Reads a coach’s PDF or photo – needs a model that reads PDFs', max: 12000, wait: 3 * MIN },
-  workout: { name: 'Workout plan import', hint: 'Reads a PDF or photo of a training plan – needs a model that reads PDFs', max: 8000, wait: 3 * MIN },
-  supps: { name: 'Supplement regime import', hint: 'Reads a PDF or photo of a supplement regime – needs a model that reads PDFs', max: 4000, wait: 3 * MIN },
+  plan: { name: 'Meal plan import', hint: 'Reads a coach’s PDF or photo – needs a model that reads PDFs', max: 12000, wait: FILE_WAIT, file: true },
+  workout: { name: 'Workout plan import', hint: 'Reads a PDF or photo of a training plan – needs a model that reads PDFs', max: 8000, wait: FILE_WAIT, file: true },
+  supps: { name: 'Supplement regime import', hint: 'Reads a PDF or photo of a supplement regime – needs a model that reads PDFs', max: 4000, wait: FILE_WAIT, file: true },
   food: { name: 'Food values', hint: 'Fills in blank calories and macros in the food library (text only)', max: 800, wait: MIN },
   pose: { name: 'Photo poses', hint: 'Tells front / side / back from a progress photo – needs a model that sees images', max: 300, wait: MIN },
   exercise: { name: 'Exercise body parts', hint: 'Tags exercises with the body parts they train (text only)', max: 3000, wait: MIN },
@@ -46,10 +50,10 @@ const q = {
 /* Daily caps on AI calls (Super admin › Options, 0 = no limit), counted per UTC day in ai_usage. Every call goes
    through call(), so every route is covered. Whose call it is comes from the request (scope() below). */
 const als = new AsyncLocalStorage();
-function scope(req, res, next) { req.ai = req.ai || { user: req.user, calls: 0 }; als.run(req.ai, next); }
+function scope(req, res, next) { req.ai = req.ai || { user: req.user, calls: 0, res }; als.run(req.ai, next); }
 const appOptions = () => require('./api').appOptions();
 const capped = msg => Object.assign(new Error(msg), { status: 429 });
-function allow(take) {
+function allow() {
   const o = appOptions(), s = als.getStore(), user = s && s.user, day = new Date().toISOString().slice(0, 10);
   if (o.aiDailyAll && q.usedAll.get(day).n >= o.aiDailyAll) {
     audit.once(null, 'ai.cap', { cap: 'app' }, user ? user.id : null);
@@ -59,22 +63,36 @@ function allow(take) {
     audit.once(null, 'ai.cap', { cap: 'account' }, user.id);
     throw capped('You’ve used today’s AI allowance – try again tomorrow');
   }
-  if (!take) return o;
-  q.use.run(user ? user.id : 0, day);
-  if (s) s.calls++;
   return o;
+}
+/* Only a call the AI answered counts – against the daily caps (checked up front by allow()) and the route's hourly limit
+   (req.ai.calls): one that timed out, failed or was refused here costs nothing, so an outage doesn't use up anyone's allowance. */
+function used() {
+  const s = als.getStore(), user = s && s.user;
+  try { q.use.run(user ? user.id : 0, new Date().toISOString().slice(0, 10)); } catch (e) { console.error('AI usage count failed:', e.message); }
+  if (s) s.calls++;
 }
 /* Counts older than 30 days are dropped on start and once a day, not on every call. */
 function pruneUsage() { try { q.old.run(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)); } catch (e) { console.error('AI usage prune failed:', e.message); } }
 pruneUsage();
 setInterval(pruneUsage, 24 * 60 * 60 * 1000).unref();
 /* An hourly limit per account on a route that calls the AI. A request refused before any AI call (bad file, bad input,
-   cap reached, a read already running) doesn't count. */
-const limiter = (limit, message, more = {}) => rateLimit({
-  windowMs: 60 * 60 * 1000, limit, standardHeaders: 'draft-7', legacyHeaders: false,
-  keyGenerator: req => 'u' + req.user.id, message: { error: message },
-  skipFailedRequests: true, requestWasSuccessful: (req, res) => res.statusCode < 400 || !!(req.ai && req.ai.calls), ...more,
-});
+   cap reached, a read already running) doesn't count, nor one whose AI calls all failed (timeout, outage, busy). A read in the
+   background has answered 202 before the AI does: req.ai.refund() gives its count back if it fails (jobs.js). */
+function limiter(limit, message, more = {}) {
+  const store = new rateLimit.MemoryStore();
+  const mw = rateLimit({
+    windowMs: 60 * 60 * 1000, limit, standardHeaders: 'draft-7', legacyHeaders: false, store,
+    keyGenerator: req => 'u' + req.user.id, message: { error: message },
+    skipFailedRequests: true, requestWasSuccessful: (req, res) => res.statusCode === 202 || (req.ai && req.ai.calls > 0) || (res.statusCode < 400 && !(req.ai && req.ai.failed)), ...more,
+  });
+  const refund = (req, res, next) => {
+    const key = req.rateLimit && req.rateLimit.key;
+    if (key && req.ai) { let done = false; req.ai.refund = () => { if (!done) { done = true; store.decrement(key).catch(() => {}); } }; }
+    next();
+  };
+  return [mw, refund];
+}
 
 /* The key is kept sealed (keySealed, server/seal.js); stored() hands it back opened as key. Two more slots for rotating it
    (docs/rotation.md): next (saved and tested before it takes over) and old (the one promote() replaced, kept OVERLAP for
@@ -132,9 +150,11 @@ function promote() {
   setActive(s, s.next, s.nextId);
   delete s.next; delete s.nextId;
   q.put.run(sealed(s));
+  breaker.reset('key');
   return status();
 }
-/* One real, free call with a slot's key: OpenRouter's GET /key answers 200 for a live key, 401 for a revoked one. */
+/* One real, free call with a slot's key: OpenRouter's GET /key answers 200 for a live key, 401 for a revoked one. Not through
+   call(), so it never feeds the breaker (a revoked old key's 401 is expected) and needs no seat. */
 async function verify(slot) {
   const s = stored(), key = slot === 'active' ? current().key : s[slot];
   if (!key) throw Object.assign(new Error(slot === 'old' ? 'There’s no old key any more – it was dropped an hour after the promote' : `There’s no ${slot} key`), { status: 404 });
@@ -153,7 +173,7 @@ function save(body) {
   const s = stored();
   if (body.key !== undefined) {
     const key = keyOf(body.key);
-    if (key) { if (key !== s.key) setActive(s, key); }
+    if (key) { if (key !== s.key) { setActive(s, key); breaker.reset('key'); } }   /* a new key gets a fresh chance (an open breaker may be the old key refused) */
     else { for (const k of ['key', 'keyId', 'old', 'oldId', 'oldUntil']) delete s[k]; creds.forget('OPENROUTER'); }
   }
   if (body.model !== undefined) {
@@ -303,7 +323,7 @@ function check(buf, type) {
   if (!TYPES_IN.includes(type)) throw Object.assign(new Error('Upload a PDF or a PNG, JPEG or WebP image'), { status: 400 });
   if (!buf || !buf.length) throw Object.assign(new Error('The file is empty'), { status: 400 });
   if (!MAGIC[type](buf)) throw Object.assign(new Error('That file isn’t a readable PDF or PNG, JPEG or WebP image'), { status: 400 });
-  allow(false);
+  allow();
 }
 
 /* Instructions plus text only (no file). */
@@ -312,11 +332,132 @@ function askText(system, text, opts = {}) {
   return call(system, String(text), opts.maxTokens, opts.timeout, opts.task);
 }
 
+/* Keeping a slow or failing AI service from tying up the server (numbers in LIMITS):
+   - seats: at most 3 calls at once for one account and 16 in the whole app; a call waits up to 10 s for one, then is turned
+     away (503, not counted);
+   - breaker: after 5 failures (timeout, connection, 5xx) within a minute, or half or more of the last 20 calls, it opens and
+     every call fails at once (503 + Retry-After) for 30 s, doubling to 5 minutes while the one test call let through after
+     it (half-open) fails too; a 429 opens it at once for its Retry-After (2 minutes at most), a refused key or no credit
+     (401/402) for 10 minutes – a new key saved on the Admin page closes it. Opening and closing go to the security log. */
+const LIMITS = {
+  perUser: 3, all: 16, queueWait: 10000,
+  fails: 5, failWindow: 60000, recent: 20, openFirst: 30000, openMax: 5 * MIN, rateMax: 2 * MIN, authOpen: 10 * MIN,
+  firstByte: FIRST_BYTE,
+  maxReply: 2 * 1024 * 1024,   /* far above the biggest answer max_tokens allows (12,000 tokens ≈ 50 KB) */
+};
+const busyErr = () => Object.assign(new Error('The AI is busy – try again in a minute'), { status: 503 });
+
+const seats = {
+  all: 0, users: new Map(), queue: [],
+  fits(uid) { return this.all < LIMITS.all && (this.users.get(uid) || 0) < LIMITS.perUser; },
+  take(uid) { this.all++; this.users.set(uid, (this.users.get(uid) || 0) + 1); },
+  give(uid) {
+    this.all--;
+    const n = this.users.get(uid) - 1;
+    if (n > 0) this.users.set(uid, n); else this.users.delete(uid);
+    for (let i = 0; i < this.queue.length && this.all < LIMITS.all; i++) {
+      const w = this.queue[i];
+      if (!this.fits(w.uid)) continue;
+      this.queue.splice(i--, 1); clearTimeout(w.timer); this.take(w.uid); w.go();
+    }
+  },
+  /* resolves with the function that gives the slot back */
+  async get(uid) {
+    if (!this.fits(uid)) {
+      await new Promise((go, no) => {
+        const w = { uid, go, timer: setTimeout(() => { this.queue.splice(this.queue.indexOf(w), 1); no(busyErr()); }, LIMITS.queueWait) };
+        this.queue.push(w);
+      });
+    } else this.take(uid);
+    let given = false;
+    return () => { if (!given) { given = true; this.give(uid); } };
+  },
+};
+
+const breaker = {
+  state: 'closed', until: 0, wait: LIMITS.openFirst, why: '', probing: false, fails: [], recent: [],
+  /* throws while open; half-open lets one call through (probe: true) */
+  check() {
+    if (this.state === 'closed') return false;
+    const left = this.until - Date.now();
+    if (left > 0 || this.probing) throw this.refusal(Math.max(1, Math.ceil(left / 1000)));
+    return true;
+  },
+  refusal(secs) {
+    const msg = this.why === 'auth' ? this.authMsg : 'The AI service isn’t answering right now – try again in a few minutes';
+    const s = als.getStore();
+    if (s && s.res && typeof s.res.set === 'function' && !s.res.headersSent) s.res.set('Retry-After', String(secs));
+    return Object.assign(new Error(msg), { status: 503, retryAfter: secs });
+  },
+  open(why, ms, detail) {
+    const was = this.state;
+    this.state = 'open'; this.why = why; this.until = Date.now() + ms; this.probing = false; this.fails = []; this.recent = [];
+    if (was === 'closed') {
+      console.error(`AI breaker open for ${Math.round(ms / 1000)} s: ${detail}`);
+      audit.once(null, 'ai.breaker', { id: 'open', why }, null);
+    }
+  },
+  /* outcome of one call: 'ok', 'fail' (timeout, connection, 5xx), 'rate' (429), 'auth' (401/402) or 'other' (not the service's fault) */
+  record(outcome, probe, { retryAfter, msg, detail } = {}) {
+    const now = Date.now();
+    if (probe) this.probing = false;
+    if (outcome === 'ok') { if (this.state !== 'closed' && probe) this.reset('answered'); else this.note(true); return; }
+    if (outcome === 'other') { if (probe) this.reset('answered'); return; }
+    if (outcome === 'auth') { this.authMsg = msg; return this.open('auth', LIMITS.authOpen, detail); }
+    if (outcome === 'rate') return this.open('rate', Math.min(retryAfter > 0 ? retryAfter * 1000 : LIMITS.openFirst, LIMITS.rateMax), detail);
+    if (probe) { this.wait = Math.min(this.wait * 2, LIMITS.openMax); return this.open('fail', this.wait, detail); }
+    if (this.state !== 'closed') return;   /* a call from before it opened */
+    this.fails = this.fails.filter(t => now - t < LIMITS.failWindow).concat(now);
+    this.note(false);
+    const bad = this.recent.filter(x => !x).length;
+    if (this.fails.length >= LIMITS.fails || (this.recent.length >= LIMITS.recent && bad * 2 >= LIMITS.recent)) { this.wait = LIMITS.openFirst; this.open('fail', this.wait, detail); }
+  },
+  note(ok) { this.recent.push(ok); if (this.recent.length > LIMITS.recent) this.recent.shift(); },
+  reset(why) {
+    const was = this.state;
+    Object.assign(this, { state: 'closed', until: 0, wait: LIMITS.openFirst, why: '', probing: false, fails: [], recent: [] });
+    if (was !== 'closed') { console.log(`AI breaker closed (${why})`); audit.once(null, 'ai.breaker', { id: 'close', why }, null); }
+  },
+};
+
+/* The reply's body, read with a cap; a body that stops early is "cut off" (not "empty") */
+async function body(r) {
+  if (+r.headers.get('content-length') > LIMITS.maxReply) { r.body && r.body.cancel().catch(() => {}); throw Object.assign(new Error('too large'), { big: true }); }
+  const chunks = [];
+  let n = 0;
+  if (r.body) {
+    for await (const c of r.body) {
+      n += c.length;
+      if (n > LIMITS.maxReply) throw Object.assign(new Error('too large'), { big: true });
+      chunks.push(c);
+    }
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 async function call(system, content, maxTokens, timeout, task) {
-  const c = current(task), t = TASKS[task] || {}, file = typeof content !== 'string';   /* a file read, or a text task (food fill, summary…) */
-  const o = allow(true);
-  let r, j;
-  const signal = AbortSignal.timeout(timeout || t.wait || 3 * MIN);
+  const c = current(task), t = TASKS[task] || {}, s = als.getStore();
+  const o = allow();
+  breaker.check();   /* fail fast before queueing */
+  const release = await seats.get(s && s.user ? s.user.id : 0);
+  try { return await send(c, t, o, system, content, maxTokens, timeout || (t.file ? (s && s.bg ? BG_WAIT : FILE_WAIT) : t.wait) || 3 * MIN, task); }
+  finally { release(); }
+}
+
+async function send(c, t, o, system, content, maxTokens, wait, task) {
+  const s = als.getStore(), probe = breaker.check();   /* again: it may have opened while this call waited for a slot */
+  if (probe) breaker.probing = true;
+  const fail = (outcome, msg, status, more = {}) => {
+    breaker.record(outcome, probe, { ...more, msg, detail: more.detail || msg });
+    if (s) s.failed = true;
+    return Object.assign(new Error(msg), { status });
+  };
+  const slow = t.file ? 'The AI took too long – try again or use a smaller file' : 'The AI took too long – try again in a minute';
+  const ctl = new AbortController(), total = AbortSignal.timeout(wait);
+  const signal = AbortSignal.any([ctl.signal, total]);
+  /* not a file read: the first byte must come within FIRST_BYTE (headers) */
+  const first = !t.file && wait > LIMITS.firstByte ? setTimeout(() => ctl.abort(Object.assign(new Error('first byte'), { name: 'TimeoutError' })), LIMITS.firstByte) : null;
+  let r, raw;
   try {
     r = await fetch(`${BASE}/chat/completions`, {
       method: 'POST',
@@ -328,21 +469,37 @@ async function call(system, content, maxTokens, timeout, task) {
         messages: [{ role: 'system', content: system }, { role: 'user', content }],
       }),
     });
-    j = await r.json().catch(() => ({}));
+    clearTimeout(first);
+    raw = await body(r);
     if (signal.aborted) throw signal.reason;   /* the time ran out while the reply was coming in */
   } catch (e) {
-    if (e.name === 'TimeoutError') console.error(`AI request timed out (${c.model}, ${task || 'no task'})`);
-    throw Object.assign(new Error(e.name === 'TimeoutError' ? (file ? 'The AI took too long – try again or use a smaller file' : 'The AI took too long – try again in a minute') : 'Couldn’t reach OpenRouter'), { status: 502 });
+    clearTimeout(first);
+    if (r && r.body) r.body.cancel().catch(() => {});
+    const timedOut = signal.aborted && (signal.reason || {}).name === 'TimeoutError';
+    if (timedOut) console.error(`AI request timed out (${c.model}, ${task || 'no task'})`);
+    if (e.big) { console.error(`AI reply over ${LIMITS.maxReply} bytes (${c.model}, ${task || 'no task'})`); throw fail('other', 'The AI reply was too large', 502); }
+    if (timedOut) throw fail(t.file ? 'other' : 'fail', slow, 502);   /* a long file read running out of time isn't an outage */
+    throw fail('fail', r ? 'The AI reply was cut off – try again' : 'Couldn’t reach OpenRouter', 502, { detail: `${r ? 'reply cut off' : 'no connection'}: ${e.message}` });
   }
-  if (!r.ok || j.error) {
+  let j;
+  try { j = JSON.parse(raw); } catch { j = null; }
+  if (!r.ok || !j || j.error) {
+    if (r.ok && !j) throw fail(raw.trim() ? 'fail' : 'other', raw.trim() ? 'The AI reply was cut off – try again' : 'The AI sent back an empty reply – try again in a minute', 502);
+    j = j || {};
     /* a plain sentence for whoever asked (often not the super admin); the provider's own words go to the log */
     const msg = (j.error && j.error.message) || `HTTP ${r.status}`, code = (j.error && +j.error.code) || r.status;
     console.error(`AI request failed (${c.model}, ${code}): ${String(msg).slice(0, 300)}`);
-    throw Object.assign(new Error(code === 401 || code === 403 ? 'The AI service didn’t accept the app’s key – ask the person who runs this app to check it'
-      : code === 402 ? 'The AI service account has run out of credit – ask the person who runs this app to top it up'
-      : code === 429 ? 'The AI service is busy – try again in a minute'
-      : 'The AI service couldn’t answer just now – try again later'), { status: 502 });
+    const detail = `HTTP ${code}`;
+    if (code === 401 || code === 402) {
+      throw fail('auth', code === 401 ? 'The AI service didn’t accept the app’s key – ask the person who runs this app to check it'
+        : 'The AI service account has run out of credit – ask the person who runs this app to top it up', 502, { detail });
+    }
+    if (code === 403) throw fail('other', 'The AI service didn’t accept the app’s key – ask the person who runs this app to check it', 502);
+    if (code === 429) throw fail('rate', 'The AI service is busy – try again in a minute', 502, { retryAfter: +r.headers.get('retry-after') || 0, detail });
+    throw fail(code >= 500 || code === 408 ? 'fail' : 'other', 'The AI service couldn’t answer just now – try again later', 502, { detail });
   }
+  breaker.record('ok', probe);
+  used();
   const choice = (j.choices && j.choices[0]) || {};
   const text = choice.message && choice.message.content;
   const parts = Array.isArray(text) ? text.map(x => x.text || '').join('') : text;
@@ -350,7 +507,7 @@ async function call(system, content, maxTokens, timeout, task) {
   try { return { reply: parseReply(parts), model }; }
   catch (e) {
     console.error(`AI reply unusable (${model}, finish_reason ${choice.finish_reason}, ${String(parts || '').length} chars): ${e.message}`);
-    if (choice.finish_reason === 'length') throw unusable(`The AI reply was longer than the app allows and got cut off – ${file ? 'try a shorter file' : 'try again'}`);
+    if (choice.finish_reason === 'length') throw unusable(`The AI reply was longer than the app allows and got cut off – ${t.file ? 'try a shorter file' : 'try again'}`);
     if (!String(parts || '').trim()) throw unusable('The AI sent back an empty reply – try again in a minute');
     throw e;
   }
@@ -362,4 +519,4 @@ async function importPlan(buf, type, user, date) {
   return { ...tidy(reply, foods), model };
 }
 
-module.exports = { status, save, saveNext, promote, verify, slots, importPlan, ask, askText, check, scope, limiter, TYPES_IN };
+module.exports = { status, save, saveNext, promote, verify, slots, importPlan, ask, askText, check, scope, limiter, TYPES_IN, breaker, seats, LIMITS };
