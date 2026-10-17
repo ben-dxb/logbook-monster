@@ -64,11 +64,14 @@ async function api2(method,url,body,ver,again){
 function recheck(){
   const d=$('#recheck');if(d.open)return Promise.resolve(false);
   return new Promise(res=>{
-    $('#rc-in').value='';$('#rc-msg').textContent='';
-    const done=v=>{d.onclose=null;if(d.open)d.close();res(v);};
-    $('#rc-form').onsubmit=async e=>{e.preventDefault();const v=$('#rc-in').value,c=v.replace(/\s/g,'');
-      try{await api('POST','/api/recheck',/^\d{6}$/.test(c)?{code:c}:{password:v},undefined,true);done(true);}
-      catch(err){$('#rc-msg').textContent=err.message;}};
+    const back=document.activeElement;
+    $('#rc-in').value='';$('#rc-msg').textContent='';clearFieldErrors($('#rc-form'));
+    const done=v=>{d.onclose=null;if(d.open)d.close();if(back&&back.isConnected)try{back.focus();}catch{}res(v);};
+    $('#rc-form').onsubmit=e=>{e.preventDefault();const v=$('#rc-in').value,c=v.replace(/\s/g,'');
+      if(!v)return fieldError($('#rc-in'),'Enter your password or a code');
+      once(e.target,async()=>{
+        try{await api('POST','/api/recheck',/^\d{6}$/.test(c)?{code:c}:{password:v},undefined,true);done(true);}
+        catch(err){fieldError($('#rc-in'),endStop(err.message));}},'Checking…');};
     $('#rc-cancel').onclick=()=>done(false);d.onclose=()=>done(false);
     d.showModal();$('#rc-in').focus();
   });
@@ -218,7 +221,7 @@ async function saveNow(){                    /* log a plan you haven't changed *
 }
 async function unlogDay(){
   const date=S.cur;
-  if(!confirm(`Remove ${fmtLong(date)} from your history? This can’t be undone.`))return;
+  if(!await ask(`Remove ${fmtLong(date)} from your history? This can’t be undone.`,{yes:'Remove from history',no:'Keep it',danger:true}))return;
   try{await api('DELETE','/api/days/'+date);}catch(e){alert(e.message);return;}
   LOGGED.delete(date);delete SUMS[date];pending.delete(date);delete VER[date];CONFLICT.delete(date);
   S.days[date]=freshOn(date);SAVED.days[date]=JSON.stringify(S.days[date]);
@@ -252,6 +255,8 @@ function numNote(text){let n=$('#numnote');
   if(!n){n=document.createElement('p');n.id='numnote';n.className='numnote';n.setAttribute('role','alert');document.body.appendChild(n);}
   n.textContent=text;n.hidden=false;clearTimeout(numTimer);numTimer=setTimeout(()=>{n.hidden=true;},4000);}
 function numRefuse(el){const why=numWhy(el);if(!why)return false;
+  if(el.dataset.keep!=null&&!el.validity.badInput){   /* a box marked data-keep keeps what you typed and says why under it, until you fix it */
+    fieldError(el,why+(el.dataset.unit?' '+el.dataset.unit:''),{focus:false,check:x=>numWhy(x)?numWhy(x)+(x.dataset.unit?' '+x.dataset.unit:''):''});return true;}
   const was=NUM_WAS.has(el)?NUM_WAS.get(el):el.defaultValue;el.value=was;
   numNote(`${why} – ${was===''?'left it empty':'kept '+was}.`);
   if(NUM_LIVE.has(el)){NUM_LIVE.delete(el);el.dispatchEvent(new Event('input',{bubbles:true}));}   /* pages that follow each keystroke go back too */
@@ -272,15 +277,17 @@ document.addEventListener('beforeinput',e=>{const el=e.target;if(!numBox(el)||!/
   const t=e.data!=null?e.data:e.dataTransfer?e.dataTransfer.getData('text/plain'):'';
   if(!NUM_CH.test(String(t).trim()))numBlock(e,el);},true);
 
-/* One tap, one save: while a button's (or form's) request runs, more clicks on it are ignored and its buttons are disabled; for a
-   moment after, a second click still counts as the same tap (a double-click adds once). */
+/* One tap, one save: while a button's (or form's) request runs, more clicks on it are ignored and its buttons are disabled (and
+   aria-busy); for a moment after, a second click still counts as the same tap (a double-click adds once). With busy ('Saving…'),
+   the button – a form's submit button – says what's happening meanwhile. */
 const ONCE=new WeakSet();
-async function once(el,fn){
+async function once(el,fn,busy){
   if(ONCE.has(el))return;ONCE.add(el);
   const bs=(el.tagName==='FORM'?[...el.querySelectorAll('button')]:[el]).filter(b=>!b.disabled);
-  bs.forEach(b=>{b.disabled=true;});el.setAttribute('aria-busy','true');
+  const main=busy?(el.tagName==='FORM'?el.querySelector('button[type=submit],button:not([type])'):el):null;
+  const undo=bs.map(b=>busyOn(b,b===main?busy:''));el.setAttribute('aria-busy','true');
   try{return await fn();}
-  finally{bs.forEach(b=>{b.disabled=false;});el.removeAttribute('aria-busy');setTimeout(()=>ONCE.delete(el),400);}
+  finally{undo.forEach(u=>u());el.removeAttribute('aria-busy');setTimeout(()=>ONCE.delete(el),400);}
 }
 
 /* A change shown before the server has it that then failed: said next to its control (role=status), with Retry when it can
@@ -324,11 +331,11 @@ function itemRow(D,mi,box,ii,i){
   const list=box==='p'?PROTEIN_SWAPS:box==='x'?FAT_SWAPS:CARB_SWAPS;
   const opts=(list.includes(i.f)?list:[i.f,...list]).map(f=>`<option value="${esc(f)}"${f===i.f?' selected':''}>${esc(FOODS[f].n)}</option>`).join('');
   return `<div class="row${i.lock?' locked':''}${i.g===0?' zero':''}">
-    <label class="lock" title="Lock this amount"><input type="checkbox" id="l-${id}" data-act="lock" data-m="${mi}" data-b="${box}" data-i="${ii}"${i.lock?' checked':''}${ro}><span>${i.lock?'Locked':'Lock'}</span></label>
+    <label class="lock" title="Lock this amount"><input type="checkbox" id="l-${id}" data-act="lock" data-m="${mi}" data-b="${box}" data-i="${ii}"${i.lock?' checked':''}${ro}><span>${i.lock?'Locked':'Lock'}<span class="vh"> ${esc(F.n)}</span></span></label>
     <select id="s-${id}" data-act="swap" data-m="${mi}" data-b="${box}" data-i="${ii}" aria-label="Food"${ro}>${opts}</select>
-    <span class="amt"><input id="g-${id}" type="number" inputmode="decimal" min="0" step="${esc(F.step)}" value="${r0(i.g)}" data-act="amt" data-m="${mi}" data-b="${box}" data-i="${ii}" aria-label="Amount"${ro}><em>${esc(u)}</em></span>
+    <span class="amt"><input id="g-${id}" type="number" inputmode="decimal" min="0" step="${esc(F.step)}" value="${r0(i.g)}" data-act="amt" data-m="${mi}" data-b="${box}" data-i="${ii}" aria-label="Amount of ${esc(F.n)} in ${esc(u)}"${ro}><em>${esc(u)}</em></span>
     ${deltaTag(D,mi,box,i)}
-    ${ro?'<span class="x"></span>':`<button class="x" data-act="del" data-m="${mi}" data-b="${box}" data-i="${ii}" aria-label="Remove">×</button>`}
+    ${ro?'<span class="x"></span>':`<button class="x" data-act="del" data-m="${mi}" data-b="${box}" data-i="${ii}" aria-label="Remove ${esc(F.n)}">×</button>`}
   </div>`;
 }
 /* Delivered meat (foods with a daily order) comes in sauce: weigh the pack, get the amount to put on your plate */
@@ -367,7 +374,7 @@ function chip(m,val,tgt){
 function renderWeek(){
   const mon=addDays(S.cur,-wd()), t=todayStr();
   $('#tabs').innerHTML=DAYS.map((n,i)=>{const d=addDays(mon,i);
-    return `<button class="tab${d===S.cur?' on':''}${d===t?' today':''}${LOGGED.has(d)?' logged':''}" data-act="day" data-d="${d}" aria-pressed="${d===S.cur}" aria-label="${esc(fmtLong(d))}${LOGGED.has(d)?', saved':''}"><small>${n}</small><b>${parse(d).getDate()}</b><small class="tn">${esc(tplLabel(d))}</small></button>`;}).join('');
+    return `<button class="tab${d===S.cur?' on':''}${d===t?' today':''}${LOGGED.has(d)?' logged':''}" data-act="day" data-d="${d}" aria-pressed="${d===S.cur}"><small>${n}</small><b>${parse(d).getDate()}</b><small class="tn">${esc(tplLabel(d))}</small><span class="vh">, ${esc(fmtLong(d))}${LOGGED.has(d)?', saved':''}</span></button>`;}).join('');
 }
 function renderStatus(){
   if(view!=='day')return;
@@ -383,7 +390,8 @@ function renderStatus(){
 }
 function renderWeightInline(){
   const el=$('#wt');const kg=WEIGHTS[S.cur];
-  if(document.activeElement!==el) el.value=kg!=null?kg:'';
+  if(el.dataset.d!==S.cur){clearFieldError(el);el.dataset.d=S.cur;}   /* a message about another day's weight goes */
+  if(document.activeElement!==el&&el.getAttribute('aria-invalid')!=='true') el.value=kg!=null?kg:'';
   const prev=Object.keys(WEIGHTS).filter(d=>d<S.cur).sort().pop();
   $('#wtdelta').textContent=kg!=null&&prev?`${kg-WEIGHTS[prev]>=0?'+':'−'}${Math.abs(kg-WEIGHTS[prev]).toFixed(1)} kg since ${fmtShort(prev)}`:'';
 }
@@ -421,15 +429,15 @@ function render(){
       <p><a class="btn" href="#account">Set up my meal plan</a></p></section>`:'')+D.meals.map((m,mi)=>{
     const mt=sum([...m.p,...m.c,...(m.x||[])].map(i=>macOf(i.f,i.g)));
     const all=[...m.p,...m.c,...(m.x||[])];const saved=!m.dirty&&all.length&&all.every(i=>i.lock);
-    const eat=m.eaten?`<span class="chip ok">✓ Eaten</span><button class="ghost" data-act="uneat" data-m="${mi}">Undo eaten</button>`
-      :`${saved?'<span class="chip ok">Locked</span>':''}<button class="ghost" data-act="eat" data-m="${mi}">Mark eaten</button>`;
+    const eat=m.eaten?`<span class="chip ok">✓ Eaten</span><button class="ghost" data-act="uneat" data-m="${mi}">Undo eaten<span class="vh"> – meal ${esc(m.id)}</span></button>`
+      :`${saved?'<span class="chip ok">Locked</span>':''}<button class="ghost" data-act="eat" data-m="${mi}">Mark eaten<span class="vh"> – meal ${esc(m.id)}</span></button>`;
     return `<section class="meal${m.dirty?' dirty':''}${m.eaten?' eaten':''}"><header><span class="mn">Meal ${esc(m.id)}</span><h2>${esc(m.name)}</h2>${macLine(mt)}${eat}</header>
       ${m.dirty?`<div class="savebar" role="status"><span>Changes not saved – the rest of the day won't move until you save.</span><label class="tog" title="The meal's other unlocked foods move to keep its calories – handy after changing protein or fats"><input type="checkbox" id="mc-${S.cur}-${mi}" data-act="mcalc" data-m="${mi}"${m.calc?' checked':''}> Balance this meal as I edit</label><span class="sb"><button class="ghost" data-act="undo" data-m="${mi}">Undo changes</button><button class="btn" data-act="save" data-m="${mi}">Save meal</button></span></div>`:''}
       ${m.note?`<p class="mnote">${esc(m.note)}</p>`:''}
       <div class="boxes">${BOXES.map(([b,l])=>boxHtml(D,mi,b,l)).join('')}</div></section>`;
   }).join('');
   const ot=sum(D.off.map(o=>({k:+o.k||0,p:+o.p||0,c:+o.c||0,f:+o.f||0})));
-  $('#offlist').innerHTML=D.off.map((o,oi)=>`<div class="orow"><span>${esc(o.n||'Off-plan food')}</span>${o.snack||o.lib?`<label class="qty"><input id="oq-${S.cur}-${oi}" type="number" inputmode="decimal" min="0" step="${o.lib&&o.u==='each'?'0.5':'1'}" value="${+o.qty||0}" data-act="oqty" data-i="${oi}">${o.lib?esc(libUnit(o.u)):snackVal(o.snack).u==='g'?'g':'×'}</label>`:''}<span class="ml">${r0(+o.k||0)} kcal · P ${r1(+o.p||0)} · C ${r1(+o.c||0)} · F ${r1(+o.f||0)}</span><button class="x" data-act="odel" data-i="${oi}" aria-label="Remove">×</button></div>`).join('')
+  $('#offlist').innerHTML=D.off.map((o,oi)=>`<div class="orow"><span>${esc(o.n||'Off-plan food')}</span>${o.snack||o.lib?`<label class="qty"><input id="oq-${S.cur}-${oi}" type="number" inputmode="decimal" min="0" step="${o.lib&&o.u==='each'?'0.5':'1'}" value="${+o.qty||0}" data-act="oqty" data-i="${oi}">${o.lib?esc(libUnit(o.u)):snackVal(o.snack).u==='g'?'g':'×'}</label>`:''}<span class="ml">${r0(+o.k||0)} kcal · P ${r1(+o.p||0)} · C ${r1(+o.c||0)} · F ${r1(+o.f||0)}</span><button class="x" data-act="odel" data-i="${oi}" aria-label="Remove ${esc(o.n||'Off-plan food')}">×</button></div>`).join('')
     +(D.off.length>1?`<div class="orow tot"><span>Total off plan</span>${macLine(ot)}</div>`:'');
   ['k','p','c','f'].forEach(m=>{$('#t-'+m).value=r0(+tg[m]);});
   /* the batch panel only for a plan (or a day) that has rice pudding in it */
@@ -538,19 +546,23 @@ function renderHistory(){
   $('#mtitle').textContent=fmtMonth(month);
   const first=parse(month), lead=(first.getDay()+6)%7, start=addDays(month,-lead), t=todayStr();
   const m=first.getMonth();
-  let h=DAYS.map(d=>`<div class="dow" role="columnheader">${d}</div>`).join('');
+  /* a real table: a row per week, a header per weekday; each day's button says its visible text first, then the date and status */
+  const LONG=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  let h=`<table class="calt" aria-labelledby="mtitle"><thead><tr>${DAYS.map((d,i)=>`<th scope="col" class="dow"><span aria-hidden="true">${d}</span><span class="vh">${LONG[i]}</span></th>`).join('')}</tr></thead><tbody>`;
   const cells=Math.ceil((lead+new Date(first.getFullYear(),m+1,0).getDate())/7)*7;
   for(let i=0;i<cells;i++){
     const d=addDays(start,i), s=SUMS[d], w=WEIGHTS[d], out=parse(d).getMonth()!==m;
     const st=s?dayStatus(s):null;
-    const label=[fmtLong(d), s?`${r0(s.k)} kcal, ${r0(s.p)}g protein${st.txt?', '+st.txt:''}`:'not logged', w!=null?`weight ${w} kg`:''].filter(Boolean).join(', ');
-    h+=`<button class="cell${out?' out':''}${d===t?' today':''}${s?' logged':''}" data-act="open" data-d="${d}" aria-label="${esc(label)}">
+    const more=[fmtLong(d), s?(st.txt||''):'not logged'].filter(Boolean).join(', ');
+    if(i%7===0)h+='<tr>';
+    h+=`<td><button class="cell${out?' out':''}${d===t?' today':''}${s?' logged':''}" data-act="open" data-d="${d}"${d===t?' aria-current="date"':''}>
       <span class="dn">${parse(d).getDate()}<small>${esc(tplLabel(d))}</small></span>
-      ${s?`<span class="kc"><i class="dot ${st.cls}">${st.sym}</i>${r0(s.k)}</span><span class="pr">P ${r0(s.p)}g</span>`:''}
-      ${w!=null?`<span class="wg">${w} kg</span>`:''}
-    </button>`;
+      ${s?`<span class="kc"><i class="dot ${st.cls}" aria-hidden="true">${st.sym}</i>${r0(s.k)}<span class="vh"> kcal</span></span><span class="pr">P ${r0(s.p)}g</span>`:''}
+      ${w!=null?`<span class="wg">${w} kg</span>`:''}<span class="vh">, ${esc(more)}</span>
+    </button></td>`;
+    if(i%7===6)h+='</tr>';
   }
-  $('#cal').innerHTML=h;
+  $('#cal').innerHTML=h+'</tbody></table>';
   /* month summary */
   const end=addDays(addDays(month,32).slice(0,7)+'-01',-1);
   const ds=Object.values(SUMS).filter(s=>s.date>=month&&s.date<=end);
@@ -577,7 +589,7 @@ function renderBadDates(){
       <button class="ghost" type="button" data-act="baddel" data-d="${esc(d)}">This date doesn’t exist – delete</button></li>`;}).join('')}</ul>`;
 }
 async function delBadDate(d){
-  if(!confirm(`Delete what was saved under ${d}? This can’t be undone.`))return;
+  if(!await ask(`Delete what was saved under ${d}? This can’t be undone.`,{yes:'Delete it',no:'Keep it',danger:true}))return;
   try{if(SUMS[d])await api('DELETE','/api/days/'+d);if(WEIGHTS[d]!=null)await api('DELETE','/api/weights/'+d);}
   catch(e){if(!e.signedOut)alert(e.message);return;}
   delete SUMS[d];delete WEIGHTS[d];LOGGED.delete(d);renderBadDates();
@@ -672,8 +684,9 @@ function saveMeal(mi){const D=day();const m=D.meals[mi];const held=new Set();
 function eatMeal(mi){const D=day();const m=D.meals[mi];if(!m||m.eaten)return;
   if(m.dirty)saveMeal(mi);
   m.eaten=true;render();}
-function uneatMeal(mi){const D=day();const m=D.meals[mi];if(!m||!m.eaten)return;
-  if(!confirm(`Meal ${m.id} – ${m.name} is marked eaten. Undo that and unlock it for changes?`))return;
+async function uneatMeal(mi){const D=day();const m=D.meals[mi];if(!m||!m.eaten)return;
+  if(!await ask(`Meal ${m.id} – ${m.name} is marked eaten. Undo that and unlock it for changes?`,{yes:'Undo eaten',no:'Keep it eaten'}))return;
+  if(S.days[S.cur]!==D||!m.eaten)return;   /* the day changed meanwhile */
   delete m.eaten;render();}
 const anyEaten=D=>D.meals.some(m=>m.eaten);
 function undoMeal(mi){const D=day();const m=D.meals[mi];if(m._snap)Object.assign(m,clone(m._snap));
@@ -709,8 +722,9 @@ document.addEventListener('click',e=>{
   else if(a==='pbasis'){if(S.pBasis!==b.dataset.v){S.pBasis=b.dataset.v;
     if(view==='day'&&S.days[S.cur])act(()=>{});else{pbSync();persist();}}}   /* only the day on screen re-balances now; any other day when it's next changed */
   else if(a==='reset'){if(!resetArmed){resetArmed=true;render();return;}resetArmed=false;
-    if(anyEaten(day())&&!confirm('Some meals are marked eaten. Reset the whole day to the plan anyway? That undoes them.')){render();return;}
-    S.days[S.cur]=freshOn(S.cur,day().type);render();}
+    const D=day(),date=S.cur,reset=()=>{if(S.cur!==date||S.days[date]!==D)return;S.days[date]=freshOn(date,D.type);render();};
+    if(anyEaten(D)){render();ask('Some meals are marked eaten. Reset the whole day to the plan anyway? That undoes them.',{yes:'Reset the day',no:'Keep my day',danger:true}).then(ok=>{if(ok)reset();});return;}
+    reset();}
 });
 /* pack weights: update the portion as you type, without re-rendering under your fingers */
 function setPack(el){const D=day(),f=el.dataset.f;D.packs=D.packs||{};const p=D.packs[f]=D.packs[f]||{};
@@ -734,9 +748,10 @@ document.addEventListener('change',e=>{
       const need=FOODS[i.f][mac]*i.g/100;placeMatched(box,el.value,mac,need,h,i);h.forEach(x=>{x.ed=true;});});}
   else if(a==='dtpl'){const D=day();if(!el.value||el.value===D.type)return;
     if(anyEaten(D)){alert('Some meals are marked eaten – undo them first to switch this day to another template.');render();return;}
-    if(D.meals.some(m=>m.dirty)&&!confirm('This day has unsaved meal changes. Switch template anyway? They’re dropped.')){render();return;}
     /* start the day again from that template; off-plan food and pack weights stay */
-    const N=freshDay(wd(),el.value);N.off=D.off;if(D.packs)N.packs=D.packs;S.days[S.cur]=N;render();}
+    const tpl=el.value,date=S.cur,sw=()=>{if(S.cur!==date||S.days[date]!==D)return;const N=freshDay(wd(),tpl);N.off=D.off;if(D.packs)N.packs=D.packs;S.days[date]=N;render();};
+    if(D.meals.some(m=>m.dirty)){render();ask('This day has unsaved meal changes. Switch template anyway? They’re dropped.',{yes:'Switch and drop them',no:'Keep my changes',danger:true}).then(ok=>{if(ok)sw();});return;}
+    sw();}
   else if(a==='auto'){act(D=>{D.auto=el.checked;});}
   else if(a==='mcalc'){calcMeal(+el.dataset.m,el.checked);}
   else if(el.dataset.add){const mi=+el.dataset.m,box=el.dataset.add,f=el.value;if(!f||!FOODS[f])return;
@@ -753,8 +768,8 @@ document.addEventListener('change',e=>{
       act(()=>{});}
   else if(el.id==='datepick'){if(isDate(el.value))go('day/'+el.value);}
   else if(el.id==='wt'){const v=el.value.trim(),date=S.cur;const kg=v===''?null:+v;
-      if(kg!=null&&!(kg>=20&&kg<=400)){noteBy(el,'Enter a weight between 20 and 400 kg.');renderWeightInline();return;}
-      setWeight(date,kg);renderWeightInline();}
+      if(kg!=null&&!(kg>=20&&kg<=400))return;   /* the number-box check above has kept what you typed and said why, at the box */
+      clearFieldError(el);setWeight(date,kg);renderWeightInline();}
 });
 $('#snackform').addEventListener('submit',e=>{
   e.preventDefault();const id=$('#sn').value,q=+$('#sq').value||0;if(!q)return;
@@ -791,11 +806,15 @@ $('#logout').addEventListener('click',async()=>{
   try{keep.forEach(([k,v])=>localStorage.setItem(k,v));}catch{}
   if(pending.size&&ME)toLogin();else location.href='/login';
 });
-$('#pwform').addEventListener('submit',async e=>{
-  e.preventDefault();const msg=$('#pwmsg');msg.textContent='';
-  try{const r=await api('POST','/auth/password',{current:$('#pw-cur').value,next:$('#pw-new').value,endLinks:!$('#pw-linksf').hidden&&$('#pw-links').checked});
-    msg.textContent='Password updated.'+(r.signedOut?' Signed out everywhere else.':'')+(r.linksOff?` ${r.linksOff} coach link${r.linksOff>1?'s':''} switched off.`:'');$('#pw-cur').value=$('#pw-new').value='';if(r.linksOff)pwLinks();$('#pwcur').hidden=false;$('#pwbox').querySelector('summary').textContent='Change password';}
-  catch(err){msg.textContent=err.message;}
+$('#pwform').addEventListener('submit',e=>{
+  e.preventDefault();const f=e.target,msg=$('#pwmsg'),cur=$('#pw-cur'),nw=$('#pw-new'),hasCur=!pwRow(cur).hidden;msg.textContent='';
+  if(!fieldErrors(f,[[hasCur&&!cur.value&&cur,'Enter your current password'],
+    [nw.value.length<10&&nw,nw.value?'Use at least 10 characters':'Enter a new password',{check:x=>x.value.length<10?'Use at least 10 characters':''}]]))return;
+  once(f,async()=>{
+    try{const r=await api('POST','/auth/password',{current:cur.value,next:nw.value,endLinks:!$('#pw-linksf').hidden&&$('#pw-links').checked});
+      msg.textContent='Password updated.'+(r.signedOut?' Signed out everywhere else.':'')+(r.linksOff?` ${r.linksOff} coach link${r.linksOff>1?'s':''} switched off.`:'');cur.value=nw.value='';if(r.linksOff)pwLinks();pwRow(cur).hidden=false;$('#pwbox').querySelector('summary').textContent='Change password';}
+    catch(err){if(err.signedOut)return;if(!errToField(err,[[/current/i,hasCur&&cur],[/new password|characters|password must|too (short|long|common)|common/i,nw]]))msg.textContent=endStop(err.message);}
+  },'Updating…');
 });
 /* "Also switch off my coach links" (unticked): shown only while there are live links, naming them, so nothing ends unseen */
 async function pwLinks(){
@@ -831,16 +850,19 @@ function tfShow(){$('#acct').open=true;$('#tfbox').open=true;tfLoad();}
 $('#tfbox').addEventListener('toggle',()=>{if($('#tfbox').open&&!tfNew&&!tfCodes)tfLoad();});
 $('#tfbody').addEventListener('click',async e=>{
   const a=e.target.closest('button[data-tf]');if(!a)return;
-  if(a.dataset.tf==='start'){try{tfNew=await api('POST','/api/totp/setup',{});tfRender();$('#tf-code').focus();}catch(err){if(!err.signedOut)tfRender(err.message);}}
+  if(a.dataset.tf==='start'){await once(a,async()=>{try{tfNew=await api('POST','/api/totp/setup',{});tfRender();$('#tf-code').focus();}catch(err){if(!err.signedOut)tfRender(err.message);}},'Setting up…');}
   else if(a.dataset.tf==='done'){tfCodes=null;tfLoad();}
 });
-$('#tfbody').addEventListener('submit',async e=>{
-  e.preventDefault();const f=e.target.dataset.tf;
-  if(f==='on'){try{const r=await api('POST','/api/totp/enable',{code:$('#tf-code').value.replace(/\s/g,''),signOutOthers:$('#tf-out').checked});tfNew=null;tfCodes=r.codes;tfRender(r.signedOut?'Signed out everywhere else.':'');}
-    catch(err){if(!err.signedOut)$('#tfmsg').textContent=err.message;}}
-  else if(f==='off'){const v=$('#tf-offin').value,c=v.replace(/\s/g,'');
-    try{await api('POST','/api/totp/disable',/^\d{6}$/.test(c)||/^[A-Za-z2-7]{5}-?[A-Za-z2-7]{5}$/.test(c)?{code:c}:{password:v});TF=null;await tfLoad();$('#tfmsg').textContent='Two-step sign-in is off.';}
-    catch(err){if(!err.signedOut)$('#tfmsg').textContent=err.message;}}
+$('#tfbody').addEventListener('submit',e=>{
+  e.preventDefault();const form=e.target,f=form.dataset.tf;
+  if(f==='on'){const inp=$('#tf-code'),code=inp.value.replace(/\s/g,'');
+    if(!/^\d{6}$/.test(code))return fieldError(inp,code?'The code is 6 digits':'Enter the 6-digit code');
+    once(form,async()=>{try{const r=await api('POST','/api/totp/enable',{code,signOutOthers:$('#tf-out').checked});tfNew=null;tfCodes=r.codes;tfRender(r.signedOut?'Signed out everywhere else.':'');}
+      catch(err){if(!err.signedOut)fieldError(inp,endStop(err.message));}},'Turning on…');}
+  else if(f==='off'){const inp=$('#tf-offin'),v=inp.value,c=v.replace(/\s/g,'');
+    if(!v)return fieldError(inp,'Enter your password or a code');
+    once(form,async()=>{try{await api('POST','/api/totp/disable',/^\d{6}$/.test(c)||/^[A-Za-z2-7]{5}-?[A-Za-z2-7]{5}$/.test(c)?{code:c}:{password:v});TF=null;await tfLoad();$('#tfmsg').textContent='Two-step sign-in is off.';}
+      catch(err){if(!err.signedOut)fieldError(inp,endStop(err.message));}},'Switching off…');}
 });
 
 /* ---------- start ----------
@@ -850,7 +872,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
   try{
     const me=await api('GET','/api/me');csrf=me.csrf;ME=me.email;UID=me.id;
     $('#who').textContent=me.name||me.email;$('#who').title=me.email;
-    if(!me.hasPassword){$('#pwcur').hidden=true;$('#pwbox').querySelector('summary').textContent='Set a password';}
+    if(!me.hasPassword){pwRow($('#pw-cur')).hidden=true;$('#pwbox').querySelector('summary').textContent='Set a password';}
     if(me.contact){$('#contactlink').href='mailto:'+me.contact;$('#contactlink').hidden=false;}
     isAdmin=!!me.admin;aiOn=!!me.ai;planFiles=me.planFiles!==false;$('#adminlink').hidden=!isAdmin;
     const [settings,sums,weights,defs,lib]=await Promise.all([api('GET','/api/settings'),api('GET','/api/days'),api('GET','/api/weights'),api('GET','/api/defaults'),

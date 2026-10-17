@@ -90,7 +90,7 @@ function sLogPage(){
       <label class="f"><span class="lbl">Unit</span><select id="s-unit">${sUnitOptions(pick?pick.unit:sUnit)}</select></label>
       <label class="tog swide" id="s-savebox"${pick?' hidden':''}><input type="checkbox" id="s-save"> Save to my supplement library</label>
       <p id="s-err" class="aderr swide" role="alert" hidden></p>
-      <div class="factions swide"><button class="btn" type="submit">Add</button></div>
+      <div class="factions swide"><button class="btn" type="submit">Add to log</button></div>
     </form>
     ${quick?`<div class="squick" aria-label="Quick add"><span class="lbl">Quick add (usual amount)</span><div class="factions">${quick}</div></div>`:''}
     <section class="panel" aria-labelledby="s-logh"><h2 id="s-logh" class="lbl">Taken</h2><div id="s-log"><p class="note">Loading…</p></div></section>`;
@@ -148,7 +148,8 @@ async function sSubmit(form){
   const err=$('#s-err'), btn=form.querySelector('button[type=submit]'), s=sById(+sPick);
   const desc=$('#s-desc').value.trim(), amount=$('#s-amt').value, unit=$('#s-unit').value;
   err.hidden=true;
-  if(!s&&!desc){err.textContent='Pick a supplement from the library or describe it.';err.hidden=false;$('#s-desc').focus();return;}
+  if(!fieldErrors(form,[[!s&&!desc&&$('#s-desc'),'Pick a supplement from the library or describe it'],
+    [amount.trim()===''&&$('#s-amt'),'Enter the amount']]))return;
   const save=!s&&$('#s-save').checked;
   btn.disabled=true;
   try{
@@ -166,7 +167,7 @@ async function sSubmit(form){
     await sAdd(s?{date:sDate,supplement:s.id,note:desc,amount,unit}:{date:sDate,name:desc,amount,unit});
     if(!s)sUnit=unit;
     $('#s-desc').value='';if(!s)$('#s-amt').value='';btn.disabled=false;
-  }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message;err.hidden=false;}}
+  }catch(e){btn.disabled=false;if(!e.signedOut&&!errToField(e,[[/^amount|too small/i,$('#s-amt')],[/unit/i,$('#s-unit')],[/describe|too long/i,$('#s-desc')]])){err.textContent=endStop(e.message);err.hidden=false;}}
 }
 
 /* ---------- the library ---------- */
@@ -196,10 +197,10 @@ function sAiPreview(){
       one marked <span class="chip ok">in library</span> has the same name as one of yours and gets this amount, unit and notes.</p>
     ${sAi.items.map((x,i)=>`<div class="sairow${x.on?'':' off'}">
       <label class="sion"><input type="checkbox" data-sai="on" data-i="${i}"${x.on?' checked':''} aria-label="Add ${esc(x.name)}"></label>
-      <label class="f sainame"><span class="lbl">Name ${x.existing?'<span class="chip ok">in library</span>':'<span class="chip info">new</span>'}</span><input data-sai="name" data-i="${i}" maxlength="80" value="${esc(x.name)}"></label>
-      <label class="f"><span class="lbl">Amount</span><input data-sai="amount" data-i="${i}" type="number" inputmode="decimal" min="0" step="any" value="${x.amount==null?'':esc(sNum(x.amount))}"></label>
-      <label class="f"><span class="lbl">Unit</span><select data-sai="unit" data-i="${i}">${sUnitOptions(x.unit)}</select></label>
-      <label class="f sainotes"><span class="lbl">Notes</span><input data-sai="notes" data-i="${i}" maxlength="300" value="${esc(x.notes)}" placeholder="e.g. Morning with food"></label>
+      <label class="f sainame"><span class="lbl">Name<span class="vh">, line ${i+1}</span> ${x.existing?'<span class="chip ok">in library</span>':'<span class="chip info">new</span>'}</span><input data-sai="name" data-i="${i}" maxlength="80" value="${esc(x.name)}"></label>
+      <label class="f"><span class="lbl">Amount<span class="vh"> of ${esc(x.name)}</span></span><input data-sai="amount" data-i="${i}" type="number" inputmode="decimal" min="0" step="any" value="${x.amount==null?'':esc(sNum(x.amount))}"></label>
+      <label class="f"><span class="lbl">Unit<span class="vh"> of ${esc(x.name)}</span></span><select data-sai="unit" data-i="${i}">${sUnitOptions(x.unit)}</select></label>
+      <label class="f sainotes"><span class="lbl">Notes<span class="vh"> for ${esc(x.name)}</span></span><input data-sai="notes" data-i="${i}" maxlength="300" value="${esc(x.notes)}" placeholder="e.g. Morning with food"></label>
     </div>`).join('')}
     ${sAi.notes.length?`<details class="adnotes" open><summary>Left out, or the AI wasn’t sure (${sAi.notes.length})</summary><ul>${sAi.notes.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></details>`:''}
     <div class="gactions">
@@ -226,8 +227,9 @@ J_OPEN.supps=job=>{
 async function sAiAdd(btn){
   const err=$('#s-aierr'), items=sAi.items.filter(x=>x.on).map(({name,amount,unit,notes})=>({name,amount,unit,notes}));
   const day=sAi.log?sAi.day:null;
-  if(day&&!isDate(day)){err.textContent='Pick a day to log them on.';err.hidden=false;return;}
-  btn.disabled=true;err.hidden=true;
+  err.hidden=true;
+  if(day&&!isDate(day))return fieldError($('#s-ailogdate'),'Pick a day from 2000 to a year from now');
+  btn.disabled=true;
   try{
     const r=await api('POST','/api/supps/import',{items,log:day});
     SUPPS=r.supplements;sSort();
@@ -278,16 +280,21 @@ function sEditPage(s){
 async function sSaveLib(form){
   const err=$('#s-lerr'), id=form.dataset.id, btn=form.querySelector('button[type=submit]');
   const body={name:$('#s-name').value,amount:$('#s-lamt').value,unit:$('#s-lunit').value,notes:$('#s-notes').value,public:$('#s-public').checked};
-  btn.disabled=true;err.hidden=true;
+  err.hidden=true;
+  if(!body.name.trim())return fieldError($('#s-name'),'Give the supplement a name');
+  btn.disabled=true;
   try{
     const s=await api(id?'PUT':'POST','/api/supps'+(id?'/'+id:''),body);
     SUPPS=SUPPS.filter(x=>x.id!==s.id);SUPPS.push(s);sSort();
     sMsg=id?`Saved “${s.name}”.`:`Added “${s.name}” to your library.`;go('supps/lib');
-  }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message;err.hidden=false;if(/No such/.test(e.message))sLoad().catch(()=>{});}}
+  }catch(e){btn.disabled=false;if(!e.signedOut){if(/No such/.test(e.message))sLoad().catch(()=>{});
+    if(!errToField(e,[[/name|already have/i,$('#s-name')],[/^amount|too small/i,$('#s-lamt')],[/unit/i,$('#s-lunit')],[/notes/i,$('#s-notes')]])){err.textContent=endStop(e.message);err.hidden=false;}}}
 }
 async function sDeleteLib(id){
   const s=sById(id);if(!s)return;
-  if(!confirm(s.mine?`Delete “${s.name}” from your library? Days you’ve already logged it keep it.`:`Delete “${s.name}”${s.by?' (shared by '+s.by+')':''} from the library for everyone?`))return;
+  if(!await ask(s.mine?`Delete “${s.name}” from your library? Days you’ve already logged it keep it.`:`Delete “${s.name}”${s.by?' (shared by '+s.by+')':''} from the library for everyone?`,
+    {yes:s.mine?'Delete supplement':'Delete for everyone',no:'Keep it',danger:true}))return;
+  if(!sById(id))return;
   try{await api('DELETE','/api/supps/'+id);}catch(e){if(!e.signedOut)alert(e.message);return;}
   SUPPS=SUPPS.filter(x=>x.id!==id);if(sPick===String(id))sPick='';sMsg=`Deleted “${s.name}”.`;
   if(location.hash==='#supps/lib')renderSuppList();else go('supps/lib');
