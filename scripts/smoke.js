@@ -405,6 +405,8 @@ async function trackerP5(browser, w, h) {
   await pg.click('a[data-view=day]'); await pg.waitForSelector('#v-day:not([hidden]) #meals .noplan');
   expect(await pg.locator('#sum .chip').count() === 0 && /no target/.test(await pg.textContent('#sum')), 'no on-target chips while the targets are 0');
   expect(await pg.isHidden('#ft-pack') && await pg.isHidden('#pudpanel'), 'no pack-in-sauce note or pudding panel without them in the plan');
+  /* a snack weighed in grams starts at 20 g, not 1 g */
+  if (await pg.textContent('#su') === 'Grams') expect(await pg.inputValue('#sq') === '20', 'grams snack starts at 20: ' + await pg.inputValue('#sq'));
   expect(!(await pg.evaluate(() => $('.dhelp').open)) && /shrinks to make room/.test(await pg.textContent('#v-day [aria-labelledby=oh] > p')), 'the balancing help is folded away');
   await pg.focus('#datepick');
   expect(await pg.evaluate(() => getComputedStyle($('.pick')).outlineStyle) === 'solid', 'Pick date shows its focus');
@@ -431,6 +433,11 @@ async function trackerP5(browser, w, h) {
   /* a failed AI read is said once, not "The AI couldn’t read …: The AI couldn’t …" */
   const job = await pg.evaluate(() => { JOBS = [{ id: 1, kind: 'plan', status: 'failed', label: 'a.pdf', error: 'The AI couldn’t find a meal plan in that file' }]; jRender(); const t = $('#jobs').textContent; JOBS = []; jRender(); return t; });
   expect(/^Your meal plan \(a\.pdf\) wasn’t read: The AI couldn’t find a meal plan in that file\./.test(job), 'job failure text: ' + job);
+  /* signing out with an unsaved plan asks first (the app's own dialog, before the session goes) – Stay keeps it all */
+  await pg.goto(BASE + '/#account'); await pg.waitForSelector('#v-admin:not([hidden]) [data-ad=tadd]'); await pg.click('[data-ad=tadd]');
+  await pg.click('#acct>summary'); await pg.click('#logout');
+  expect(/Sign out without saving/.test(await answer(pg, false)), 'sign-out with an unsaved plan asks');
+  expect(!/login/.test(pg.url()) && await pg.evaluate(() => adDirty()) && (await pg.evaluate(() => fetch('/api/me').then(r => r.status))) === 200, 'Stay keeps the plan and the sign-in');
   expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
   await ctx.close();
 }
