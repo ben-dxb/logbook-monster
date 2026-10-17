@@ -78,17 +78,25 @@ pruneUsage();
 setInterval(pruneUsage, 24 * 60 * 60 * 1000).unref();
 /* An hourly limit per account on a route that calls the AI. A request refused before any AI call (bad file, bad input,
    cap reached, a read already running) doesn't count, nor one whose AI calls all failed (timeout, outage, busy). A read in the
-   background has answered 202 before the AI does: req.ai.refund() gives its count back if it fails (jobs.js). */
+   background has answered 202 before the AI does: req.ai.refund() gives its count back if it fails (jobs.js).
+   The count is given back here, once the answer has gone – not by the library's skipFailedRequests, which also gives it back
+   when the browser drops the connection, while the AI call it started goes on and is answered (and paid for). */
 function limiter(limit, message, more = {}) {
   const store = new rateLimit.MemoryStore();
   const mw = rateLimit({
     windowMs: 60 * 60 * 1000, limit, standardHeaders: 'draft-7', legacyHeaders: false, store,
-    keyGenerator: req => 'u' + req.user.id, message: { error: message },
-    skipFailedRequests: true, requestWasSuccessful: (req, res) => res.statusCode === 202 || (req.ai && req.ai.calls > 0) || (res.statusCode < 400 && !(req.ai && req.ai.failed)), ...more,
+    keyGenerator: req => 'u' + req.user.id, message: { error: message }, ...more,
   });
+  const ok = (req, res) => res.statusCode === 202 || (req.ai && req.ai.calls > 0) || (res.statusCode < 400 && !(req.ai && req.ai.failed));
   const refund = (req, res, next) => {
     const key = req.rateLimit && req.rateLimit.key;
-    if (key && req.ai) { let done = false; req.ai.refund = () => { if (!done) { done = true; store.decrement(key).catch(() => {}); } }; }
+    if (key) {
+      let done = false;
+      const give = () => { if (!done) { done = true; store.decrement(key).catch(() => {}); } };
+      if (req.ai) req.ai.refund = give;
+      /* a connection dropped before the answer keeps its count: the work it started may still reach the AI */
+      res.once('close', () => { if (res.writableEnded && !ok(req, res)) give(); });
+    }
     next();
   };
   return [mw, refund];

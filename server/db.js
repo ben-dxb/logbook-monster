@@ -272,8 +272,12 @@ if (!db.prepare('PRAGMA table_info(photos)').all().some(c => c.name === 'style')
 
 /* Added later: sessions carry their account, so a password change or reset can end the account's other sessions. */
 if (!db.prepare('PRAGMA table_info(sessions)').all().some(c => c.name === 'user_id')) {
-  db.exec('ALTER TABLE sessions ADD COLUMN user_id INTEGER');
-  db.exec("UPDATE sessions SET user_id = json_extract(sess, '$.userId')");
+  db.exec('BEGIN');   /* both or neither: a crash between them would leave older sessions without their account */
+  try {
+    db.exec('ALTER TABLE sessions ADD COLUMN user_id INTEGER');
+    db.exec("UPDATE sessions SET user_id = json_extract(sess, '$.userId')");
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 db.exec('CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id)');
 /* Added later: the store keeps only the SHA-256 of each session id (server/sessionStore.js), so a copy of the database holds
