@@ -311,11 +311,17 @@ $('#ad-planfiles').addEventListener('change',async e=>{
   el.disabled=false;el.checked=planFiles;$('#v-admin').classList.toggle('nofiles',!planFiles);
 });
 /* super admin: private AI providers only, and the daily AI caps (0 = no limit) */
-function aoFill(o){$('#ad-aiprivate').checked=o.aiPrivate!==false;$('#ad-capuser').value=o.aiDailyUser;$('#ad-capall').value=o.aiDailyAll;}
+function aoFill(o){$('#ad-aiprivate').checked=o.aiPrivate!==false;$('#ad-admintotp').checked=!!o.adminTotp;$('#ad-capuser').value=o.aiDailyUser;$('#ad-capall').value=o.aiDailyAll;}
 async function aoLoad(){try{aoFill(await api('GET','/api/admin/options'));}catch(e){}}
 $('#ad-aiprivate').addEventListener('change',async e=>{
   const el=e.target;el.disabled=true;
   try{aoFill(await api('PUT','/api/admin/options',{aiPrivate:el.checked}));}
+  catch(err){if(!err.signedOut)alert(err.message);aoLoad();}
+  el.disabled=false;
+});
+$('#ad-admintotp').addEventListener('change',async e=>{
+  const el=e.target;el.disabled=true;
+  try{aoFill(await api('PUT','/api/admin/options',{adminTotp:el.checked}));}
   catch(err){if(!err.signedOut)alert(err.message);aoLoad();}
   el.disabled=false;
 });
@@ -815,7 +821,9 @@ $('#ad-mailtest').addEventListener('submit',async e=>{
 
 /* ---------- Security log (server/audit.js): the whole log on Super admin › Security log, your own account's on Account admin ---------- */
 const LG_EV={'signin.ok':'Signed in','signin.failed':'Failed sign-in','signin.locked':'Sign-in refused (locked)','signin.alert':'Alert: failed sign-ins',
-  signout:'Signed out','password.changed':'Password changed','google.linked':'Google linked','invite.created':'Invite made','invite.accepted':'Invite accepted',
+  'second.asked':'Password right, code asked for','second.failed':'Wrong sign-in code','second.locked':'Sign-in code refused (locked)',
+  'recovery.used':'Recovery code used','twostep.on':'Two-step sign-in on','twostep.off':'Two-step sign-in off','recheck.ok':'Confirmed it’s you',
+  'recheck.failed':'Failed to confirm it’s you',signout:'Signed out','password.changed':'Password changed','google.linked':'Google linked','invite.created':'Invite made','invite.accepted':'Invite accepted',
   'account.removed':'Account removed','ai.settings':'AI settings changed','email.settings':'Email settings changed','options.changed':'Options changed',
   export:'Data downloaded','day.deleted':'Day deleted','checklist.reset':'Checklist reset','photos.deleted':'Photos deleted','food.removed':'Shared food removed',
   'supp.removed':'Shared supplement removed','coach.created':'Coach link made','coach.off':'Coach link switched off','coach.used':'Coach link opened','ai.cap':'AI daily limit reached'};

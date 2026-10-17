@@ -13,13 +13,23 @@
   const showErr = msg => { $('err').textContent = msg; $('err').hidden = !msg; };
 
   const code = new URLSearchParams(location.search).get('error');
-  if (code) { showErr(ERRORS[code] || 'Sign-in failed.'); history.replaceState(null, '', '/login'); }
+  if (code) { showErr(ERRORS[code] || 'Sign-in failed.'); history.replaceState(null, '', '/login' + location.hash); }
+  if (new URLSearchParams(location.search).has('second')) history.replaceState(null, '', '/login' + location.hash);
+
+  /* the password (or Google) was right and the account has a second step on: ask for a code */
+  const askCode = () => {
+    $('form').hidden = $('google').hidden = $('or').hidden = $('switch').hidden = true;
+    $('second').hidden = false;
+    $('intro').textContent = 'Enter the 6-digit code your authenticator app shows for Logbook Monster.';
+    $('code').focus();
+  };
 
   fetch('/auth/config', { credentials: 'same-origin' }).then(r => r.json()).then(c => {
     if (c.signedIn) { location.replace('/' + location.hash); return; }
     csrf = c.csrf;
     $('google').hidden = $('or').hidden = !c.google;
     $('switch').hidden = !c.registration;
+    if (c.second) askCode();
   }).catch(() => showErr('Can’t reach the server.'));
 
   $('toggle').addEventListener('click', () => {
@@ -46,10 +56,39 @@
         body: JSON.stringify(body),
       });
       const j = await r.json().catch(() => ({}));
+      if (r.ok && j.second) { csrf = j.csrf; askCode(); $('submit').disabled = false; return; }
       if (r.ok) { location.replace('/' + location.hash); return; }
       if (r.status === 403 && /session/i.test(j.error || '')) { location.reload(); return; }
       showErr(j.error || 'Sign-in failed.');
     } catch { showErr('Can’t reach the server.'); }
     $('submit').disabled = false;
+  });
+
+  $('second').addEventListener('submit', async e => {
+    e.preventDefault();
+    showErr('');
+    const v = $('code').value.trim();
+    if (!v) return showErr('Enter the code.');
+    $('codebtn').disabled = true;
+    try {
+      const r = await fetch('/auth/second', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'content-type': 'application/json', 'x-csrf-token': csrf },
+        body: JSON.stringify({ code: v }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) {
+        if (j.recovery) alert('You used a recovery code – it won’t work again. If you’ve lost your authenticator app, switch the second step off and set it up again from the account menu.');
+        location.replace('/' + location.hash); return;
+      }
+      if (j.restart || (r.status === 403 && /session/i.test(j.error || ''))) { location.reload(); return; }
+      showErr(j.error || 'That code didn’t work.');
+      $('code').select();
+    } catch { showErr('Can’t reach the server.'); }
+    $('codebtn').disabled = false;
+  });
+  $('restart').addEventListener('click', async () => {
+    try { await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin', headers: { 'x-csrf-token': csrf } }); } catch {}
+    location.reload();
   });
 })();

@@ -276,6 +276,30 @@ test('each account keeps at most AUDIT_PER_ACCOUNT rows, dropping the oldest', (
   assert.strictEqual(cat[cat.length - 1].event, 'signin.ok');
 });
 
+test('two-step sign-in: on, code asked, wrong / right code, recovery code, re-check, off', async () => {
+  const totp = require('../server/totp');
+  const CAT = idOf('cat@example.com'), ev = () => rows('user_id = ? AND id > ?', CAT, mark).map(r => r.event);
+  const mark = rows().pop().id;
+  const cat = await signIn('cat@example.com');
+  const key = totp.fromBase32((await cat('POST', '/api/totp/setup', {})).body.secret), code = n => totp.totp(key, Date.now() + n * 30000);
+  const on = await cat('POST', '/api/totp/enable', { code: code(-1) });
+  assert.strictEqual(on.status, 200);
+  const half = async () => { const c = client(); await c('GET', '/auth/config'); assert.strictEqual((await c('POST', '/auth/login', { email: 'cat@example.com', password: PASSWORD })).body.second, true); return c; };
+  let c = await half();
+  assert.strictEqual((await c('POST', '/auth/second', { code: '000000' })).status, 401);
+  assert.strictEqual((await c('POST', '/auth/second', { code: code(0) })).status, 200);
+  c = await half();
+  assert.strictEqual((await c('POST', '/auth/second', { code: on.body.codes[0] })).status, 200);
+  await c('GET', '/api/me');
+  assert.strictEqual((await c('POST', '/api/recheck', { password: 'wrong-password-3' })).status, 400);
+  assert.strictEqual((await c('POST', '/api/recheck', { password: PASSWORD })).status, 200);
+  assert.strictEqual((await c('POST', '/api/totp/disable', { password: PASSWORD })).status, 200);
+  assert.deepStrictEqual(ev(), ['signin.ok', 'twostep.on', 'second.asked', 'second.failed', 'signin.ok', 'second.asked', 'recovery.used',
+    'recheck.failed', 'recheck.ok', 'recheck.ok', 'twostep.off']);
+  assert.deepStrictEqual(rows("event = 'signin.ok' AND user_id = ? AND id > ?", CAT, mark).pop().detail, { via: 'second' });
+  secrets.push(on.body.codes[0], totp.base32(key));
+});
+
 test('no row holds a password, key, token, cookie, photo note or full email', () => {
   const dump = JSON.stringify(rows());
   for (const s of [...secrets, coachToken, ...cookies, ...csrfs, 'audit private note'].filter(Boolean)) assert.ok(!dump.includes(s), 'leaked: ' + s.slice(0, 12));

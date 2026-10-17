@@ -8,6 +8,7 @@ const { hashPassword, verifyPassword, dummyVerify, passwordProblem } = require('
 const users = require('./users');
 const mail = require('./mail');
 const audit = require('./audit');
+const twostep = require('./twostep');
 
 const q = {
   byId: db.prepare('SELECT id, email, name, password_hash, google_sub, invited_by FROM users WHERE id = ?'),
@@ -87,6 +88,21 @@ function logIn(req, user) {
   });
 }
 
+/* Half signed in: the password (or Google) was right and the account has a second step on. The session holds only who is
+   asking and since when – no userId, so no /api route and no page treats it as signed in – until POST /auth/second. */
+const HALF = 5 * 60 * 1000;
+function halfIn(req, user) {
+  return new Promise((resolve, reject) => {
+    req.session.regenerate(err => {
+      if (err) return reject(err);
+      req.session.half = { uid: user.id, at: Date.now() };
+      req.session.csrf = randomToken();
+      req.session.save(e => (e ? reject(e) : resolve()));
+    });
+  });
+}
+const halfOf = req => { const h = req.session && req.session.half; return h && Date.now() - h.at < HALF ? h : null; };
+
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: config.authRateLimit,
@@ -139,6 +155,7 @@ router.get('/config', (req, res) => {
     registration: config.allowRegistration || config.allowedEmails.length > 0,
     csrf: csrfToken(req, res),
     signedIn: !!req.session.userId,
+    second: !req.session.userId && !!halfOf(req),
   });
 });
 
@@ -155,9 +172,28 @@ router.post('/login', limiter, csrfProtect, needBody, async (req, res) => {
     return res.status(401).json({ error: 'That email and password don’t match an account.' });
   }
   q.failClear.run(email);
+  if (twostep.isOn(user.id)) {
+    await halfIn(req, user);
+    audit.log(req, 'second.asked', { via: 'password' }, user.id);
+    return res.json({ ok: true, second: true, csrf: req.session.csrf });
+  }
   await logIn(req, user);
   audit.log(req, 'signin.ok', { via: 'password' });
   res.json({ ok: true });
+});
+
+/* The second step: a code from the authenticator app, or a recovery code. */
+router.post('/second', limiter, csrfProtect, needBody, async (req, res) => {
+  const h = halfOf(req);
+  const user = h ? q.byId.get(h.uid) : null;
+  if (!user || !accountAllowed(user)) return res.status(401).json({ error: 'That sign-in took too long. Start again.', restart: true });
+  const r = twostep.attempt(user.id, req.body.code);
+  if (!r.ok) audit.log(req, r.locked ? 'second.locked' : 'second.failed', {}, user.id);
+  if (r.locked) return res.status(429).json({ error: twostep.LOCKED });
+  if (!r.ok) return res.status(401).json({ error: 'That code didn’t work. Use the newest code from your app, or a recovery code.' });
+  await logIn(req, user);
+  audit.log(req, r.kind === 'recovery' ? 'recovery.used' : 'signin.ok', { via: 'second' });
+  res.json({ ok: true, recovery: r.kind === 'recovery' });
 });
 
 router.post('/register', limiter, csrfProtect, needBody, async (req, res) => {
@@ -317,7 +353,10 @@ router.get('/google/callback', limiter, async (req, res) => {
       user = q.byId.get(info.lastInsertRowid);
     }
   }
-  try { await logIn(req, user); } catch { return fail(res, 'google_failed'); }
+  try {
+    if (twostep.isOn(user.id)) { await halfIn(req, user); return res.redirect('/login?second=1'); }
+    await logIn(req, user);
+  } catch { return fail(res, 'google_failed'); }
   audit.log(req, 'signin.ok', { via: 'google' });
   res.redirect('/');
 });

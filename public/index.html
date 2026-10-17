@@ -38,6 +38,9 @@
             <p id="pwmsg" class="sub" role="status"></p>
           </form>
         </details>
+        <details id="tfbox"><summary>Two-step sign-in</summary>
+          <div id="tfbody" class="pwform"></div>
+        </details>
         <button class="btn" id="logout" type="button">Sign out</button>
       </div>
     </details>
@@ -186,6 +189,15 @@
     </nav>
     <div id="t-body" class="gbody"></div>
   </section>
+  <dialog id="recheck" class="recheck" aria-labelledby="rc-h">
+    <form id="rc-form" class="pwform">
+      <h2 id="rc-h">Confirm it’s you</h2>
+      <p class="sub">You signed in more than 15 minutes ago. Enter your password, or a code from your authenticator app, to make this change.</p>
+      <label class="f"><span class="lbl">Password or 6-digit code</span><input id="rc-in" type="password" autocomplete="current-password" required></label>
+      <p id="rc-msg" class="sub" role="alert"></p>
+      <div class="rcbtns"><button class="btn" type="submit">Confirm</button><button class="ghost" type="button" id="rc-cancel">Cancel</button></div>
+    </form>
+  </dialog>
   <dialog id="t-card" class="tcard" aria-labelledby="t-ctitle"><div id="t-cbody" class="tcbody"></div></dialog>
 
   <!-- ===================== ADMIN =====================
@@ -350,6 +362,7 @@
       <p>Switch parts of the app on or off for everyone.</p>
       <label class="tog adoptfiles"><input type="checkbox" id="ad-planfiles"> Plan files <span class="muted">– the CSV / JSON plan upload and download buttons on Account admin</span></label>
       <label class="tog adoptfiles"><input type="checkbox" id="ad-aiprivate"> Private AI only <span class="muted">– OpenRouter sends AI requests only to providers that don’t store or train on them (fewer models may be available)</span></label>
+      <label class="tog adoptfiles"><input type="checkbox" id="ad-admintotp"> Super admins must use a second step <span class="muted">– a super admin without two-step sign-in (account menu) is sent to set it up before any Super admin page works. Set up your own first.</span></label>
       <h3>AI calls a day</h3>
       <form id="ad-capform" class="adcaps">
         <label class="f"><span class="lbl">Per account</span><input id="ad-capuser" type="number" min="0" max="1000000" step="1" inputmode="numeric" required></label>

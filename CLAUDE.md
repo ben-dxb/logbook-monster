@@ -41,7 +41,7 @@
 - `public/app.js` – views (Daily Tracker, History calendar), saving, routing. A day keeps its template (`D.type`; the weekday's unless switched on the Daily Tracker) and its summary the name (`tname`). A meal marked eaten (`m.eaten`) is locked whole – the solver never moves it, its controls
   are disabled – and undoing it asks for confirmation. Shared by every page: a button or form that POSTs/PUTs runs through `once(el, fn)` (no double submits), and a number box the browser can't read ("80e") or outside its min/max is put back with a note before any page listener sees it; the server refuses non-numbers with 400 (`server/num.js`).
 - `public/admin.js` – Account admin (`#account`, anyone: own plan – day templates, meals, week, targets, foods) and Super admin
-  (`#admin`, in tabs: `#admin/ai`, `#admin/people`, `#admin/email`, `#admin/options`; no plan editor) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope,
+  (`#admin`, in tabs: `#admin/ai`, `#admin/people`, `#admin/email`, `#admin/options`, `#admin/log` (Security log); no plan editor) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope,
   `data-adtab` per super admin tab. AI settings (OpenRouter key, default model and a model per task – `TASKS` in `server/ai.js`:
   plan, workout, supps, food, pose, exercise, summary; pass `{ task }` to `ai.ask`/`ai.askText`) are super admin only. App-wide switches (`OPTIONS` in `server/api.js`, stored in `app_config` 'options', sent in `/api/me`;
   `planFiles` shows the CSV / JSON plan upload and download buttons on Account admin; `aiPrivate` sends OpenRouter `provider: {data_collection: 'deny'}`;
@@ -83,6 +83,15 @@
   with `?bg=1` (`jobStart`), the route answers `202 {job}` (`jobs.respond`; without `bg` it still answers with the result) and the server keeps reading, results in `ai_jobs`
   until the person adds or drops what it read (`jobSeen(kind)` → `POST /api/jobs/:id/seen`; a reload before that lists it again). A meal plan read opens as a preview of what it would change (`adAiPend` in `admin.js`): nothing goes into the plan until "Use ticked", and the account's own foods keep their values unless ticked. The app polls `GET /api/jobs` while one runs; a finished one opens by itself if you're still on its page, otherwise a note
   (`#jobs`) and a browser notification say it's ready – and an email if the app isn't open. Each page sets `J_OPEN[kind]` / `J_BUSY[kind]`; `jobs.js` loads right after `app.js`.
+- `server/totp.js` / `server/twostep.js` – optional second sign-in step (TOTP, node:crypto only): `/api/totp` sets it up (key sealed with AES-256-GCM from
+  `SESSION_SECRET`, 10 recovery codes stored hashed) and switches it off; with it on, `/auth/login` (and Google) only half signs in (`session.half`, no `userId`)
+  until `POST /auth/second`. Wrong codes count in `login_failures` under `2fa:<id>`. `twostep.fresh` asks for the password or a code again (`POST /api/recheck`,
+  the app's `recheck()` dialog) before changing the AI key, the email settings or removing an account on a sign-in over 15 minutes old – put it on any new route that
+  sensitive. Option `adminTotp` keeps super admins without it out of `/api/admin/*`. `create-user … --no-2fa` switches it off from the shell.
+- `server/audit.js` – the security log (`audit` table): `audit.log(req, event, detail, userId)` (userId = the account it's about,
+  default the signed-in one; detail small and plain – emails are masked, keys like pass/secret/token dropped), `audit.once` for
+  once-a-day events, `redact(url)` before logging any URL. Read on Super admin › Security log (`#admin/log`, `GET /api/admin/log`)
+  and, for your own account, Account admin (`GET /api/my/log`, `OWN` events). Log before sending the response. 180 days kept.
 - `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by the plan CSV reader in `admin.js` (`parseCsv`, `readNum` – decimal commas and thousands separators, ambiguous `1,025` reported, never guessed) and by tests.
 - Secrets live only in `.env` on the server; never send them to the client or commit them.
 - Strict CSP: no inline scripts or `style=` attributes in HTML.

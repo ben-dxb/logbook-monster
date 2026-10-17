@@ -222,7 +222,7 @@ test('the super admin can switch the CSV / JSON plan files off for everyone', as
   await friend.req('GET', '/auth/config');
   assert.strictEqual((await friend.req('POST', '/auth/login', { email: 'friend@example.com', password: 'longenough2' })).status, 200);
   assert.strictEqual((await friend.req('PUT', '/api/admin/options', { planFiles: false })).status, 403);
-  assert.deepStrictEqual((await admin.req('PUT', '/api/admin/options', { planFiles: false })).body, { planFiles: false, aiPrivate: true, aiDailyUser: 100, aiDailyAll: 1000 });
+  assert.deepStrictEqual((await admin.req('PUT', '/api/admin/options', { planFiles: false })).body, { planFiles: false, aiPrivate: true, aiDailyUser: 100, aiDailyAll: 1000, adminTotp: false });
   assert.strictEqual((await friend.req('GET', '/api/me')).body.planFiles, false);
   assert.strictEqual((await admin.req('PUT', '/api/admin/options', { planFiles: true })).body.planFiles, true);
   assert.strictEqual((await friend.req('GET', '/api/me')).body.planFiles, true);
@@ -523,7 +523,7 @@ test('AI spend: file bytes checked, one read at a time, daily caps, refused requ
   await read(friend);
   assert.ok(!('provider' in aiSeen.at(-1).body));
   assert.deepStrictEqual((await admin.req('PUT', '/api/admin/options', { aiPrivate: true, aiDailyUser: 100, aiDailyAll: 1000 })).body,
-    { planFiles: true, aiPrivate: true, aiDailyUser: 100, aiDailyAll: 1000 });
+    { planFiles: true, aiPrivate: true, aiDailyUser: 100, aiDailyAll: 1000, adminTotp: false });
   assert.strictEqual((await admin.req('PUT', '/api/admin/ai', { key: '' })).body.configured, false);
 });
 

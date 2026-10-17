@@ -13,10 +13,13 @@ const DAYS = 180;
 const PER_ACCOUNT = Math.max(10, +process.env.AUDIT_PER_ACCOUNT || 5000);
 const ALERT_FAILS = Math.max(1, +process.env.AUDIT_ALERT_FAILS || 5);
 const ALERT_WINDOW = 15 * 60 * 1000;
+const FAILS = ['signin.failed', 'signin.locked', 'second.failed', 'second.locked'];
 /* the events a person sees for their own account on Account admin */
-const OWN = ['signin.ok', 'signin.failed', 'signin.locked', 'signout', 'password.changed', 'google.linked', 'invite.accepted',
+const OWN = ['signin.ok', 'signin.failed', 'signin.locked', 'second.asked', 'second.failed', 'second.locked', 'recovery.used',
+  'twostep.on', 'twostep.off', 'recheck.failed', 'signout', 'password.changed', 'google.linked', 'invite.accepted',
   'export', 'photos.deleted', 'coach.created', 'coach.off', 'coach.used'];
-const EVENTS = ['signin.ok', 'signin.failed', 'signin.locked', 'signin.alert', 'signout', 'password.changed', 'google.linked',
+const EVENTS = ['signin.ok', 'signin.failed', 'signin.locked', 'signin.alert', 'second.asked', 'second.failed', 'second.locked',
+  'recovery.used', 'twostep.on', 'twostep.off', 'recheck.ok', 'recheck.failed', 'signout', 'password.changed', 'google.linked',
   'invite.created', 'invite.accepted', 'account.removed', 'ai.settings', 'email.settings', 'options.changed', 'export',
   'day.deleted', 'checklist.reset', 'photos.deleted', 'food.removed', 'supp.removed', 'coach.created', 'coach.off', 'coach.used', 'ai.cap'];
 
@@ -25,7 +28,7 @@ const q = {
   cap: db.prepare('DELETE FROM audit WHERE user_id IS ? AND id <= (SELECT id FROM audit WHERE user_id IS ? ORDER BY id DESC LIMIT 1 OFFSET ?)'),
   prune: db.prepare('DELETE FROM audit WHERE at < ?'),
   seen: db.prepare("SELECT 1 FROM audit WHERE event = ? AND user_id IS ? AND at >= ? AND json_extract(detail, '$.id') IS ? LIMIT 1"),
-  fails: db.prepare("SELECT COUNT(*) AS n FROM audit WHERE user_id = ? AND event IN ('signin.failed', 'signin.locked') AND at >= ?"),
+  fails: db.prepare("SELECT COUNT(*) AS n FROM audit WHERE user_id = ? AND event IN ('signin.failed', 'signin.locked', 'second.failed', 'second.locked') AND at >= ?"),
   user: db.prepare('SELECT id, email FROM users WHERE id = ?'),
   users: db.prepare('SELECT id, email FROM users'),
   list: db.prepare(`SELECT a.id, a.at, a.user_id, a.actor_id, a.event, a.ip, a.detail, u.email AS user_email, v.email AS actor_email
@@ -67,8 +70,8 @@ function log(req, event, detail, userId) {
     const d = clean(detail);
     q.add.run(new Date().toISOString(), uid, actor, String(event), ip, JSON.stringify(d));
     q.cap.run(uid, uid, PER_ACCOUNT);
-    if (event === 'signin.failed' || event === 'signin.locked') {
-      console.warn(`Sign-in ${event === 'signin.locked' ? 'refused (account locked)' : 'failed'} for ${d.email || 'an unknown address'} from ${ip || '?'}`);
+    if (FAILS.includes(event)) {
+      console.warn(`Sign-in ${event.endsWith('locked') ? 'refused (account locked)' : 'failed'}${event.startsWith('second') ? ' at the second step' : ''} for ${d.email || (uid ? 'account #' + uid : 'an unknown address')} from ${ip || '?'}`);
       if (uid) alertCheck(uid);
     }
   } catch (e) { console.error('Security log write failed:', e.message); }

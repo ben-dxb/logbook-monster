@@ -57,11 +57,36 @@ or Google.
   to a year, or until a date); it stops at once when it runs out or you **Switch off** it.
 - **Super admin** (`ADMIN_EMAILS` only; on a local setup with it empty, the first account created) – settings for
   the whole app, in tabs: **AI** (the OpenRouter API key – kept on the server, never shown again; or
-  set `OPENROUTER_API_KEY` in `.env` – and a model for each kind of AI task), **People** and **Email**.
+  set `OPENROUTER_API_KEY` in `.env` – and a model for each kind of AI task), **People**, **Email** and **Options**
+  (including **Super admins must use a second step**, off by default). Changing the AI key or the email settings,
+  or removing an account, asks for your password or an authenticator code again if you signed in more than 15 minutes ago.
   There are no app-wide meal plan defaults: when this version first starts, every account that had
   used the app gets the plan it was using (the old built-in plan, the old app defaults and its own
   changes) as its own, so nothing changes for it.
-- **Account menu** – download all your data as JSON, set/change password, sign out.
+- **Account menu** – download all your data as JSON, set/change password, two-step sign-in, sign out.
+
+## Two-step sign-in (authenticator app)
+
+Any account can add a second step: after the password (or Google), a 6-digit code from an authenticator app
+(Google Authenticator, Microsoft Authenticator, 1Password, Authy… – standard TOTP, 30 seconds, SHA-1).
+
+1. Account menu › **Two-step sign-in** › **Set up**. Add the key shown to the app as a time-based key, or tap
+   **Open in authenticator app** on the phone (an `otpauth://` link). There is no QR code.
+2. Type the code the app shows and press **Turn on**. Other sessions of the account are signed out.
+3. **Save the 10 recovery codes** it shows (they aren't shown again). Each one signs in once in place of a code.
+
+To switch it off, open the same box and enter your password or a code. Wrong codes count per account: 10 in
+15 minutes (`ACCOUNT_FAIL_LIMIT`) and even a right code waits; a code works once.
+
+Super admins: once your own is on, Super admin › Options › **Super admins must use a second step** sends any super
+admin without it to set one up before any Super admin page works.
+
+**Recovering:** lost the phone – sign in with a recovery code, switch the step off and set it up again on the new
+phone (that also gives new recovery codes). Lost the phone *and* the codes – someone with shell access on the
+server runs `npm run create-user -- you@example.com --no-2fa` (Docker: `docker compose exec logbook-monster node --disable-warning=ExperimentalWarning scripts/create-user.js you@example.com --no-2fa`),
+which sets a new password, signs the account out everywhere and switches its second step off. The key is stored
+encrypted with a key derived from `SESSION_SECRET`: if that changes, authenticator codes stop working (recovery codes
+still do) – sign in with a recovery code and set the step up again.
 
 ## Run it locally
 
@@ -181,6 +206,11 @@ also download their own data from the account menu.
 - Changing your password (or resetting it with `create-user`) signs the account out everywhere
   else, and by default switches off its coach links. A Google-only account adding a first
   password must have signed in within the last 10 minutes. Sign-out sends `Clear-Site-Data`.
+- Optional second step (TOTP, RFC 6238) for any account: until the code is given the session holds no account, so
+  no `/api` route answers it; it runs out after 5 minutes. The secret is stored AES-256-GCM-encrypted with a key derived
+  from `SESSION_SECRET`, recovery codes only as SHA-256 hashes; each code is taken once and wrong codes are limited per
+  account. Changing the AI key or the email settings, or removing an account, needs the password or a code again
+  on a sign-in older than 15 minutes.
 - Every write needs a CSRF token header (per session; signed out, an HMAC of a random cookie).
 - Google uses the OpenID Connect code flow with PKCE, `state` and `nonce`; the client secret
   stays on the server and the ID token's issuer, audience, expiry, nonce and verified email
@@ -200,6 +230,21 @@ also download their own data from the account menu.
 - Coach links carry a random 256-bit secret (only its SHA-256 is stored, so the link is shown once),
   answer only reads of that account's day summaries, weights, Timeline and the photos its day cards show, are checked on
   every request against their expiry, and send `no-store`, `noindex` and `no-referrer`.
+- **Security log** (`audit` table, `server/audit.js`): sign-ins (ok, failed, locked, and alerts), the second step (code
+  asked, wrong code, locked, recovery code used, turned on or off, re-check passed or failed), sign-out, password changes
+  (with how many sessions and coach links ended), Google links, invites made and accepted, accounts removed (and by whom),
+  AI key set or cleared, email settings and Options changed, data exports, day / checklist / bulk photo deletes, shared
+  foods and supplements a super admin removed, coach links made, switched off and first opened each day, and AI daily
+  limits reached. Each row has the time, the account, who did it and the IP. It never holds a password, key, code, token,
+  cookie or health data; emails are masked (`a***@example.com` plus a keyed hash). Rows are kept **180 days** (pruned at
+  start and daily), at most 5000 per account (`AUDIT_PER_ACCOUNT`). Super admin › Security log shows it all (filter by
+  event and account); everyone sees their own sign-ins, second-step events, password changes and coach-link use on
+  Account admin. Failed sign-ins and locks also go to the server log (masked email, IP). `AUDIT_ALERT_FAILS` (default 5)
+  failed sign-ins on a super admin account within 15 minutes email the super admins (when email is set up).
+- Logs: the app never logs a request's query string, headers (`x-csrf-token`, `x-file-name`) or a coach secret – a URL in
+  an error line goes through `redact()` (`/coach/REDACTED`, no query). Docker keeps 5 × 10 MB of container logs. If you turn
+  on a Caddy access log, filter the same way, e.g. `log { format filter { request>uri regexp ^/coach/[^/?]+ /coach/REDACTED
+  request>uri query delete  request>headers>X-Csrf-Token delete  request>headers>X-File-Name delete  request>headers>Cookie delete } }`.
 
 ## Working on it
 
