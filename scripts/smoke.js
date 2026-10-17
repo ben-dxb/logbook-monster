@@ -188,6 +188,26 @@ async function twoTabsOneDay(ctx) {
       expect(/Reese/.test(await pg.textContent('#offlist')), 'snack should survive reload');
       expect(await pg.inputValue('#meals input[data-act=pack][data-k=w] >> nth=0') === '320', 'pack weight should survive reload');
       expect(await pg.inputValue('#wt') === '80.5', 'weight should survive reload');
+      if (first) {   /* a typo over a saved weight keeps it (it used to delete it); one double-click adds a snack once */
+        await pg.locator('#wt').selectText(); await pg.keyboard.type('80e'); await pg.keyboard.press('Tab');
+        await pg.waitForSelector('#numnote:not([hidden])', { timeout: 5000 });
+        expect(await pg.inputValue('#wt') === '80.5' && /isn’t a number – kept 80\.5/.test(await pg.textContent('#numnote')), 'a typo should keep the weight and say so');
+        expect(JSON.stringify(await pg.evaluate(d => fetch('/api/weights').then(r => r.json()).then(w => w.filter(x => x.date === d).map(x => x.kg)), await pg.evaluate(() => S.cur))) === '[80.5]',
+          'the server should still have the weight');
+        const qty = () => pg.evaluate(() => (day().off.find(o => o.snack === 'skittles') || { qty: 0 }).qty);
+        const q0 = await qty();
+        await pg.selectOption('#sn', 'skittles'); await pg.fill('#sq', '1'); await pg.dblclick('#snackform button');
+        await pg.waitForFunction(() => /Saved/.test(document.querySelector('#status').textContent) && !pending.size, null, { timeout: 5000 });
+        expect(await qty() === q0 + 1, 'a double-click on Add should add the snack once');
+        /* the same for an off-plan food saved to the library: one request, one library food */
+        const posts = []; const seen = r => { if (r.method() === 'POST' && r.url().endsWith('/api/foods')) posts.push(r); };
+        pg.on('request', seen);
+        await pg.fill('#o-n', 'Smoke dbl bar'); await pg.fill('#o-k', '150'); await pg.check('#o-save'); await pg.dblclick('#offform button[type=submit]');
+        await pg.waitForFunction(() => /Smoke dbl bar/.test(document.querySelector('#offlist').textContent) && !pending.size, null, { timeout: 5000 });
+        await pg.waitForTimeout(500); pg.off('request', seen);
+        expect(posts.length === 1 && (await pg.evaluate(() => LIB.filter(f => f.name === 'Smoke dbl bar').length)) === 1, `a double-click should save one library food (${posts.length} POSTs)`);
+        await pg.evaluate(async () => { for (const f of LIB.filter(x => x.name === 'Smoke dbl bar')) await api('DELETE', '/api/foods/' + f.id); LIB = LIB.filter(x => x.name !== 'Smoke dbl bar'); libRegister(); });
+      }
       if (first) { /* a saved day using a food its date's plan no longer has still opens (it used to do nothing) */
         const old = await pg.evaluate(async () => {
           const d = addDays(todayStr(), -2), D = freshOn(d);
@@ -298,6 +318,20 @@ async function twoTabsOneDay(ctx) {
       const cscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(cscroll <= 1, `horizontal overflow of ${cscroll}px on the exercises page at ${w}px wide`);
       await pg.click('[data-g=csvdrop]');
+      if (first) {   /* numbers as other apps write them: "1,025" lb in a comma file is 1025 lb; letters for reps are left out, not 0;
+                        a lone "1,025" in a semicolon file could be either, so it is reported */
+        await pg.setInputFiles('#g-csvfile', { name: 'thousands.csv', mimeType: 'text/csv', buffer: Buffer.from('Exercise,Date,Reps,Weight (lbs)\nSmoke leg press,2026-10-01 10:00,10,"1,025"\nSmoke leg press,2026-10-01 10:05,abc,20\n') });
+        await pg.waitForFunction(() => /From thousands\.csv/.test((document.querySelector('.gai') || {}).textContent || ''), null, { timeout: 5000 });
+        const t = await pg.textContent('.gai');
+        expect(/10 × 464\.93 kg/.test(t) && /1 row left out/.test(t) && /reps “abc” isn’t a number/.test(t), 'a thousands separator should be read and a bad reps row left out: ' + t);
+        await pg.setInputFiles('#g-csvfile', { name: 'semi.csv', mimeType: 'text/csv', buffer: Buffer.from('Exercise;Date;Reps;Weight\nSmoke leg press;2026-10-01 10:00;10;1,025\nSmoke curl;2026-10-01 10:05;8;12,5\n') });
+        await pg.waitForFunction(() => /From semi\.csv/.test((document.querySelector('.gai') || {}).textContent || ''), null, { timeout: 5000 });
+        expect(/10 × 1\.02 kg/.test(await pg.textContent('.gai')) && /8 × 12\.5 kg/.test(await pg.textContent('.gai')), 'decimal commas in a ; file');
+        await pg.setInputFiles('#g-csvfile', { name: 'amb.csv', mimeType: 'text/csv', buffer: Buffer.from('Exercise;Date;Reps;Weight\nSmoke leg press;2026-10-01 10:00;10;1,025\n') });
+        await pg.waitForFunction(() => /From amb\.csv/.test((document.querySelector('.gai') || {}).textContent || ''), null, { timeout: 5000 });
+        expect(/could be 1025 or 1\.025/.test(await pg.textContent('.gai')) && await pg.isDisabled('[data-g=csvgo]'), 'an ambiguous number should be reported, not guessed');
+        await pg.click('[data-g=csvdrop]');
+      }
       /* body parts: tick them in the exercise's settings, filter My exercises by one, then use the workout builder's picker */
       await pg.click('#g-exlist a.grow:has-text("Atlantis hack squat")'); await pg.waitForSelector('#g-quick');
       await pg.click('.gexset > summary'); await pg.setChecked('input[name=g-part][value=quads]', true); await pg.setChecked('input[name=g-part][value=glutes]', true);
@@ -376,7 +410,7 @@ async function twoTabsOneDay(ctx) {
       await pg.fill('#f-aqty', '2'); expect(/840/.test(await pg.textContent('#f-aprev')), 'preview should scale to 2 items');
       const fscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(fscroll <= 1, `horizontal overflow of ${fscroll}px on the food library at ${w}px wide`);
-      await pg.click('#f-addform button[type=submit]');
+      await pg.dblclick('#f-addform button[type=submit]');   /* added once (a double-click used to add it twice) */
       await pg.waitForSelector('#v-day:not([hidden]) #offlist', { timeout: 5000 });
       await pg.waitForFunction(() => /Smoke pancakes/.test(document.querySelector('#offlist').textContent) && /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
       await pg.selectOption('#ln', { label: 'Smoke pancakes (per item)' }); await pg.fill('#lq', '1'); await pg.click('#libform button');
@@ -725,6 +759,16 @@ async function twoTabsOneDay(ctx) {
         await pg.click('.adfood[data-id=banana] summary');
         expect(await pg.inputValue('#ad-mn-0') === 'Probe meal"><img id="PR-PROBE-mname" src="x">', 'the probe plan should be loaded, its markup kept as text');
         expect(await pg.locator('[id^="PR-PROBE"]').count() === 0, 'markup in a plan file must not become page elements');
+        await pg.click('#ad-discard');
+        await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
+        /* a semicolon plan CSV with a decimal comma keeps its columns and its half gram; a lone "1,500" is refused with the line, not guessed */
+        const semi = g => Buffer.from(`day_type;meal;meal_name;box;food;grams;locked;note\nrest;1;Smoke bowl;protein;whey;${g};yes;\n`);
+        await pg.setInputFiles('#ad-file', { name: 'semi.csv', mimeType: 'text/csv', buffer: semi('40,5') });
+        await pg.waitForFunction(() => /Loaded Rest from semi\.csv/.test(document.querySelector('#ad-upmsg').textContent), null, { timeout: 5000 });
+        expect(await pg.inputValue('#ad-g-0-p-0') === '40.5' && await pg.isChecked('#ad-l-0-p-0'), 'grams "40,5" should load as 40.5 with the lock kept');
+        await pg.setInputFiles('#ad-file', { name: 'amb.csv', mimeType: 'text/csv', buffer: semi('1,500') });
+        await pg.waitForFunction(() => /amb\.csv wasn’t loaded/.test(document.querySelector('#ad-upmsg').textContent), null, { timeout: 5000 });
+        expect(/Line 2: amount "1,500" could be 1500 or 1\.500/.test(await pg.textContent('#ad-upmsg')), 'an ambiguous amount should be reported');
         await pg.click('#ad-discard');
         await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
         /* the plan CSV download keeps a value that starts like a formula as text */

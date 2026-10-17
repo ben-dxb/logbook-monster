@@ -39,7 +39,7 @@
 - `public/engine.js` – the balancing maths and the plan in use (`applyDefaults(plan)` sets `FOODS`, swap lists, `TEMPLATES`, `TYPE` = template id per weekday, `COACH` = targets per template;
   `freshDay(weekday, templateId)`). Only rice pudding (values from the batch) is built in. Keep the solver behaviour unless asked.
 - `public/app.js` – views (Daily Tracker, History calendar), saving, routing. A day keeps its template (`D.type`; the weekday's unless switched on the Daily Tracker) and its summary the name (`tname`). A meal marked eaten (`m.eaten`) is locked whole – the solver never moves it, its controls
-  are disabled – and undoing it asks for confirmation.
+  are disabled – and undoing it asks for confirmation. Shared by every page: a button or form that POSTs/PUTs runs through `once(el, fn)` (no double submits), and a number box the browser can't read ("80e") or outside its min/max is put back with a note before any page listener sees it; the server refuses non-numbers with 400 (`server/num.js`).
 - `public/admin.js` – Account admin (`#account`, anyone: own plan – day templates, meals, week, targets, foods) and Super admin
   (`#admin`, in tabs: `#admin/ai`, `#admin/people`, `#admin/email`, `#admin/options`; no plan editor) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope,
   `data-adtab` per super admin tab. AI settings (OpenRouter key, default model and a model per task – `TASKS` in `server/ai.js`:
@@ -83,6 +83,6 @@
   with `?bg=1` (`jobStart`), the route answers `202 {job}` (`jobs.respond`; without `bg` it still answers with the result) and the server keeps reading, results in `ai_jobs`
   until the person adds or drops what it read (`jobSeen(kind)` → `POST /api/jobs/:id/seen`; a reload before that lists it again). A meal plan read opens as a preview of what it would change (`adAiPend` in `admin.js`): nothing goes into the plan until "Use ticked", and the account's own foods keep their values unless ticked. The app polls `GET /api/jobs` while one runs; a finished one opens by itself if you're still on its page, otherwise a note
   (`#jobs`) and a browser notification say it's ready – and an email if the app isn't open. Each page sets `J_OPEN[kind]` / `J_BUSY[kind]`; `jobs.js` loads right after `app.js`.
-- `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by tests.
+- `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by the plan CSV reader in `admin.js` (`parseCsv`, `readNum` – decimal commas and thousands separators, ambiguous `1,025` reported, never guessed) and by tests.
 - Secrets live only in `.env` on the server; never send them to the client or commit them.
 - Strict CSP: no inline scripts or `style=` attributes in HTML.

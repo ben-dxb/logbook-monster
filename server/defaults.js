@@ -7,6 +7,7 @@
 const config = require('./config');
 const db = require('./db');
 const { isDate, writeError } = require('./dates');
+const { isNum } = require('./num');
 const { FREE_KINDS } = require('../public/engine.js');
 const legacy = require('./legacy');
 const { stamp } = require('./version');
@@ -42,7 +43,7 @@ function clean(input) {
   if (!isObj(input)) throw new Error('Defaults must be an object');
   const num = (v, lo, hi, what) => {
     const n = +v;
-    if (v === '' || v == null || !Number.isFinite(n) || n < lo || n > hi) throw new Error(`${what} must be a number from ${lo} to ${hi}`);
+    if (!isNum(v) || n < lo || n > hi) throw new Error(`${what} must be a number from ${lo} to ${hi}`);
     return Math.round(n * 100) / 100;
   };
   const opt = (v, lo, hi, what) => (v === '' || v == null ? null : num(v, lo, hi, what));

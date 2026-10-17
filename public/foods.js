@@ -350,12 +350,12 @@ document.addEventListener('input',e=>{
   }
 });
 document.addEventListener('submit',async e=>{
-  if(e.target.id==='f-form'){e.preventDefault();fSave(e.target);}
+  if(e.target.id==='f-form'){e.preventDefault();once(e.target,()=>fSave(e.target));}
   else if(e.target.id==='f-addform'){
     e.preventDefault();const f=fShown(fById(e.target.dataset.id)),date=$('#f-adate').value,qty=+$('#f-aqty').value||0;
     if(!f)return;
     if(!isDate(date)||!(qty>0)){alert('Pick a day and an amount above 0.');return;}
     const w=$('#f-awhere').value;
-    fAdding=null;await addFoodToDay(f,date,qty,w==='off'?null:+w);
+    await once(e.target,()=>{fAdding=null;return addFoodToDay(f,date,qty,w==='off'?null:+w);});   /* the day may load first: a second click waits */
   }
 });

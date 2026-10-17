@@ -188,6 +188,41 @@ function tplLabel(d){const D=S.days[d],s=SUMS[d];return (s&&s.tname)||tnameOn(d,
 const wd=()=>wdOf(S.cur);
 function showLoading(on){$('#loading').hidden=!on;}
 
+/* ---------- number boxes ----------
+   A box the browser can't read ("80e", "abc") has the value '' – which used to save as 0, or delete a weight. Such a typo, or a
+   number outside the box's min / max, never reaches the page's own listeners: the box goes back to the value it had and says so.
+   Only a box really left empty counts as empty. */
+const NUM_WAS=new WeakMap(), NUM_LIVE=new WeakSet();
+const numBox=el=>el instanceof HTMLInputElement&&el.type==='number'&&!el.readOnly&&!el.disabled;
+function numWhy(el){const v=el.validity;if(v.badInput)return 'That isn’t a number';if(!v.rangeUnderflow&&!v.rangeOverflow)return '';
+  return el.min!==''&&el.max!==''?`Enter a number from ${el.min} to ${el.max}`:el.min!==''?`Enter ${el.min} or more`:`Enter ${el.max} or less`;}
+let numTimer=0;
+function numNote(text){let n=$('#numnote');
+  if(!n){n=document.createElement('p');n.id='numnote';n.className='numnote';n.setAttribute('role','alert');document.body.appendChild(n);}
+  n.textContent=text;n.hidden=false;clearTimeout(numTimer);numTimer=setTimeout(()=>{n.hidden=true;},4000);}
+function numRefuse(el){const why=numWhy(el);if(!why)return false;
+  const was=NUM_WAS.has(el)?NUM_WAS.get(el):el.defaultValue;el.value=was;
+  numNote(`${why} – ${was===''?'left it empty':'kept '+was}.`);
+  if(NUM_LIVE.has(el)){NUM_LIVE.delete(el);el.dispatchEvent(new Event('input',{bubbles:true}));}   /* pages that follow each keystroke go back too */
+  return true;}
+document.addEventListener('focusin',e=>{const el=e.target;if(numBox(el)&&!numWhy(el)){NUM_WAS.set(el,el.value);NUM_LIVE.delete(el);}},true);
+document.addEventListener('input',e=>{const el=e.target;if(!numBox(el))return;
+  if(el.validity.badInput)e.stopImmediatePropagation();else NUM_LIVE.add(el);},true);
+document.addEventListener('change',e=>{const el=e.target;if(!numBox(el))return;
+  if(numRefuse(el))e.stopImmediatePropagation();else{NUM_WAS.set(el,el.value);NUM_LIVE.delete(el);}},true);
+document.addEventListener('focusout',e=>{const el=e.target;if(numBox(el)&&el.validity.badInput)numRefuse(el);},true);   /* "abc" typed into an empty box fires no change */
+
+/* One tap, one save: while a button's (or form's) request runs, more clicks on it are ignored and its buttons are disabled; for a
+   moment after, a second click still counts as the same tap (a double-click adds once). */
+const ONCE=new WeakSet();
+async function once(el,fn){
+  if(ONCE.has(el))return;ONCE.add(el);
+  const bs=(el.tagName==='FORM'?[...el.querySelectorAll('button')]:[el]).filter(b=>!b.disabled);
+  bs.forEach(b=>{b.disabled=true;});
+  try{return await fn();}
+  finally{bs.forEach(b=>{b.disabled=false;});setTimeout(()=>ONCE.delete(el),400);}
+}
+
 function baseAmount(D,mi,box,f){const m=D.base[mi];if(!m||m.id!==D.meals[mi].id)return null;
   const b=(m[box]||[]).filter(i=>i.f===f);return b.length?b.reduce((s,i)=>s+i.g,0):null;}
 function deltaTag(D,mi,box,i){
@@ -315,7 +350,7 @@ function render(){
   $('#su').textContent=snackVal($('#sn').value).u==='g'?'Grams':'How many';
   $('#snackvals').innerHTML='<div class="sv"><span class="lbl">Per item / 100g</span><span class="lbl">kcal</span><span class="lbl">P</span><span class="lbl">C</span><span class="lbl">F</span>'+
     SNACKS.filter(x=>x.id!=='pudding').map(x=>{const v=snackVal(x.id);return `<span>${esc(x.n)}${x.u==='g'?' (per 100g)':''}${x.est&&!(S.snackOv||{})[x.id]?' <span class="est">estimate</span>':''}</span>`+
-    ['k','p','c','f'].map(m=>`<input id="sv-${x.id}-${m}" type="number" inputmode="decimal" step="0.1" value="${v[m]}" data-act="sv" data-s="${x.id}" data-m="${m}" aria-label="${esc(x.n)} ${m}">`).join('');}).join('')+'</div>';
+    ['k','p','c','f'].map(m=>`<input id="sv-${x.id}-${m}" type="number" inputmode="decimal" min="0" step="0.1" value="${v[m]}" data-act="sv" data-s="${x.id}" data-m="${m}" aria-label="${esc(x.n)} ${m}">`).join('');}).join('')+'</div>';
   persist();
 }
 
@@ -583,16 +618,17 @@ document.addEventListener('change',e=>{
 });
 $('#snackform').addEventListener('submit',e=>{
   e.preventDefault();const id=$('#sn').value,q=+$('#sq').value||0;if(!q)return;
-  act(D=>{const ex=D.off.find(o=>o.snack===id);
+  once(e.target,()=>act(D=>{const ex=D.off.find(o=>o.snack===id);
     if(ex){ex.qty+=q;Object.assign(ex,snackMac(id,ex.qty));}
-    else D.off.push({n:snackVal(id).n,snack:id,qty:q,...snackMac(id,q)});});
+    else D.off.push({n:snackVal(id).n,snack:id,qty:q,...snackMac(id,q)});}));
 });
 $('#libform').addEventListener('submit',e=>{
   e.preventDefault();const f=LIB.find(x=>String(x.id)===$('#ln').value),q=+$('#lq').value||0;if(!f||!(q>0))return;
-  act(D=>libAdd(D,f,q));
+  once(e.target,()=>act(D=>libAdd(D,f,q)));
 });
-$('#offform').addEventListener('submit',async e=>{
-  e.preventDefault();const v=id=>$('#'+id).value;
+$('#offform').addEventListener('submit',e=>{e.preventDefault();once(e.target,offAdd);});
+async function offAdd(){
+  const v=id=>$('#'+id).value;
   const o={n:v('o-n').trim()||'Off-plan food',k:+v('o-k')||0,p:+v('o-p')||0,c:+v('o-c')||0,f:+v('o-f')||0};
   if(!o.k&&!o.p&&!o.c&&!o.f)return;
   let food=null;
@@ -602,7 +638,7 @@ $('#offform').addEventListener('submit',async e=>{
   }
   act(D=>{if(food)libAdd(D,food,1);else D.off.push(o);});
   ['o-n','o-k','o-p','o-c','o-f'].forEach(id=>$('#'+id).value='');$('#o-save').checked=false;
-});
+}
 $('#coach').addEventListener('click',()=>act(D=>{const t=hasTemplate(D.type)?D.type:TYPE[wd()];D.targets={...(t?COACH[t]:{k:0,p:0,c:0,f:0})};}));
 
 /* ---------- account ---------- */

@@ -7,6 +7,7 @@
 const express = require('express');
 const db = require('./db');
 const { isDate, writeError } = require('./dates');
+const { isNum } = require('./num');
 const defaults = require('./defaults');
 const ai = require('./ai');
 const jobs = require('./jobs');
@@ -58,7 +59,7 @@ const unitOf = v => {
 function amountOf(v, optional) {
   if (optional && (v === '' || v == null)) return null;
   const n = +v;
-  if (v === '' || v == null || !Number.isFinite(n) || n <= 0 || n > 1e6) throw fail('Amount must be a number above 0');
+  if (!isNum(v) || n <= 0 || n > 1e6) throw fail('Amount must be a number above 0');
   return Math.round(n * 1000) / 1000;
 }
 
@@ -170,7 +171,7 @@ router.post('/ai-import', aiLimit, express.raw({ type: ai.TYPES_IN, limit: '10mb
 });
 
 /* Add checked line items to your library – one you already have by the same name is updated with the new amount,
-   unit and notes rather than added twice – and, with a date in "log", log each one that has an amount on that day. */
+   unit and notes rather than added twice (a line without an amount keeps the one it had) – and, with a date in "log", log each one that has an amount on that day. */
 router.post('/import', (req, res) => {
   try {
     const list = isObj(req.body) && Array.isArray(req.body.items) ? req.body.items : null;
@@ -190,7 +191,9 @@ router.post('/import', (req, res) => {
         let id;
         if (have) {
           const row = q.get.get(have.id);
-          q.put.run(d.name, d.amount, d.unit, d.notes || row.notes, row.public, have.id, req.user.id);
+          /* a line with no amount keeps the usual amount (and its unit) you already had */
+          const keep = d.amount == null;
+          q.put.run(d.name, keep ? row.amount : d.amount, keep ? row.unit : d.unit, d.notes || row.notes, row.public, have.id, req.user.id);
           id = have.id; updated++;
         } else {
           if (q.count.get(req.user.id).n >= MAX_SUPPS) throw fail(`Your supplement library is full (${MAX_SUPPS})`);

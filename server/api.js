@@ -17,6 +17,7 @@ const timeline = require('./timeline');
 const shares = require('./shares');
 const jobs = require('./jobs');
 const { isDate, writeError } = require('./dates');
+const { isNum } = require('./num');
 const version = require('./version');
 
 const q = {
@@ -75,6 +76,27 @@ function cleanSummary(s) {
   out.tname = s && typeof s.tname === 'string' ? s.tname.trim().slice(0, 40) : '';
   return out;
 }
+
+/* Settings and a day's targets hold numbers: a typo the browser couldn't read is refused, not stored as 0. */
+function settingsError(b) {
+  if (b.pud != null) {
+    if (!isObj(b.pud)) return 'The rice pudding batch must be an object';
+    for (const [k, v] of Object.entries(b.pud)) {
+      if (!isNum(v) || +v < 0) return `Rice pudding ${k} must be a number of 0 or more`;
+      if (k === 'weight' && +v < 1) return 'The finished weight of the rice pudding must be 1 g or more';
+    }
+  }
+  if (b.snackOv != null) {
+    if (!isObj(b.snackOv)) return 'Snack values must be an object';
+    for (const [id, o] of Object.entries(b.snackOv)) {
+      if (!isObj(o)) return `Snack values for ${id.slice(0, 40)} must be an object`;
+      for (const [k, v] of Object.entries(o)) if (!isNum(v) || +v < 0) return `Snack value ${k} for ${id.slice(0, 40)} must be a number of 0 or more`;
+    }
+  }
+  return '';
+}
+const targetsError = t => (t == null ? '' : !isObj(t) ? 'Day targets must be an object'
+  : ['k', 'p', 'c', 'f'].some(k => t[k] !== undefined && !isNum(t[k])) ? 'Day targets must be numbers' : '');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -186,6 +208,8 @@ router.put('/settings', (req, res) => {
   if (!isObj(req.body)) return bad(res, 'Settings must be an object');
   const json = JSON.stringify(req.body);
   if (json.length > MAX_JSON) return bad(res, 'Settings too large');
+  const err = settingsError(req.body);
+  if (err) return bad(res, err);
   q.putSettings.run(req.user.id, json);
   res.json({ ok: true });
 });
@@ -207,6 +231,7 @@ router.put('/days/:date', (req, res) => {
   if (err) return bad(res, err);
   const { data, summary } = req.body || {};
   if (!isObj(data) || !Array.isArray(data.meals)) return bad(res, 'Day data is missing its meals');
+  if (targetsError(data.targets)) return bad(res, targetsError(data.targets));
   const json = JSON.stringify(data);
   if (json.length > MAX_JSON) return bad(res, 'Day data too large');
   const cur = q.dayVersion.get(req.user.id, req.params.date);
@@ -232,7 +257,7 @@ router.put('/weights/:date', (req, res) => {
   const err = writeError(req.params.date);
   if (err) return bad(res, err);
   const kg = +(req.body && req.body.kg);
-  if (!Number.isFinite(kg) || kg < 20 || kg > 400) return bad(res, 'Weight must be between 20 and 400 kg');
+  if (!isNum(req.body && req.body.kg) || kg < 20 || kg > 400) return bad(res, 'Weight must be between 20 and 400 kg');
   q.putWeight.run(req.user.id, req.params.date, Math.round(kg * 100) / 100);
   res.json({ ok: true });
 });
