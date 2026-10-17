@@ -250,4 +250,18 @@ if (!db.prepare('PRAGMA table_info(photos)').all().some(c => c.name === 'style')
   db.exec("ALTER TABLE photos ADD COLUMN style TEXT NOT NULL DEFAULT ''");
 }
 
+/* Added later: sessions carry their account, so a password change or reset can end the account's other sessions. */
+if (!db.prepare('PRAGMA table_info(sessions)').all().some(c => c.name === 'user_id')) {
+  db.exec('ALTER TABLE sessions ADD COLUMN user_id INTEGER');
+  db.exec("UPDATE sessions SET user_id = json_extract(sess, '$.userId')");
+}
+db.exec('CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id)');
+
+/* Failed sign-ins per email, kept so a restart doesn't reset the per-account limit (auth.js). */
+db.exec(`CREATE TABLE IF NOT EXISTS login_failures (
+  email TEXT NOT NULL,
+  at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS login_failures_email ON login_failures(email, at);`);
+
 module.exports = db;

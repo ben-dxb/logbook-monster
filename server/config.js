@@ -32,6 +32,8 @@ const config = {
   allowedEmails: list(process.env.ALLOWED_EMAILS),
   /* Sign-in and invite attempts allowed per IP every 15 minutes. Only the tests raise it. */
   authRateLimit: Math.max(1, +process.env.AUTH_RATE_LIMIT || 20),
+  /* Wrong passwords allowed per account (email) every 15 minutes, from any address. */
+  accountFailLimit: Math.max(1, +process.env.ACCOUNT_FAIL_LIMIT || 10),
   adminEmails: list(process.env.ADMIN_EMAILS),
   google: {
     clientId: process.env.GOOGLE_CLIENT_ID || '',
