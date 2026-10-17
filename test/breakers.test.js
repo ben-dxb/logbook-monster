@@ -232,3 +232,20 @@ test('checking a key (Keys tab: Test active / next / old) never feeds the breake
   assert.strictEqual(ai.breaker.state, 'closed');
   mode = 'ok';
 });
+
+test('a request whose connection is dropped still counts on the hourly limit once its AI call is answered', async () => {
+  const uid = Number(db.prepare("INSERT INTO users (email) VALUES ('drop@example.com')").run().lastInsertRowid);
+  mode = 'slow'; delay = 300;
+  const was = usage();
+  for (let i = 0; i < 3; i++) {
+    await new Promise(r => {
+      const q = http.request(base + '/fill', { method: 'POST', headers: { 'x-user': String(uid) } });
+      q.on('error', () => {}); q.end();
+      setTimeout(() => { q.destroy(); r(); }, 100);
+    });
+  }
+  const t = Date.now();
+  while (usage() < was + 3 && Date.now() - t < 5000) await new Promise(r => setTimeout(r, 50));
+  assert.strictEqual(usage(), was + 3, 'the three dropped requests were answered by the AI');
+  assert.strictEqual((await post('/fill', uid)).status, 429, 'and used up the limit of 3');
+});

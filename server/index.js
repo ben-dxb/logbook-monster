@@ -105,7 +105,7 @@ function privacyPage(html) {
   const contact = config.contact
     ? `Email <a href="mailto:${escHtml(config.contact)}">${escHtml(config.contact)}</a>.`
     : 'Ask the person who runs this app – whoever invited you or gave you its address.';
-  return html.replace(/<!--OPERATOR-->/g, who).replace(/<!--CONTACT-->/g, contact);
+  return html.replace(/<!--OPERATOR-->/g, () => who).replace(/<!--CONTACT-->/g, () => contact);   /* functions: a $ in them is kept as it is */
 }
 /* the pages point at versioned scripts and styles (server/assets.js): no-cache + ETag, so the route below runs on every load */
 const files = assets.create(pub, { live: !config.isProd, fill: { 'privacy.html': privacyPage } });
