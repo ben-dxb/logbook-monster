@@ -8,6 +8,7 @@ const { hashPassword, verifyPassword, dummyVerify, passwordProblem } = require('
 const users = require('./users');
 const mail = require('./mail');
 const twostep = require('./twostep');
+const { fetchJson } = require('./fetchjson');
 
 const q = {
   byId: db.prepare('SELECT id, email, name, password_hash, google_sub, invited_by FROM users WHERE id = ?'),
@@ -218,19 +219,23 @@ router.post('/invite/check', inviteLimiter, csrfProtect, needBody, (req, res) =>
   res.json({ email: inv.email, name: inv.name, google: config.google.enabled });
 });
 
+/* The invitee types their own name, so in the admin's email it is one short line with no links or markup (auth-code-014). */
+const mailName = n => String(n || '').replace(/\b(?:[a-z][a-z0-9+.-]*:\/\/|www\.)\S*|\S+\.[a-z]{2,}\S*/gi, '').replace(/[^\p{L}\p{M}\p{N} '.-]/gu, '')
+  .replace(/\s+/g, ' ').trim().slice(0, 40).trim();
+
 router.post('/invite/accept', inviteLimiter, csrfProtect, needBody, async (req, res) => {
   const inv = liveInvite(req.body.token);
   if (!inv) return res.status(404).json({ error: 'This invite link has expired or was already used. Ask for a new one.' });
   const password = String(req.body.password || '');
   const problem = passwordProblem(password);
   if (problem) return res.status(400).json({ error: problem });
-  const name = String(req.body.name || '').trim().slice(0, 100);
+  const name = String(req.body.name || '').replace(/\s+/g, ' ').trim().slice(0, 100);
   q.setPassword.run(await hashPassword(password), inv.user_id);
   if (name) q.setName.run(name, inv.user_id);
   await logIn(req, q.byId.get(inv.user_id));
   if (inv.created_by) {
     mail.notify({ to: inv.created_by, subject: `${inv.email} joined Logbook Monster`,
-      text: `${name || inv.email} accepted your invite and has signed in to Logbook Monster.\n\n${config.baseUrl}/#admin\n` });
+      text: `${mailName(name) ? `${mailName(name)} (${inv.email})` : inv.email} accepted your invite and has signed in to Logbook Monster.\n\n${config.baseUrl}/#admin\n` });
   }
   res.json({ ok: true });
 });
@@ -298,7 +303,8 @@ router.get('/google/callback', limiter, async (req, res) => {
 
   let claims;
   try {
-    const r = await fetch(GOOGLE_TOKEN, {
+    /* 10 s and 64 KB at most: a stalled Google can't hold sign-ins open (auth-code-010) */
+    const { ok, body: tok } = await fetchJson(GOOGLE_TOKEN, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -309,9 +315,8 @@ router.get('/google/callback', limiter, async (req, res) => {
         grant_type: 'authorization_code',
         code_verifier: pending.verifier,
       }),
-    });
-    const tok = await r.json();
-    if (!r.ok || !tok.id_token) throw new Error(tok.error_description || tok.error || 'no id_token');
+    }, { timeout: 10000, max: 64 * 1024 });
+    if (!ok || !tok.id_token) throw new Error(tok.error_description || tok.error || 'no id_token');
     /* The ID token came straight from Google's token endpoint over TLS, which OIDC Core 3.1.3.7 accepts
        in place of a signature check. Its claims are still checked below. */
     claims = JSON.parse(Buffer.from(tok.id_token.split('.')[1], 'base64url').toString('utf8'));

@@ -4,10 +4,14 @@ const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 const config = require('./config');
 
-fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
-/* Node's built-in SQLite: nothing to compile, works the same on Windows, macOS and Linux. */
+fs.mkdirSync(path.dirname(config.dbPath), { recursive: true, mode: 0o700 });
+/* Only the app's own user can read the database (SQLite gives its -wal / -shm files the same permissions). */
+try { fs.closeSync(fs.openSync(config.dbPath, 'wx', 0o600)); } catch {}
+try { fs.chmodSync(config.dbPath, 0o600); } catch {}
+/* Node's built-in SQLite: nothing to compile, works the same on Windows, macOS and Linux.
+   secure_delete: deleted rows are overwritten, so a copy of the file doesn't still hold them. */
 const db = new DatabaseSync(config.dbPath);
-db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA secure_delete = ON;');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (

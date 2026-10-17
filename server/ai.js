@@ -35,6 +35,7 @@ const q = {
   get: db.prepare("SELECT data FROM app_config WHERE key = 'openrouter'"),
   put: db.prepare(`INSERT INTO app_config (key, data, updated_by) VALUES ('openrouter', ?, ?)
     ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_by = excluded.updated_by, updated_at = datetime('now')`),
+  reseal: db.prepare("UPDATE app_config SET data = ? WHERE key = 'openrouter'"),
   used: db.prepare('SELECT calls FROM ai_usage WHERE user_id = ? AND day = ?'),
   usedAll: db.prepare('SELECT COALESCE(SUM(calls), 0) AS n FROM ai_usage WHERE day = ?'),
   use: db.prepare('INSERT INTO ai_usage (user_id, day, calls) VALUES (?, ?, 1) ON CONFLICT(user_id, day) DO UPDATE SET calls = calls + 1'),
@@ -66,7 +67,15 @@ const limiter = (limit, message, more = {}) => rateLimit({
   skipFailedRequests: true, requestWasSuccessful: (req, res) => res.statusCode < 400 || !!(req.ai && req.ai.calls), ...more,
 });
 
-function stored() { const r = q.get.get(); return r ? JSON.parse(r.data) : {}; }
+/* The key is kept sealed (keySealed, server/seal.js); stored() hands it back opened as key. One kept from before is sealed on start. */
+const box = require('./seal')('openrouter-key-v1');
+function stored() {
+  const r = q.get.get(), s = r ? JSON.parse(r.data) : {};
+  if (s.keySealed) { const k = box.unsealText(s.keySealed); if (k) { s.key = k; delete s.keySealed; } }
+  return s;
+}
+const sealed = ({ key, ...s }) => JSON.stringify(key ? { ...s, keySealed: box.sealText(key) } : s);
+{ const r = q.get.get(), s = r && JSON.parse(r.data); if (s && s.key) q.reseal.run(sealed(s)); }
 /* A key saved on the Admin page wins over OPENROUTER_API_KEY in .env. */
 function current(task) {
   const s = stored();
@@ -85,7 +94,7 @@ function save(body, user) {
   if (body.key !== undefined) {
     const key = String(body.key || '').trim();
     if (key && !/^[\x21-\x7e]{10,300}$/.test(key)) throw new Error('That doesn’t look like an API key');
-    if (key) s.key = key; else delete s.key;
+    if (key) s.key = key; else { delete s.key; delete s.keySealed; }
   }
   if (body.model !== undefined) {
     const model = String(body.model || '').trim();
@@ -103,7 +112,7 @@ function save(body, user) {
     }
     if (Object.keys(models).length) s.models = models; else delete s.models;
   }
-  q.put.run(JSON.stringify(s), user.email);
+  q.put.run(sealed(s), user.email);
   return status();
 }
 
@@ -162,14 +171,14 @@ function tidy(raw, foods) {
   const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
   if (isObj(raw.foods)) {
     for (const [id, r] of Object.entries(raw.foods).slice(0, 100)) {
-      if (foods[id]) continue;                                   /* never overwrite an existing food */
+      if (Object.hasOwn(foods, id)) continue;   /* never overwrite an existing food */
       try { Object.assign(out.foods, defaults.clean({ foods: { [id]: r } }).foods); }
       catch (e) { notes.push(`Left out new food ${String(id).slice(0, 40)}: ${e.message}`); }
     }
   }
   /* day templates: as listed, plus any the plan uses without listing */
   const addTemplate = (id, name) => {
-    if (typeof id !== 'string' || !TEMPLATE_ID.test(id) || out.templates.some(t => t.id === id) || out.templates.length >= 12) return;
+    if (typeof id !== 'string' || !TEMPLATE_ID.test(id) || id in Object.prototype || out.templates.some(t => t.id === id) || out.templates.length >= 12) return;
     out.templates.push({ id, name: String(name || OLD_NAMES[id] || id).trim().slice(0, 40) || id });
   };
   for (const t of Array.isArray(raw.templates) ? raw.templates : []) if (isObj(t)) addTemplate(t.id, t.name);

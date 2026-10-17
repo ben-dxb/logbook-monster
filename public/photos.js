@@ -94,10 +94,10 @@ async function renderPhotos(args){
 function pPoseOptions(sel,withAi){
   const list=PPOSES.includes(sel)||!P_NAME[sel]?PPOSES:[...PPOSES,sel];   /* an older photo's "side" stays pickable on it */
   return (withAi&&pAi?`<option value="ai"${sel==='ai'?' selected':''}>Let AI tell</option>`:'')+
-    list.map(v=>`<option value="${v}"${v===sel?' selected':''}>${esc(pPoseName(v))}</option>`).join('');
+    list.map(v=>`<option value="${esc(v)}"${v===sel?' selected':''}>${esc(pPoseName(v))}</option>`).join('');
 }
 function pStyleOptions(sel){
-  return `<option value=""${sel?'':' selected'}>None</option>`+PSTYLES.map(v=>`<option value="${v}"${v===sel?' selected':''}>${esc(pStyleName(v))}</option>`).join('');
+  return `<option value=""${sel?'':' selected'}>None</option>`+PSTYLES.map(v=>`<option value="${esc(v)}"${v===sel?' selected':''}>${esc(pStyleName(v))}</option>`).join('');
 }
 /* the AI's pose for a photo; save stores it too, but only while the photo still has the pose it had when asked (seen) or the AI's */
 /* the AI only ever gets the small version: a photo without one (from before thumbnails) gets one first */
@@ -112,7 +112,7 @@ async function pAskAi(id,save,seen){
 }
 const P_AI_NOTE='The AI looks at the small version of each photo, sent to the AI service set up for this app; nothing else about you goes with it.';
 function pCatalogPage(){
-  const seg=[['all','All'],...[...PPOSES,...(PHOTOS.some(p=>p.pose==='side')?['side']:[])].map(v=>[v,pPoseName(v)])].map(([v,l])=>`<button type="button" data-pa="filter" data-v="${v}" aria-pressed="${pPose===v}">${esc(l)}</button>`).join('');
+  const seg=[['all','All'],...[...PPOSES,...(PHOTOS.some(p=>p.pose==='side')?['side']:[])].map(v=>[v,pPoseName(v)])].map(([v,l])=>`<button type="button" data-pa="filter" data-v="${esc(v)}" aria-pressed="${pPose===v}">${esc(l)}</button>`).join('');
   const days=[...new Set(PHOTOS.map(p=>p.date))], latest=pLatest();
   const tols=P_TOLS.map(t=>`<option value="${t}"${t===pTol?' selected':''}>± ${t} kg</option>`).join('');
   return `<div class="gbar"><h2>Progress photos</h2></div>
@@ -154,7 +154,7 @@ function renderPhotoList(){
   if(pNear&&t!=null)h+=`<p class="note">${n?`${n} day${n===1?'':'s'}`:'No days'} with photos when you weighed ${esc(t)} kg ± ${esc(pTol)} (from a weigh-in within ${P_NEAR_DAYS} days of the photo).</p>`;
   if(!PHOTOS.length)h+=gEmpty('No photos yet. Pick some above, set the date they were taken and tap Upload.');
   else if(!list.length&&!pNear)h+=gEmpty(`No ${pPoseName(pPose).toLowerCase()} photos yet.`);
-  h+=Object.keys(days).sort().reverse().map(d=>`<section class="pday" id="p-d-${d}" aria-label="${esc(fmtLong(d))}">
+  h+=Object.keys(days).sort().reverse().map(d=>`<section class="pday" id="p-d-${esc(d)}" aria-label="${esc(fmtLong(d))}">
       <h3><span>${esc(fmtLong(d))}</span>${pKg(d)?`<span class="chip">${esc(pKg(d))}</span>`:''}</h3>
       <div class="pgrid">${days[d].map(pTile).join('')}</div></section>`).join('');
   el.innerHTML=h;
@@ -322,7 +322,7 @@ function pOnePage(p){
     <figure class="pbig"><a class="pzoom" href="${pSrc(p)}" target="_blank" rel="noopener" title="Scroll to zoom, drag to move around, double-click to reset"><img src="${pSrc(p)}" alt="${esc(pLabel(p)+' photo, '+fmtLong(p.date))}"></a>
       <figcaption>${esc(fmtLong(p.date))}${pKg(p.date)?' · '+esc(pKg(p.date)):''}${p.note?' · '+esc(p.note):''}</figcaption></figure>
     <form id="p-eform" class="panel sform" data-id="${p.id}" data-ver="${esc(p.updated||'')}">
-      <label class="f"><span class="lbl">Date taken</span><input id="p-edate" type="date" required value="${p.date}"></label>
+      <label class="f"><span class="lbl">Date taken</span><input id="p-edate" type="date" required value="${esc(p.date)}"></label>
       <label class="f"><span class="lbl">Pose</span><select id="p-epose">${pPoseOptions(p.pose)}</select></label>
       <label class="f"><span class="lbl">Pose type</span><select id="p-estyle">${pStyleOptions(p.style)}</select></label>
       ${pAi?`<div class="factions"><button class="ghost" type="button" data-pa="aione" data-id="${p.id}" title="${esc(P_AI_NOTE)}">Ask AI for the pose</button><span id="p-aisay" class="sub" role="status"></span></div>`:''}
@@ -330,7 +330,7 @@ function pOnePage(p){
       <p id="p-eerr" class="aderr swide" role="alert" hidden></p>
       <div class="factions swide"><button class="btn" type="submit">Save changes</button>
         <button class="ghost" type="button" data-pa="withthis" data-id="${p.id}">Compare with…</button>
-        <a class="ghost" href="${pSrc(p)}" download="progress-${p.date}-${p.pose}.jpg">Download</a>
+        <a class="ghost" href="${pSrc(p)}" download="${esc(`progress-${p.date}-${p.pose}.jpg`)}">Download</a>
         <button class="ghost fdel" type="button" data-pa="del" data-id="${p.id}">Delete</button></div>
     </form>`;
 }

@@ -116,9 +116,9 @@ Add "notes": an array of short strings listing anything you estimated, converted
 Reply with only the JSON object: {"items": [{"name": "...", "amount": 5, "unit": "g", "notes": "..."}], "notes": [...]}`;
 }
 /* the model's unit words onto ours: "µg" → mcg, "capsule" → capsules, "iu" → IU */
-const UNIT_ALIAS = { 'µg': 'mcg', 'μg': 'mcg', ug: 'mcg', microgram: 'mcg', micrograms: 'mcg', milligram: 'mg', milligrams: 'mg', gram: 'g', grams: 'g',
+const UNIT_ALIAS = Object.assign(Object.create(null), { 'µg': 'mcg', 'μg': 'mcg', ug: 'mcg', microgram: 'mcg', micrograms: 'mcg', milligram: 'mg', milligrams: 'mg', gram: 'g', grams: 'g',
   iu: 'IU', caps: 'capsules', cap: 'capsules', capsule: 'capsules', tab: 'tablets', tabs: 'tablets', tablet: 'tablets', softgel: 'softgels',
-  scoop: 'scoops', serving: 'servings', drop: 'drops', millilitres: 'ml', milliliters: 'ml', mL: 'ml' };
+  scoop: 'scoops', serving: 'servings', drop: 'drops', millilitres: 'ml', milliliters: 'ml', mL: 'ml' });
 function aiUnit(v) {
   const s = String(v == null ? '' : v).trim();
   if (UNITS.includes(s)) return s;
@@ -289,4 +289,4 @@ const exportFor = user => ({
   trends: trendsOf(user),
 });
 
-module.exports = { router, exportFor, trendsOf, UNITS };
+module.exports = { router, exportFor, trendsOf, UNITS, aiUnit };

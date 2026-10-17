@@ -82,7 +82,7 @@ function clean(input) {
   }
   if (!Array.isArray(templates) || templates.length > MAX_TEMPLATES) throw new Error(`Keep to ${MAX_TEMPLATES} day templates or fewer`);
   for (const t of templates) {
-    if (!isObj(t) || typeof t.id !== 'string' || !TEMPLATE_ID.test(t.id)) throw new Error('A day template id must be letters, digits or _ (starting with a letter)');
+    if (!isObj(t) || typeof t.id !== 'string' || !TEMPLATE_ID.test(t.id) || t.id in Object.prototype) throw new Error('A day template id must be letters, digits or _ (starting with a letter)');
     if (out.templates.some(x => x.id === t.id)) throw new Error(`Day template "${t.id}" is listed twice`);
     out.templates.push({ id: t.id, name: text(t.name, 40, 'A day template name', true) });
   }

@@ -66,6 +66,8 @@ const isFree=f=>{const F=FOODS[f];return !!(F&&F.free&&FREE[F.free]);};
 const SWAP_LISTS={p:PROTEIN_SWAPS,c:CARB_SWAPS,x:FAT_SWAPS};
 const FOOD_FIELDS=['n','k','p','c','f','d','step','unit','min','max','order','group','free'];
 const ZERO_TARGETS={k:0,p:0,c:0,f:0};
+/* a plan's own entry only: a template or food id like "constructor" never finds Object.prototype's */
+const own=(o,k)=>o&&typeof o==='object'&&Object.prototype.hasOwnProperty.call(o,k)?o[k]:undefined;
 function foodGroup(id){for(const g in SWAP_LISTS)if(SWAP_LISTS[g].includes(id))return g;return '';}
 /* a calculator food from a plan's food record */
 function planFoodRec(id,r){
@@ -98,7 +100,7 @@ function applyDefaults(cfg){
   const sch=Array.isArray(cfg.schedule)&&cfg.schedule.length===7?cfg.schedule:[];
   for(let d=0;d<7;d++)TYPE[d]=TEMPLATES.some(t=>t.id===sch[d])?sch[d]:first;
   for(const k in COACH)delete COACH[k];
-  TEMPLATES.forEach(t=>{COACH[t.id]={...ZERO_TARGETS,...((cfg.targets||{})[t.id]||{})};});
+  TEMPLATES.forEach(t=>{COACH[t.id]={...ZERO_TARGETS,...(own(cfg.targets,t.id)||{})};});
   PLAN=cfg.plan&&typeof cfg.plan==='object'?cfg.plan:{};
   FREE_KINDS.forEach(x=>{FREE[x]=!!(cfg.free&&cfg.free[x]);});
   if(typeof recalcPudding==='function'&&typeof S!=='undefined')recalcPudding();
@@ -109,7 +111,8 @@ const templateName=id=>{const t=TEMPLATES.find(x=>x.id===id);return t?t.name:'';
 const planFood=id=>!!FOODS[id]&&!FOODS[id].gone&&(id!=='pudding'||PUD_ON)&&!String(id).startsWith('L:');
 /* the meals of a day template, ready to use; foods that no longer exist are left out. Fats and spreads go in their own box. */
 function planOf(t){
-  return (PLAN[t]||[]).map(m=>{const o={id:String(m.id),name:m.name,p:[],c:[],x:[]};if(m.note)o.note=m.note;
+  const meals=own(PLAN,t);
+  return (Array.isArray(meals)?meals:[]).map(m=>{const o={id:String(m.id),name:m.name,p:[],c:[],x:[]};if(m.note)o.note=m.note;
     ['p','c','x'].forEach(b=>(m[b]||[]).forEach(i=>{if(FOODS[i.f])o[b==='c'&&FAT_SWAPS.includes(i.f)?'x':b].push(it(i.f,+i.g||0,!!i.lock));}));return o;});
 }
 /* the plan in use for each day template, as plain data (what the admin page shows and downloads) */

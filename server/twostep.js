@@ -26,22 +26,7 @@ const q = {
 };
 
 /* ---------- the secret, sealed at rest ---------- */
-const KEY = Buffer.from(crypto.hkdfSync('sha256', config.sessionSecret, 'logbook-monster', 'totp-secret-v1', 32));
-function seal(buf) {
-  const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', KEY, iv);
-  const ct = Buffer.concat([c.update(buf), c.final()]);
-  return ['v1', iv, c.getAuthTag(), ct].map(x => (typeof x === 'string' ? x : x.toString('base64url'))).join('.');
-}
-/* null when it can't be opened (SESSION_SECRET changed): only recovery codes work then */
-function unseal(s) {
-  try {
-    const [v, iv, tag, ct] = String(s).split('.');
-    if (v !== 'v1') return null;
-    const d = crypto.createDecipheriv('aes-256-gcm', KEY, Buffer.from(iv, 'base64url'));
-    d.setAuthTag(Buffer.from(tag, 'base64url'));
-    return Buffer.concat([d.update(Buffer.from(ct, 'base64url')), d.final()]);
-  } catch { return null; }
-}
+const { seal, unseal } = require('./seal')('totp-secret-v1');   /* null from unseal when SESSION_SECRET changed: only recovery codes work then */
 
 const row = id => q.get.get(id);
 const isOn = id => { const r = row(id); return !!(r && r.enabled); };

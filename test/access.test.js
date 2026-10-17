@@ -145,7 +145,7 @@ async function seed() {
   const key = (await dee('POST', '/api/totp/setup', {})).body.secret;
   assert.strictEqual((await dee('POST', '/api/totp/enable', { code: totp.totp(totp.fromBase32(key)) })).status, 200);
   const ok = async (p, what) => { const r = await p; assert.ok(r.status === 200 || r.status === 202, `${what}: ${r.status} ${JSON.stringify(r.body)}`); return r.body; };
-  await ok(ann('PUT', '/api/settings', { theme: 'annmark' }), 'settings');
+  await ok(ann('PUT', '/api/settings', { snackOv: { annmark: { k: 1 } } }), 'settings');
   await ok(ann('PUT', '/api/my/defaults', plan('annmark bowl')), 'plan');
   await ok(ann('PUT', '/api/my/defaults', plan('annmark later bowl', FROM)), 'dated plan');
   await ok(ann('PUT', `/api/days/${DATE}`, day('annmark day', 2417)), 'day');
@@ -230,7 +230,7 @@ const ROUTES = [
   { key: 'PUT /api/admin/email', scope: 'admin', body: () => ({ host: 'smtp.example.com', user: 'x', pass: 'y', from: 'x@example.com' }) },
   { key: 'POST /api/admin/email/test', scope: 'admin', body: () => ({ to: 'x@example.com' }) },
   { key: 'GET /api/settings', own: [{ check: noAnn }] },
-  { key: 'PUT /api/settings', body: () => ({ theme: 'hijack' }), own: [{ body: () => ({ theme: 'bob' }) }] },
+  { key: 'PUT /api/settings', body: () => ({ snackOv: { hijack: { k: 1 } } }), own: [{ body: () => ({ snackOv: { bob: { k: 1 } } }) }] },
   { key: 'GET /api/days', own: [{ check: noAnn }] },
   { key: 'GET /api/days/:date', own: [{ expect: [404] }] },
   { key: 'PUT /api/days/:date', body: () => day('hijack', 1), own: [{ body: () => day('bob day', 1999) }] },

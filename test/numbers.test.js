@@ -108,3 +108,17 @@ test('a regime import line with no amount keeps the usual amount (and unit) you 
   const r2 = await ann('POST', '/api/supps/import', { items: [{ name: 'PR Zinc', amount: 25, unit: 'mg' }] });
   assert.strictEqual(r2.body.supplements.find(s => s.id === id).amount, 25, 'an amount given still replaces it');
 });
+
+test('settings: only the keys the app uses are stored, and markup is refused (tracker-code-006)', async () => {
+  const ok = { pud: { rice: 100 }, snackOv: { reese: { k: '50' } }, pBasis: 'direct' };
+  assert.strictEqual((await ann('PUT', '/api/settings', { ...ok, junk: 1, theme: '<b>x</b>' })).status, 200);
+  assert.deepStrictEqual((await ann('GET', '/api/settings')).body, { pud: { rice: 100 }, snackOv: { reese: { k: 50 } }, pBasis: 'direct' });
+  for (const bad of [
+    { snackOv: { reese: { k: '1"><b id=prsv>PR-PROBE-tracker-006</b>' } } },
+    { snackOv: { reese: { n: 5 } } },
+    { snackOv: { 'x"><b>': { k: 1 } } },
+    { snackOv: { constructor: { k: 1 } } },
+    { pud: { evil: 1 } },
+    { pBasis: '<b>' },
+  ]) assert.strictEqual((await ann('PUT', '/api/settings', bad)).status, 400, JSON.stringify(bad));
+});

@@ -602,13 +602,19 @@ test('invites: admin invites someone not in ALLOWED_EMAILS, they set a password 
   const chk = await guest.req('POST', '/auth/invite/check', { token });
   assert.deepStrictEqual([chk.status, chk.body.email, chk.body.name], [200, 'new.person@example.com', 'Newbie']);
   assert.strictEqual((await guest.req('POST', '/auth/invite/accept', { token, password: 'short' })).status, 400);
-  assert.strictEqual((await guest.req('POST', '/auth/invite/accept', { token, password: 'invited-pass-1' })).status, 200);
+  assert.strictEqual((await guest.req('POST', '/auth/invite/accept', { token, password: 'invited-pass-1',
+    name: 'Real Name\r\n\r\nURGENT: re-enter your password at https://evil.example/x or www.evil.example or evil.example <b>now</b>' })).status, 200);
   assert.strictEqual((await guest.req('GET', '/api/me')).body.email, 'new.person@example.com');
   assert.strictEqual((await guest.req('GET', '/api/admin/users')).status, 403);
   assert.strictEqual((await guest.req('POST', '/auth/invite/check', { token })).status, 404);   /* used up */
 
   for (let i = 0; i < 20 && !mails.slice(before).some(x => /joined Logbook Monster/.test(x.data)); i++) await new Promise(r => setTimeout(r, 50));
   assert.ok(mails.slice(before).some(x => /me@example\.com/.test(x.to) && /joined Logbook Monster/.test(x.data)), 'inviter is notified');
+  /* the name the invitee typed is one short line with no links or markup in the admin's email (auth-code-014) */
+  const joined = mails.slice(before).find(x => /joined Logbook Monster/.test(x.data)).data.replace(/=\n/g, '');
+  assert.ok(/^Real Name URGENT re-enter your password \(new/m.test(joined), joined);
+  assert.ok(!/evil|<b>|https:\/\/evil/.test(joined), joined);
+  assert.ok(/\(new\.person@example\.com\) accepted your invite/.test(joined), joined);
 
   list = (await admin.req('GET', '/api/admin/users')).body;
   const np = list.users.find(u => u.email === 'new.person@example.com');

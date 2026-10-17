@@ -15,7 +15,7 @@ const rateLimit = require('express-rate-limit');
 const { isDate, writeError } = require('./dates');
 const version = require('./version');
 
-fs.mkdirSync(config.photoDir, { recursive: true });
+fs.mkdirSync(config.photoDir, { recursive: true, mode: 0o700 });
 
 /* updated: the version a change is checked against (server/version.js) – when it was last changed, or uploaded */
 const COLS = 'id, date, pose, style, pose_ai, note, size, created_at AS created, COALESCE(updated_at, created_at) AS updated, file, thumb';
@@ -154,7 +154,7 @@ router.post('/', uploadLimit, rawImage(MAX_BYTES), async (req, res) => {
     if (q.count.get(req.user.id).n >= MAX_PHOTOS) throw fail(`You have the most photos an account can keep (${MAX_PHOTOS})`);
     const file = newName(EXT[type]), bytes = clean(req.body, type);
     if (q.bytes.get(req.user.id).n + bytes.length > MAX_TOTAL) throw full();
-    await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx' });
+    await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 });
     try {
       const { lastInsertRowid } = q.add.run(req.user.id, m.date, m.pose, m.style, req.query.ai === '1' ? 1 : 0, m.note, file, type, bytes.length);
       res.json(view(q.get.get(req.user.id, Number(lastInsertRowid))));
@@ -170,7 +170,7 @@ router.put('/:id/thumb', uploadLimit, rawImage(MAX_THUMB), async (req, res) => {
     if (sniff(req.body) !== 'image/jpeg') throw fail('The thumbnail must be a JPEG');
     const file = newName('.jpg'), bytes = cleanJpeg(req.body);
     if (q.bytes.get(req.user.id).n - row.thumb_size + bytes.length > MAX_TOTAL) throw full();
-    await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx' });
+    await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 });
     if (!q.thumb.run(file, bytes.length, req.user.id, id).changes) { unlink(file); throw fail('No such photo', 404); }   /* deleted meanwhile */
     unlink(row.thumb);
     res.json(view(q.get.get(req.user.id, id)));
