@@ -12,7 +12,7 @@ let SUPPS=null, SUNITS=['g','mg','mcg','IU','ml','drops','capsules','tablets','s
 const SLOG={};                    /* date -> that day's entries */
 let STREND=new Set();             /* names followed on the Timeline chart, lower case */
 let sDate=todayStr(), sPick='', sUnit='mg', sQuery='', sFilter='all', sMsg='', sTok=0;
-let SAI=false, sAi=null, sAiBusy=false, sAiMsg='';   /* AI set up; the regime being checked; reading now; its error */
+let SAI=false, sAi=null, sAiMsg='';   /* AI set up; the regime being checked; its error (jobBusy('supps'): reading now) */
 
 const sById=id=>SUPPS&&SUPPS.find(s=>s.id===id);
 const sNum=n=>String(Math.round(n*1000)/1000);
@@ -130,8 +130,8 @@ function sLibPage(){
 
 /* ---------- AI: a supplement regime into line items ---------- */
 function sAiBlock(){
-  const row=SAI
-    ?`<label class="grow gadd gfile${sAiBusy?' off':''}"><span>✦ ${sAiBusy?'Reading your regime – this can take a minute…':'Read a supplement regime with AI (PDF or photo)…'}</span>
+  const sAiBusy=jobBusy('supps'), row=SAI
+    ?`<label class="grow gadd gfile${sAiBusy?' off':''}"><span>✦ ${sAiBusy?'Reading your regime – this can take a minute. You can leave this page; you’ll be told when it’s ready.':'Read a supplement regime with AI (PDF or photo)…'}</span>
         <input id="s-aifile" type="file" accept=".pdf,application/pdf,image/png,image/jpeg,image/webp"${sAiBusy?' disabled':''}></label>`
     :`<div class="grow gadd off"><span>✦ Read a supplement regime with AI – ${isAdmin?'add an OpenRouter key on the <a href="#admin">Super admin page</a> to turn this on':'the super admin needs to add an OpenRouter key first'}</span></div>`;
   return `<div class="glist">${row}</div>${sAiMsg?`<p class="aderr" role="alert">${esc(sAiMsg)}</p>`:''}${sAi?sAiPreview():''}`;
@@ -160,18 +160,17 @@ function sAiPreview(){
 }
 async function sAiRead(file){
   if(file.size>10*1024*1024){sAiMsg='That file is over 10 MB.';renderSuppAi();return;}
-  sAiBusy=true;sAiMsg='';sAi=null;renderSuppAi();
-  try{
-    let r;
-    try{r=await fetch('/api/supps/ai-import',{method:'POST',credentials:'same-origin',headers:{'content-type':file.type||'application/pdf','x-csrf-token':csrf},body:file});}
-    catch{throw new Error('Can’t reach the server – is it still running?');}
-    if(r.status===401){location.href='/login'+location.hash;return;}
-    const j=await r.json().catch(()=>({}));
-    if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);
-    sAi={file:file.name,notes:j.notes||[],items:j.items.map(x=>({...x,on:true})),log:false,day:todayStr()};
-  }catch(err){sAiMsg='The AI couldn’t read that: '+err.message;}
-  sAiBusy=false;renderSuppAi();
+  sAiMsg='';sAi=null;
+  try{await jobStart('/api/supps/ai-import','supps',file);}   /* read in the background: jobs.js brings the result to J_OPEN.supps */
+  catch(err){if(err.signedOut)return;sAiMsg='The AI couldn’t read that: '+err.message;}
+  renderSuppAi();
 }
+J_BUSY.supps=renderSuppAi;
+J_OPEN.supps=job=>{
+  if(job.status!=='done'){sAi=null;sAiMsg='The AI couldn’t read that: '+(job.error||'Something went wrong');}
+  else{const j=job.result;sAiMsg='';sAi={file:job.label||'your regime',notes:j.notes||[],items:j.items.map(x=>({...x,on:true})),log:false,day:todayStr()};}
+  renderSuppAi();
+};
 async function sAiAdd(btn){
   const err=$('#s-aierr'), items=sAi.items.filter(x=>x.on).map(({name,amount,unit,notes})=>({name,amount,unit,notes}));
   const day=sAi.log?sAi.day:null;
@@ -264,7 +263,7 @@ document.addEventListener('click',async e=>{
 document.addEventListener('change',e=>{
   if(view!=='supps')return;
   if(e.target.dataset.st!=null)sSetTrend(e.target);
-  else if(e.target.id==='s-aifile'){const f=e.target.files&&e.target.files[0];e.target.value='';if(f&&!sAiBusy)sAiRead(f);}
+  else if(e.target.id==='s-aifile'){const f=e.target.files&&e.target.files[0];e.target.value='';if(f&&!jobBusy('supps'))sAiRead(f);}
   else if(e.target.dataset.sai==='on'&&sAi){sAi.items[+e.target.dataset.i].on=e.target.checked;renderSuppAi();}
   else if(e.target.id==='s-ailog'&&sAi){sAi.log=e.target.checked;$('#s-ailogdate').disabled=!sAi.log;}
   else if(e.target.id==='s-ailogdate'&&sAi)sAi.day=e.target.value;

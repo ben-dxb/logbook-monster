@@ -15,7 +15,7 @@ const AD_MAX_TPL=12;
 let AD=null, AD_BASE=null, adSaved='', adType=null, adMsg='', adErrs=[], adBusy=false;
 let DEFS={mine:null,myVersions:[]};          /* your plan from the server: the change in effect today and every dated change */
 let DEFS_ON, adVer=null, adFrom='';          /* plan change applied now; the one being edited; the date a save takes effect from ('' = from the start) */
-let adAi=null, adAiBusy=false, adNotes=[], adSuper=false;
+let adAi=null, adNotes=[], adSuper=false;
 const AD_TABS=['ai','people','email','options'];
 let adTab='ai';                              /* the super admin tab shown */
 const adOpen=new Set();                      /* food editors left open */
@@ -468,11 +468,12 @@ async function adAiLoad(){
 function adAiRender(){
   if(!adAi)return;
   const plan=(adAi.tasks||[]).find(t=>t.id==='plan');
-  $('#ad-aistate').textContent=adAiBusy?'Reading the plan – this can take a minute or two…'
+  const busy=jobBusy('plan');
+  $('#ad-aistate').textContent=busy?'Reading the plan – this can take a minute or two. You can leave this page; you’ll be told when it’s ready.'
     :adAi.configured?(plan?`Using ${plan.uses}`:'')
     :isAdmin?'Add an OpenRouter API key on the Super admin page (AI tab) to turn this on.':'The super admin needs to add an OpenRouter key first.';
-  $('#ad-aibtn').classList.toggle('off',!adAi.configured||adAiBusy);
-  $('#ad-aifile').disabled=!adAi.configured||adAiBusy;
+  $('#ad-aibtn').classList.toggle('off',!adAi.configured||busy);
+  $('#ad-aifile').disabled=!adAi.configured||busy;
   if(!adAi.tasks)return;
   $('#ad-aikeystate').innerHTML=adAi.configured?`<span class="chip ok">✓ Set up</span> Key ${esc(adAi.hint)}${adAi.source==='env'?' (from .env)':''}.`
     :'<span class="chip bad">Not set up</span> AI features are off for everyone until a key is saved.';
@@ -506,24 +507,24 @@ $('#ad-keydel').addEventListener('click',async()=>{
   adAiRender();
 });
 $('#ad-aifile').addEventListener('change',async e=>{
-  const el=e.target, file=el.files&&el.files[0];el.value='';if(!file||adAiBusy)return;
+  const el=e.target, file=el.files&&el.files[0];el.value='';if(!file||jobBusy('plan'))return;
   if(file.size>10*1024*1024){adErrs=['That file is over 10 MB.'];adMsg='';renderAdmin();return;}
-  adAiBusy=true;adMsg='';adErrs=[];adNotes=[];adAiRender();renderAdmin();
-  try{
-    let r;
-    try{r=await fetch('/api/my/ai-import',{method:'POST',credentials:'same-origin',
-      headers:{'content-type':file.type||'application/pdf','x-csrf-token':csrf},body:file});}
-    catch{throw new Error('Can’t reach the server – is it still running?');}
-    const j=await r.json().catch(()=>({}));
-    if(r.status===401){location.href='/login'+location.hash;return;}
-    if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);
-    const got=adApplyJson(j).map(adTplName);
-    const nf=Object.keys(j.foods||{}).length;
-    adMsg=`AI read ${file.name}: ${got.join(', ')}${nf?`, ${nf} new food${nf>1?'s':''}`:''}${j.targets&&Object.keys(j.targets).length?', targets':''}${j.schedule?', week schedule':''}. Check it below, then save.`;
-    adNotes=j.notes||[];
-  }catch(err){adMsg='The AI import didn’t work:';adErrs=[err.message];}
-  adAiBusy=false;adAiRender();renderAdmin();
+  adMsg='';adErrs=[];adNotes=[];
+  try{await jobStart('/api/my/ai-import','plan',file);}   /* read in the background: jobs.js brings the result to J_OPEN.plan */
+  catch(err){if(err.signedOut)return;adMsg='The AI import didn’t work:';adErrs=[err.message];}
+  adAiRender();renderAdmin();
 });
+J_BUSY.plan=adAiRender;
+J_OPEN.plan=job=>{
+  adErrs=[];adNotes=[];
+  if(job.status!=='done'){adMsg='The AI import didn’t work:';adErrs=[job.error||'Something went wrong'];renderAdmin();return;}
+  if(!AD){adPick();adLoad();}
+  const j=job.result, got=adApplyJson(j).map(adTplName);
+  const nf=Object.keys(j.foods||{}).length;
+  adMsg=`AI read ${job.label||'your plan'}: ${got.join(', ')}${nf?`, ${nf} new food${nf>1?'s':''}`:''}${j.targets&&Object.keys(j.targets).length?', targets':''}${j.schedule?', week schedule':''}. Check it below, then save.`;
+  adNotes=j.notes||[];
+  renderAdmin();
+};
 
 
 /* ---------- Delete progress photos between two dates (account admin, your own photos) ---------- */

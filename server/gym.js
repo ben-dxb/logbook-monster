@@ -6,6 +6,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const ai = require('./ai');
+const jobs = require('./jobs');
 
 const q = {
   exercises: db.prepare(`SELECT e.id, e.name, e.notes, e.trend, e.parts, COUNT(s.id) AS sets, MAX(s.at) AS last
@@ -301,14 +302,14 @@ router.delete('/sets/:id', send(req => { q.delSet.run(req.user.id, idOf(req.para
 router.get('/sessions', send(req => q.sessions.all(req.user.id, Math.min(1000, +req.query.limit || 400))
   .map(r => ({ ...r, volume: Math.round(r.volume || 0), ex: String(r.ex || '').split(',').filter(Boolean).map(Number) }))));
 
-/* AI: read the file and hand back workouts to check. Nothing is saved until /import. */
-router.post('/ai-import', aiLimit, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), async (req, res) => {
-  try {
+/* AI: read the file and hand back workouts to check. Nothing is saved until /import. ?bg=1 runs it in the background (server/jobs.js). */
+router.post('/ai-import', aiLimit, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), (req, res) => {
+  const buf = Buffer.isBuffer(req.body) ? req.body : null, type = String(req.get('content-type') || '').split(';')[0].trim();
+  return jobs.respond(req, res, 'workout', () => ai.check(buf, type), async () => {
     const names = q.exercises.all(req.user.id).map(e => e.name);
-    const type = String(req.get('content-type') || '').split(';')[0].trim();
-    const { reply, model } = await ai.ask(prompt(names), Buffer.isBuffer(req.body) ? req.body : null, type, 'workout plan', { task: 'workout' });
-    res.json({ ...tidyWorkouts(reply, req.user), model });
-  } catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); if (!e.status) console.error(e); }
+    const { reply, model } = await ai.ask(prompt(names), buf, type, 'workout plan', { task: 'workout' });
+    return { ...tidyWorkouts(reply, req.user), model };
+  });
 });
 
 /* Add checked workouts: exercises are matched by name (new ones are created), then each workout is added. */

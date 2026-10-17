@@ -375,6 +375,55 @@ test('AI: the key and models are the super admin’s, a plan is read against you
     assert.match(e.error, msg);
   }
 
+  /* ?bg=1: answers at once with a job and reads in the background; the result waits until it's opened */
+  const bgPdf = async (c, body = '%PDF-1.4 fake') => {
+    const r = await c.req('GET', '/api/me');
+    return fetch(BASE + '/api/my/ai-import?bg=1', { method: 'POST', body,
+      headers: { 'content-type': 'application/pdf', 'x-csrf-token': r.body.csrf, cookie: c.cookie(), 'x-file-name': encodeURIComponent('Coach plan.pdf') } });
+  };
+  const waitJob = async (c, id) => {
+    for (let i = 0; i < 100; i++) {
+      const r = await c.req('GET', '/api/jobs/' + id);
+      if (r.body.status !== 'running') return r;
+      await new Promise(ok => setTimeout(ok, 50));
+    }
+    throw new Error('job never finished');
+  };
+  let bg = await bgPdf(admin);
+  const started = await bg.json();
+  assert.strictEqual(bg.status, 202, JSON.stringify(started));
+  assert.deepStrictEqual([started.job.kind, started.job.label], ['plan', 'Coach plan.pdf']);
+  assert.ok(!('result' in started.job));
+  let job = await waitJob(admin, started.job.id);
+  assert.strictEqual(job.body.status, 'done', JSON.stringify(job.body));
+  assert.deepStrictEqual(job.body.result.templates, [{ id: 'T', name: 'Training' }]);
+  assert.deepStrictEqual(job.body.result.plan.T[0].c, [{ f: 'banana', g: 120, lock: false }]);
+  assert.strictEqual(job.body.result.model, 'test/model');
+  let list = (await admin.req('GET', '/api/jobs')).body.jobs;
+  assert.deepStrictEqual(list.map(j => [j.id, j.status, j.seen]), [[started.job.id, 'done', false]]);
+  assert.ok(!('result' in list[0]), 'the list leaves the results out');
+  /* someone else's job can't be read or marked */
+  const other = client();
+  await other.req('GET', '/auth/config');
+  await other.req('POST', '/auth/login', { email: 'friend@example.com', password: 'longenough2' });
+  await other.req('GET', '/api/me');
+  assert.strictEqual((await other.req('GET', '/api/jobs/' + started.job.id)).status, 404);
+  assert.strictEqual((await other.req('POST', `/api/jobs/${started.job.id}/seen`, {})).status, 404);
+  assert.deepStrictEqual((await other.req('GET', '/api/jobs')).body.jobs, []);
+  /* opened: off the list, still readable by id */
+  assert.strictEqual((await admin.req('POST', `/api/jobs/${started.job.id}/seen`, {})).status, 200);
+  assert.deepStrictEqual((await admin.req('GET', '/api/jobs')).body.jobs, []);
+  assert.strictEqual((await admin.req('GET', '/api/jobs/' + started.job.id)).body.status, 'done');
+  /* a read that fails keeps its reason; a file that can't be read at all fails at once, without a job */
+  bg = await bgPdf(admin, '%PDF-1.4 BAD:noplan');
+  job = await waitJob(admin, (await bg.json()).job.id);
+  assert.deepStrictEqual([job.body.status, job.body.result], ['failed', null]);
+  assert.match(job.body.error, /couldn’t find a meal plan/);
+  const notFile = await admin.req('POST', '/api/my/ai-import?bg=1', {});
+  assert.strictEqual(notFile.status, 400);
+  assert.deepStrictEqual((await admin.req('GET', '/api/jobs')).body.jobs.map(j => j.status), ['failed']);
+  await admin.req('POST', `/api/jobs/${job.body.id}/seen`, {});
+
   assert.strictEqual((await admin.req('PUT', '/api/admin/ai', { key: '' })).body.configured, false);
   await admin.req('DELETE', '/api/my/defaults');
 });

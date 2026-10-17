@@ -310,14 +310,31 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       expect(sscroll <= 1, `horizontal overflow of ${sscroll}px on the supplements page at ${w}px wide`);
       await pg.click('#s-log .orow:last-child [data-sa=del]'); await pg.waitForFunction(n => document.querySelectorAll('#s-log .orow').length === n, sRows - 1, { timeout: 5000 });
       if (!first) {
-        /* a supplement regime read with AI (faked answer): edit a line, untick one, add the rest and log them today */
-        await pg.route('**/api/supps/ai-import', r => r.fulfill({ json: { model: 'test/model', notes: ['Guessed the strength'], items: [
-          { name: 'Smoke magnesium', amount: 400, unit: 'mg', notes: 'Evening', existing: null },
-          { name: 'Smoke zinc', amount: 15, unit: 'mg', notes: '', existing: null },
-          { name: 'Smoke fish oil', amount: 2, unit: 'capsules', notes: 'With lunch', existing: null }] } }));
+        /* a supplement regime read with AI (faked answer) in the background: leave for the Dashboard while it reads,
+           open it from the note when it's ready, then edit a line, untick one, add the rest and log them today */
+        const job = { id: 901, kind: 'supps', label: 'regime.pdf', status: 'running', error: null, seen: false };
+        await pg.route(/\/api\/supps\/ai-import\?bg=1$/, r => r.fulfill({ status: 202, json: { job } }));
+        await pg.route(/\/api\/jobs(\/.*)?$/, r => {
+          const u = new URL(r.request().url()).pathname;
+          if (u === '/api/jobs') return r.fulfill({ json: { jobs: job.seen ? [] : [job] } });
+          if (u.endsWith('/seen')) { job.seen = true; return r.fulfill({ json: { ok: true } }); }
+          r.fulfill({ json: { ...job, result: { model: 'test/model', notes: ['Guessed the strength'], items: [
+            { name: 'Smoke magnesium', amount: 400, unit: 'mg', notes: 'Evening', existing: null },
+            { name: 'Smoke zinc', amount: 15, unit: 'mg', notes: '', existing: null },
+            { name: 'Smoke fish oil', amount: 2, unit: 'capsules', notes: 'With lunch', existing: null }] } } });
+        });
         await pg.click('#s-body a[href="#supps/lib"]'); await pg.waitForSelector('#s-aifile', { state: 'attached' });
         await pg.setInputFiles('#s-aifile', { name: 'regime.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4') });
+        await pg.waitForFunction(() => /Reading your supplement regime \(regime\.pdf\)/.test(document.querySelector('#jobs').textContent), null, { timeout: 5000 });
+        expect(await pg.isDisabled('#s-aifile'), 'only one regime is read at a time');
+        await pg.click('a[data-view=dash]'); await pg.waitForSelector('#v-dash:not([hidden])');
+        job.status = 'done';
+        await pg.waitForSelector('#jobs .job.ok [data-job=open]', { timeout: 10000 });
+        expect(await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 0, 'the AI note should fit the screen');
+        await pg.click('#jobs [data-job=open]');
         await pg.waitForSelector('.sai .sairow');
+        expect(await pg.evaluate(() => location.hash) === '#supps/lib' && await pg.isHidden('#jobs'), 'Open should go to the regime and clear the note');
+        await pg.unroute(/\/api\/jobs(\/.*)?$/);
         expect(await pg.locator('.sai .sairow').count() === 3 && /Guessed the strength/.test(await pg.textContent('.sai')), 'the AI’s line items and notes should be shown');
         await pg.fill('.sai [data-sai=amount][data-i="0"]', '300');
         await pg.uncheck('.sai [data-sai=on][data-i="1"]');

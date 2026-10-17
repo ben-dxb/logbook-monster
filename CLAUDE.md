@@ -74,6 +74,10 @@
   `/api/shares`). The coach page reads only through GET routes under `/coach/<secret>/api` (info, defaults, days, weights, `timeline`,
   `photos`) and reuses `timeline.js` with `coach.js` standing in for the app's helpers (`SHARED` set → `tRO`: no edits, app links or AI).
   Add a route there only if it is a read and the coach should see it.
+- `server/jobs.js` / `public/jobs.js` – long AI reads (meal plan, workout plan, supplement regime files) run in the background: the app posts the file
+  with `?bg=1` (`jobStart`), the route answers `202 {job}` (`jobs.respond`; without `bg` it still answers with the result) and the server keeps reading, results in `ai_jobs`
+  until opened (`POST /api/jobs/:id/seen`). The app polls `GET /api/jobs` while one runs; a finished one opens by itself if you're still on its page, otherwise a note
+  (`#jobs`) and a browser notification say it's ready – and an email if the app isn't open. Each page sets `J_OPEN[kind]` / `J_BUSY[kind]`; `jobs.js` loads right after `app.js`.
 - `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by tests.
 - Secrets live only in `.env` on the server; never send them to the client or commit them.
 - Strict CSP: no inline scripts or `style=` attributes in HTML.

@@ -9,6 +9,7 @@ const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const defaults = require('./defaults');
 const ai = require('./ai');
+const jobs = require('./jobs');
 
 const COLS = 's.id, s.user_id, s.name, s.amount, s.unit, s.notes, s.public, s.updated_at, u.name AS owner';
 const LOG = 'id, date, supplement_id AS sid, name, amount, unit, note, created_at AS created';
@@ -163,14 +164,14 @@ const send = (res, e) => { if (!e.status) console.error(e); res.status(e.status 
 router.get('/', (req, res) => res.json({ supplements: q.list.all(req.user.id).map(r => view(r, req.user)), units: UNITS, trends: trendsOf(req.user),
   ai: ai.status().configured }));
 
-/* AI: read the file and hand back line items to check. Nothing is saved until /import. */
-router.post('/ai-import', aiLimit, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), async (req, res) => {
-  try {
+/* AI: read the file and hand back line items to check. Nothing is saved until /import. ?bg=1 runs it in the background (server/jobs.js). */
+router.post('/ai-import', aiLimit, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), (req, res) => {
+  const buf = Buffer.isBuffer(req.body) ? req.body : null, type = String(req.get('content-type') || '').split(';')[0].trim();
+  return jobs.respond(req, res, 'supps', () => ai.check(buf, type), async () => {
     const names = q.mine.all(req.user.id).map(r => r.name);
-    const type = String(req.get('content-type') || '').split(';')[0].trim();
-    const { reply, model } = await ai.ask(prompt(names), Buffer.isBuffer(req.body) ? req.body : null, type, 'supplement regime', { task: 'supps' });
-    res.json({ ...tidyItems(reply, req.user), model });
-  } catch (e) { send(res, e); }
+    const { reply, model } = await ai.ask(prompt(names), buf, type, 'supplement regime', { task: 'supps' });
+    return { ...tidyItems(reply, req.user), model };
+  });
 });
 
 /* Add checked line items to your library – one you already have by the same name is updated with the new amount,
