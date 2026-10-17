@@ -580,6 +580,23 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await pg.click('#ad-save');
         await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
         expect(/5 day templates/.test(await pg.textContent('#ad-planstate')), 'the new template should be saved with the plan');
+        /* a plan file is shown before the server checks it: markup in any value must stay text (RC-09) */
+        const tag = n => `"><img id="PR-PROBE-${n}" src="x">`;
+        const probe = { templates: [{ id: 'R', name: 'Rest' + tag('tname') }, { id: 'Q' + tag('tid'), name: 'Bad' }],
+          foods: { banana: { n: 'Banana' + tag('fname'), k: '90' + tag('k'), unit: 'g' + tag('unit'), group: 'c' + tag('group') }, ['x' + tag('fid')]: { n: 'x', k: 1 } },
+          targets: { R: { k: '2500' + tag('target') } },
+          plan: { R: [{ id: '1' + tag('mid'), name: 'Probe meal' + tag('mname'), note: tag('note'), p: [], c: [{ f: 'banana' + tag('item'), g: '1' + tag('g') }], x: [] }] } };
+        await pg.click('#ad-types [data-t=R]');
+        await pg.setInputFiles('#ad-file', { name: 'plan.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(probe)) });
+        await pg.waitForFunction(() => /Loaded plan\.json/.test(document.querySelector('#ad-upmsg').textContent), null, { timeout: 5000 });
+        await pg.click('.adfood[data-id=banana] summary');
+        expect(await pg.inputValue('#ad-mn-0') === 'Probe meal"><img id="PR-PROBE-mname" src="x">', 'the probe plan should be loaded, its markup kept as text');
+        expect(await pg.locator('[id^="PR-PROBE"]').count() === 0, 'markup in a plan file must not become page elements');
+        await pg.click('#ad-discard');
+        await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
+        /* the plan CSV download keeps a value that starts like a formula as text */
+        expect(JSON.stringify(await pg.evaluate(() => ['=HYPERLINK("x")', '+1', '-1', '@SUM(A1)', 'Oats, 80 g', 'plain'].map(csvCell)))
+          === JSON.stringify(['"\'=HYPERLINK(""x"")"', "'+1", "'-1", "'@SUM(A1)", '"Oats, 80 g"', 'plain']), 'CSV cells starting with = + - @ get a leading apostrophe');
         /* the daily checklist: drop Cardio, add an item, save – the Dashboard follows; Weigh in and Supplements taken tick
            themselves from today's weight and supplement log */
         await pg.waitForSelector('#ad-cl .adclrow');

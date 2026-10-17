@@ -88,7 +88,7 @@ before(async () => {
   srv = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', path.join(__dirname, '..', 'server', 'index.js')], {
     env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', BASE_URL: BASE, DB_PATH: path.join(dir, 't.db'),
       SESSION_SECRET: 'x'.repeat(40), AUTH_RATE_LIMIT: '1000', ALLOWED_EMAILS: 'me@example.com,friend@example.com', ADMIN_EMAILS: 'me@example.com', ALLOW_REGISTRATION: 'false',
-      GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: '', SMTP_HOST: '', SMTP_PASS: '', MAIL_FROM: '', OPENROUTER_BASE_URL: `http://127.0.0.1:${AI_PORT}` },
+      GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: '', SMTP_HOST: '', SMTP_PASS: '', MAIL_FROM: '', SMTP_ALLOW_HOSTS: '127.0.0.1', OPENROUTER_BASE_URL: `http://127.0.0.1:${AI_PORT}` },
     stdio: 'ignore',
   });
   for (let i = 0; i < 50; i++) {
@@ -113,6 +113,16 @@ function client() {
   };
   return { req, setCsrf: v => { csrf = v; }, cookie: () => cookie };
 }
+
+test('security headers: no caching of API answers, Permissions-Policy, base-uri none', async () => {
+  for (const p of ['/api/me', '/auth/config']) {
+    const r = await fetch(BASE + p);
+    assert.strictEqual(r.headers.get('cache-control'), 'no-store', p);
+  }
+  const r = await fetch(BASE + '/login');
+  assert.match(r.headers.get('permissions-policy'), /camera=\(\), microphone=\(\), geolocation=\(\)/);
+  assert.match(r.headers.get('content-security-policy'), /base-uri 'none'/);
+});
 
 test('pages and API need a session', async () => {
   const c = client();
@@ -525,6 +535,12 @@ test('email settings: admin-only, password never shown, test email goes out', as
   assert.strictEqual((await admin.req('POST', '/api/admin/email/test', {})).status, 409);
   assert.strictEqual((await admin.req('PUT', '/api/admin/email', { from: 'not-an-email' })).status, 400);
   assert.strictEqual((await admin.req('PUT', '/api/admin/email', { host: 'bad host!' })).status, 400);
+  /* internal addresses are refused unless SMTP_ALLOW_HOSTS lists them (it lists 127.0.0.1 for the fake server) */
+  for (const host of ['169.254.169.254', '10.0.0.1', '172.17.0.1', '192.168.0.10', '127.0.0.2', 'localhost']) {
+    const r = await admin.req('PUT', '/api/admin/email', { host, from: 'sender@gmail.example' });
+    assert.strictEqual(r.status, 400, host); assert.match(r.body.error, /private or internal/);
+  }
+  assert.strictEqual((await admin.req('GET', '/api/admin/email')).body.host, '');
   const st = await admin.req('PUT', '/api/admin/email', { from: 'sender@gmail.example', host: '127.0.0.1', port: SMTP_PORT, secure: false, pass: 'apppassword123' });
   assert.strictEqual(st.status, 200);
   assert.deepStrictEqual([st.body.configured, st.body.hasPassword, st.body.from], [true, true, 'sender@gmail.example']);
@@ -536,6 +552,13 @@ test('email settings: admin-only, password never shown, test email goes out', as
   assert.deepStrictEqual(m.auth.slice(1), ['sender@gmail.example', 'apppassword123']);   /* blank username signs in as the from address */
   assert.match(m.to, /me@example\.com/);
   assert.match(m.data, /Subject: Logbook Monster test email/);
+  /* a refusal gives a short reason, not the server's own reply (no plain connection without STARTTLS except to this loopback relay) */
+  await admin.req('PUT', '/api/admin/email', { pass: 'wrong-password' });
+  const no = await admin.req('POST', '/api/admin/email/test', { to: 'me@example.com' });
+  assert.strictEqual(no.status, 502);
+  assert.match(no.body.error, /refused the username or password/);
+  assert.ok(!/535|bad credentials/.test(no.body.error), no.body.error);
+  await admin.req('PUT', '/api/admin/email', { pass: 'apppassword123' });
 
   const friend = client();
   await friend.req('GET', '/auth/config');
