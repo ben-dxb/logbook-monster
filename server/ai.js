@@ -108,8 +108,8 @@ function save(body, user) {
 }
 
 /* The foods the model can pick from: the account's own plan foods (the ones in its plan today). */
-function foodList(user) {
-  const saved = defaults.effective(user).foods || {};
+function foodList(user, date) {
+  const saved = defaults.effective(user, date).foods || {};
   const out = {};
   for (const [id, r] of Object.entries(saved)) if (id !== 'pudding') out[id] = { n: r.n, k: r.k, p: r.p, c: r.c, f: r.f, unit: r.unit || 'g' };
   return out;
@@ -270,8 +270,8 @@ async function call(system, content, maxTokens, timeout, task) {
   }
 }
 
-async function importPlan(buf, type, user) {
-  const foods = foodList(user);
+async function importPlan(buf, type, user, date) {
+  const foods = foodList(user, date);
   const { reply, model } = await ask(prompt(foods), buf, type, 'meal plan', { task: 'plan' });
   return { ...tidy(reply, foods), model };
 }

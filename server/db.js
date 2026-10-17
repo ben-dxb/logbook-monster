@@ -11,7 +11,7 @@ db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeou
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
-  id            INTEGER PRIMARY KEY,
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
   email         TEXT NOT NULL UNIQUE COLLATE NOCASE,
   name          TEXT,
   password_hash TEXT,
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS invites (
   expires_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS exercises (
-  id         INTEGER PRIMARY KEY,
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name       TEXT NOT NULL,
   notes      TEXT NOT NULL DEFAULT '',
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS exercises (
   UNIQUE (user_id, name COLLATE NOCASE)
 );
 CREATE TABLE IF NOT EXISTS workouts (
-  id          INTEGER PRIMARY KEY,
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name        TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS workouts (
 );
 /* at is the local date and time the set was done, YYYY-MM-DDTHH:MM:SS, like the dates of days. */
 CREATE TABLE IF NOT EXISTS sets (
-  id          INTEGER PRIMARY KEY,
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   exercise_id INTEGER NOT NULL REFERENCES exercises(id) ON DELETE CASCADE,
   reps        INTEGER NOT NULL,
@@ -90,7 +90,7 @@ CREATE INDEX IF NOT EXISTS sets_at ON sets(user_id, at);
 /* The food library: foods people enter themselves, per 100 g, per 100 ml or per item, with an optional
    recipe. public = 1 shares it with every account (read-only for everyone but its owner). */
 CREATE TABLE IF NOT EXISTS foods (
-  id         INTEGER PRIMARY KEY,
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name       TEXT NOT NULL,
   unit       TEXT NOT NULL DEFAULT 'g',
@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS user_defaults (
    the log of what each account took on a day. A log entry keeps its own name, amount and unit, so it
    can be free text, and survives the library entry being changed or deleted. */
 CREATE TABLE IF NOT EXISTS supplements (
-  id         INTEGER PRIMARY KEY,
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name       TEXT NOT NULL,
   amount     REAL,
@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS supplements (
 );
 CREATE INDEX IF NOT EXISTS supplements_user ON supplements(user_id);
 CREATE TABLE IF NOT EXISTS supplement_log (
-  id            INTEGER PRIMARY KEY,
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   date          TEXT NOT NULL,
   supplement_id INTEGER REFERENCES supplements(id) ON DELETE SET NULL,
@@ -152,7 +152,7 @@ CREATE TABLE IF NOT EXISTS supplement_trends (
 /* Progress photos: the image files live on disk in config.photoDir under random names (file, and a small
    thumb made in the browser); this keeps who owns them, the date taken, the pose and a note. */
 CREATE TABLE IF NOT EXISTS photos (
-  id         INTEGER PRIMARY KEY,
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   date       TEXT NOT NULL,
   pose       TEXT NOT NULL DEFAULT 'front',
@@ -161,13 +161,14 @@ CREATE TABLE IF NOT EXISTS photos (
   type       TEXT NOT NULL,
   size       INTEGER NOT NULL,
   thumb      TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS photos_day ON photos(user_id, date);
 /* Coach links: someone's data, read only, for anyone holding the link until it runs out. Only a hash of
    the link's secret is kept, so the database alone can't open one. */
 CREATE TABLE IF NOT EXISTS shares (
-  id         INTEGER PRIMARY KEY,
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   token_hash TEXT NOT NULL UNIQUE,
   label      TEXT NOT NULL DEFAULT '',
@@ -184,7 +185,7 @@ CREATE TABLE IF NOT EXISTS checklists (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS ai_jobs (
-  id          INTEGER PRIMARY KEY,
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   kind        TEXT NOT NULL,
   label       TEXT NOT NULL DEFAULT '',
@@ -276,5 +277,42 @@ db.exec('CREATE INDEX IF NOT EXISTS days_size ON days(user_id, length(data))');
 if (!db.prepare('PRAGMA table_info(photos)').all().some(c => c.name === 'thumb_size')) {
   db.exec('ALTER TABLE photos ADD COLUMN thumb_size INTEGER NOT NULL DEFAULT 0');
 }
+
+/* Added later: when a photo's details were last changed (NULL: never since upload), the version a change is checked against. */
+if (!db.prepare('PRAGMA table_info(photos)').all().some(c => c.name === 'updated_at')) {
+  db.exec('ALTER TABLE photos ADD COLUMN updated_at TEXT');
+}
+
+/* Added later: ids are never handed out twice (AUTOINCREMENT), so a stale tab, or an id kept in a day or a workout, can't reach a
+   record made after the one it meant was deleted. SQLite can't add that to a table, so each older table is rebuilt once – rows,
+   ids, indexes and the foreign keys pointing at it as they were – in one transaction (sqlite.org/lang_altertable.html#otheralter). */
+const SEQ_TABLES = ['users', 'exercises', 'workouts', 'sets', 'foods', 'supplements', 'supplement_log', 'photos', 'shares', 'ai_jobs'];
+function seqTables() {
+  const sqlOf = t => (db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(t) || {}).sql;
+  const todo = SEQ_TABLES.filter(t => sqlOf(t) && !/\bAUTOINCREMENT\b/i.test(sqlOf(t)));
+  if (!todo.length) return;
+  db.exec('PRAGMA foreign_keys = OFF');   /* only takes effect outside a transaction */
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const broken = () => db.prepare('PRAGMA foreign_key_check').all().length;
+      const before = broken();
+      for (const t of todo) {
+        const create = sqlOf(t).replace(/^CREATE TABLE\s+("?)\w+\1/i, `CREATE TABLE "${t}_seq"`)
+          .replace(/(\bid\s+INTEGER\s+PRIMARY\s+KEY)\b/i, '$1 AUTOINCREMENT');
+        if (!create.startsWith(`CREATE TABLE "${t}_seq"`) || !/AUTOINCREMENT/.test(create)) throw new Error(`Can’t upgrade the ids of ${t}`);
+        const indexes = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL").all(t);
+        db.exec(create);
+        db.exec(`INSERT INTO "${t}_seq" SELECT * FROM "${t}"`);
+        db.exec(`DROP TABLE "${t}"`);
+        db.exec(`ALTER TABLE "${t}_seq" RENAME TO "${t}"`);
+        for (const i of indexes) db.exec(i.sql);
+      }
+      if (broken() > before) throw new Error('Upgrading the ids broke a foreign key');
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+  } finally { db.exec('PRAGMA foreign_keys = ON'); }
+}
+seqTables();
 
 module.exports = db;

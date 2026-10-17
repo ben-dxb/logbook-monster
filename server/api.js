@@ -18,6 +18,7 @@ const shares = require('./shares');
 const jobs = require('./jobs');
 const { isDate, writeError } = require('./dates');
 const { isNum } = require('./num');
+const version = require('./version');
 
 const q = {
   getSettings: db.prepare('SELECT data FROM settings WHERE user_id = ?'),
@@ -25,8 +26,9 @@ const q = {
     ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = datetime('now')`),
   getDay: db.prepare('SELECT data, updated_at FROM days WHERE user_id = ? AND date = ?'),
   listDays: db.prepare('SELECT date, summary, updated_at FROM days WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date'),
-  putDay: db.prepare(`INSERT INTO days (user_id, date, data, summary) VALUES (?, ?, ?, ?)
-    ON CONFLICT(user_id, date) DO UPDATE SET data = excluded.data, summary = excluded.summary, updated_at = datetime('now')`),
+  putDay: db.prepare(`INSERT INTO days (user_id, date, data, summary, updated_at) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, date) DO UPDATE SET data = excluded.data, summary = excluded.summary, updated_at = excluded.updated_at`),
+  dayVersion: db.prepare('SELECT updated_at FROM days WHERE user_id = ? AND date = ?'),
   delDay: db.prepare('DELETE FROM days WHERE user_id = ? AND date = ?'),
   listWeights: db.prepare('SELECT date, kg FROM weights WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date'),
   putWeight: db.prepare(`INSERT INTO weights (user_id, date, kg) VALUES (?, ?, ?)
@@ -119,8 +121,16 @@ router.get('/me', (req, res) => {
 /* Each account's own meal plan (foods, day templates, week, targets), as dated changes. There are no app-wide defaults. */
 router.get('/defaults', (req, res) => res.json(defaults.forUser(req.user)));
 /* Account admin: anyone keeps their own plan. */
+/* a change to one dated plan change is checked against that change's updatedAt (server/version.js) */
 router.put('/my/defaults', (req, res) => {
-  try { res.json(defaults.putMine(req.body, req.user)); } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+  try {
+    if (isObj(req.body) && Object.hasOwn(req.body, 'from')) {
+      const from = req.body.from != null && req.body.from !== '' ? req.body.from : null;
+      const cur = defaults.myVersions(req.user).find(v => (v.from || null) === from);
+      version.check(req, (cur && cur.updatedAt) || null);
+    }
+    res.json(defaults.putMine(req.body, req.user));
+  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 router.delete('/my/defaults', (req, res) => res.json(defaults.delMine(req.user)));
 router.delete('/my/defaults/:from', (req, res) => {
@@ -129,10 +139,10 @@ router.delete('/my/defaults/:from', (req, res) => {
 
 /* AI: the OpenRouter key and models (super admin), and reading a plan PDF into an account's plan format. */
 const adminOnly = (req, res, next) => (defaults.isAdmin(req.user) ? next() : res.status(403).json({ error: 'Only the super admin can do this' }));
-/* ?bg=1 runs it in the background (server/jobs.js) */
+/* ?bg=1 runs it in the background (server/jobs.js); ?date= is the plan change being edited, whose foods the AI is told */
 const readPlan = (req, res) => {
   const buf = Buffer.isBuffer(req.body) ? req.body : null, type = String(req.get('content-type') || '').split(';')[0].trim();
-  return jobs.respond(req, res, 'plan', () => ai.check(buf, type), () => ai.importPlan(buf, type, req.user));
+  return jobs.respond(req, res, 'plan', () => ai.check(buf, type), () => ai.importPlan(buf, type, req.user, isDate(req.query.date) ? req.query.date : undefined));
 };
 router.get('/admin/ai', adminOnly, (req, res) => res.json(ai.status()));
 router.put('/admin/ai', adminOnly, (req, res) => {
@@ -224,12 +234,15 @@ router.put('/days/:date', (req, res) => {
   if (targetsError(data.targets)) return bad(res, targetsError(data.targets));
   const json = JSON.stringify(data);
   if (json.length > MAX_JSON) return bad(res, 'Day data too large');
+  const cur = q.dayVersion.get(req.user.id, req.params.date);
+  if (version.stale(req, cur && cur.updated_at)) return res.status(409).json({ error: version.MSG });
   const old = q.daySize.get(req.user.id, req.params.date);
   if (q.daysSize.get(req.user.id).n - (old ? old.n : 0) + json.length > MAX_DAYS_TOTAL) {
     return res.status(413).json({ error: `Your saved days have reached the ${Math.round(MAX_DAYS_TOTAL / 1048576)} MB an account can keep – delete some old days first` });
   }
-  q.putDay.run(req.user.id, req.params.date, json, JSON.stringify(cleanSummary(summary)));
-  res.json({ ok: true });
+  const updated = version.stamp();
+  q.putDay.run(req.user.id, req.params.date, json, JSON.stringify(cleanSummary(summary)), updated);
+  res.json({ ok: true, updated });
 });
 router.delete('/days/:date', (req, res) => {
   if (!isDate(req.params.date)) return bad(res, 'Bad date');

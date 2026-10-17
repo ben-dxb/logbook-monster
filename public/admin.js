@@ -117,6 +117,7 @@ function renderAdmin(){
     :'<span class="chip">No plan yet</span> Upload your plan, read a PDF with AI, or add a day template below and build it here.';
   $('#ad-upmsg').innerHTML=(adMsg?`<p class="admsg">${esc(adMsg)}</p>`:'')+(adErrs.length?`<ul class="aderr">${adErrs.slice(0,12).map(e=>`<li>${esc(e)}</li>`).join('')}${adErrs.length>12?`<li>…and ${adErrs.length-12} more</li>`:''}</ul>`:'')
     +(adNotes.length?`<details class="adnotes" open><summary>What the AI estimated or left out (${adNotes.length})</summary><ul>${adNotes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></details>`:'');
+  adAiPreview();
   const full=AD.templates.length>=AD_MAX_TPL;
   $('#ad-types').innerHTML=AD.templates.map(t=>`<button type="button" data-ad="type" data-t="${esc(t.id)}" aria-pressed="${t.id===adType}">${esc(t.name)}</button>`).join('')
     +`<button type="button" class="adtadd" data-ad="tadd"${full?' disabled':''}>+ New day template</button>`;
@@ -244,6 +245,7 @@ document.addEventListener('change',e=>{
   else if(a==='wday'){AD.schedule[+el.dataset.i]=el.value;}
   else if(a==='free'){AD.free[el.dataset.k]=el.checked;adTotals();}
   else if(a==='from'){adFrom=isDate(el.value)?el.value:'';adFromToday=false;}
+  else if(a==='aipick'){if(adAiPend)adAiPend.on[el.dataset.key]=el.checked;return;}
   else if(a==='food'&&el.tagName==='SELECT'){AD.foods[el.dataset.id][el.dataset.k]=el.value;const s=$('#ad-fs-'+el.dataset.id);if(s)s.innerHTML=adFoodLine(AD.foods[el.dataset.id]);adTotals();}
   else return;
   adStatus();
@@ -274,6 +276,8 @@ document.addEventListener('click',e=>{
     adPick(v);adLoad();adMsg='';adErrs=[];adNotes=[];}
   else if(a==='vdel'){adDelete(b.dataset.from||null);return;}
   else if(a==='save'){adSave();return;}
+  else if(a==='aiuse'){if(adAiPend)adAiUse();}
+  else if(a==='aidrop'){adAiPend=null;adNotes=[];jobSeen('plan');}
   else return;
   renderAdmin();
 });
@@ -325,7 +329,8 @@ window.addEventListener('beforeunload',e=>{if(adDirty()){e.preventDefault();e.re
 async function adSave(){
   adBusy=true;adStatus();
   if(adFromToday&&adFrom<todayStr())adFrom=todayStr();
-  try{const from=adFrom||null;adSaved_(await api('PUT','/api/my/defaults',{...adPayload(),from}),from);}
+  try{const from=adFrom||null, cur=(DEFS.myVersions||[]).find(v=>(v.from||null)===from);   /* the change this save replaces, as this tab has it */
+    adSaved_(await api('PUT','/api/my/defaults',{...adPayload(),from},(cur&&cur.updatedAt)||null),from);}
   catch(err){if(!err.signedOut){adErrs=[err.message];adMsg='Couldn’t save:';}}
   adBusy=false;renderAdmin();
 }
@@ -439,6 +444,11 @@ function adTakeTemplates(list){
   AD.schedule=AD.schedule.map(x=>adTpl(x)?x:AD.templates[0]?AD.templates[0].id:null);
 }
 /* load a plan-shaped object (a JSON file or the AI's reading of a PDF) into the draft; returns the templates it filled */
+function adMeals(list){
+  const items=v=>Array.isArray(v)?v.filter(i=>i&&typeof i==='object'&&i.f!=null).map(adCleanItem):[];
+  return list.filter(m=>m&&typeof m==='object').map(m=>({id:String(m.id).slice(0,8),name:String(m.name||'').slice(0,100),...(m.note?{note:String(m.note).slice(0,200)}:{}),
+    p:items(m.p),c:items(m.c),x:items(m.x)}));
+}
 function adApplyJson(j){
   const full=j&&(j.plan||j.foods||j.schedule||j.targets||j.templates);
   const plan=full?j.plan:j;
@@ -459,9 +469,7 @@ function adApplyJson(j){
     if(v&&typeof v==='object')MAC.forEach(m=>{if(v[m]!==undefined)AD.targets[id][m]=adNum(v[m]);});});
   const got=[];
   if(plan&&typeof plan==='object'){AD.templates.forEach(({id})=>{if(!adOwnId(plan,id)||!Array.isArray(plan[id]))return;
-      const items=v=>Array.isArray(v)?v.filter(i=>i&&typeof i==='object'&&i.f!=null).map(adCleanItem):[];
-      AD.plan[id]=plan[id].filter(m=>m&&typeof m==='object').map(m=>({id:String(m.id).slice(0,8),name:String(m.name||'').slice(0,100),...(m.note?{note:String(m.note).slice(0,200)}:{}),
-        p:items(m.p),c:items(m.c),x:items(m.x)}));got.push(id);});
+      AD.plan[id]=adMeals(plan[id]);got.push(id);});
     if(got.length&&!got.includes(adType))adType=got[0];}
   return got;
 }
@@ -539,22 +547,79 @@ $('#ad-aifile').addEventListener('change',async e=>{
   const el=e.target, file=el.files&&el.files[0];el.value='';if(!file||jobBusy('plan'))return;
   if(file.size>10*1024*1024){adErrs=['That file is over 10 MB.'];adMsg='';renderAdmin();return;}
   adMsg='';adErrs=[];adNotes=[];
-  try{await jobStart('/api/my/ai-import','plan',file);}   /* read in the background: jobs.js brings the result to J_OPEN.plan */
+  adAiPend=null;jobSeen('plan');
+  /* the AI is told the foods of the plan change open here, so it uses their ids */
+  try{await jobStart('/api/my/ai-import'+(adVer?`?date=${adFrom||'1970-01-01'}`:''),'plan',file);}   /* read in the background: jobs.js brings the result to J_OPEN.plan */
   catch(err){if(err.signedOut)return;adMsg='The AI import didn’t work:';adErrs=[err.message];}
   adAiRender();renderAdmin();
 });
 J_BUSY.plan=adAiRender;
+/* A finished read is not put into the plan at once: adAiPend holds it and the page shows what it would change (new,
+   changed and unchanged day templates and foods, the week) against the plan open now, worked out afresh on every render.
+   Nothing changes until "Use ticked"; a food of yours the AI gives other values for is taken only if ticked, and a
+   template you've changed since opening it starts unticked. */
+let adAiPend=null;
 J_OPEN.plan=job=>{
-  adErrs=[];adNotes=[];
+  adErrs=[];adNotes=[];adAiPend=null;
   if(job.status!=='done'){adMsg='The AI import didn’t work:';adErrs=[job.error||'Something went wrong'];renderAdmin();return;}
   if(!AD){adPick();adLoad();}
-  const j=job.result;let got;
-  try{got=adApplyJson(j).map(adTplName);}catch(e){adMsg=`The AI read ${job.label||'your plan'}, but it wasn’t loaded:`;adErrs=[e.message];renderAdmin();return;}
-  const nf=Object.keys(j.foods||{}).length;
-  adMsg=`AI read ${job.label||'your plan'}: ${got.join(', ')}${nf?`, ${nf} new food${nf>1?'s':''}`:''}${j.targets&&Object.keys(j.targets).length?', targets':''}${j.schedule?', week schedule':''}. Check it below, then save.`;
-  adNotes=j.notes||[];
+  adMsg='';adAiPend={j:job.result,label:job.label||'your plan',on:{}};adNotes=job.result.notes||[];
   renderAdmin();
 };
+function adAiDiff(){
+  const P=adAiPend, j=P.j, foods=[], tpls=[];
+  const pick=(key,dflt)=>adOwnId(P.on,key)?P.on[key]:dflt;
+  for(const [id,r] of Object.entries(j.foods&&typeof j.foods==='object'?j.foods:{})){
+    if(!r||typeof r!=='object'||id==='pudding'||!AD_FOOD_ID.test(id)||id in Object.prototype)continue;
+    const ai=adCleanFood(r), cur=AD.foods[id];
+    const state=!cur?'new':Object.keys(ai).some(k=>ai[k]!==cur[k])?'changed':'same';
+    foods.push({id,ai,cur,state,on:state==='new'||state==='changed'&&pick('f:'+id,false)});
+  }
+  for(const t of Array.isArray(j.templates)?j.templates:[]){
+    if(!t||typeof t.id!=='string'||!AD_TPL_ID.test(t.id))continue;
+    const id=t.id, name=String(t.name||AD_LEGACY[id]||id).slice(0,40), cur=adTpl(id);
+    const meals=j.plan&&adOwnId(j.plan,id)&&Array.isArray(j.plan[id])?adMeals(j.plan[id]):null;
+    const tg=j.targets&&adOwnId(j.targets,id)&&j.targets[id]&&typeof j.targets[id]==='object'?j.targets[id]:null;
+    const tgSame=!tg||!cur||MAC.every(m=>tg[m]===undefined||adNum(tg[m])===(AD.targets[id]||{})[m]);
+    const state=!cur?'new':(!meals||same(meals,AD.plan[id]||[]))&&tgSame&&cur.name===name?'same':'changed';
+    const base=AD_BASE.templates.find(x=>x.id===id);
+    const edited=!!cur&&(!base||base.name!==cur.name||!same(AD.plan[id],AD_BASE.plan[id])||!same(AD.targets[id],AD_BASE.targets[id]));
+    tpls.push({id,name,cur,meals,state,edited,on:state!=='same'&&pick('t:'+id,!edited)});
+  }
+  const sch=Array.isArray(j.schedule)&&j.schedule.length===7&&!same(j.schedule,AD.schedule)?j.schedule:null;
+  return {foods,tpls,sch,schOn:!!sch&&pick('s',true)};
+}
+function adAiPreview(){
+  const el=$('#ad-aiprev');if(!el)return;
+  el.hidden=!adAiPend;if(!adAiPend){el.innerHTML='';return;}
+  const d=adAiDiff(), mealNames=ms=>ms&&ms.length?ms.map(m=>m.name||`Meal ${m.id}`).join(', '):'no meals';
+  const box=(key,on,label)=>`<label class="adaipick"><input type="checkbox" data-ad="aipick" data-key="${esc(key)}"${on?' checked':''}> ${label}</label>`;
+  const tl=d.tpls.filter(t=>t.state!=='same'), fl=d.foods.filter(f=>f.state==='changed'), nf=d.foods.filter(f=>f.state==='new');
+  const sameT=d.tpls.filter(t=>t.state==='same').length, sameF=d.foods.filter(f=>f.state==='same').length;
+  el.innerHTML=`<p class="admsg">AI read ${esc(adAiPend.label)}. Tick what to take – nothing changes until you press Use ticked, and nothing is saved until you save the plan.</p>
+    ${tl.length?`<h4 class="lbl">Day templates</h4><ul class="adailist">${tl.map(t=>`<li>${box('t:'+t.id,t.on,t.state==='new'
+      ?`<b>New:</b> ${esc(t.name)} – ${esc(mealNames(t.meals))}`
+      :`<b>${esc(t.cur.name)}</b>${t.cur.name!==t.name?` → ${esc(t.name)}`:''}: replace yours (${esc(mealNames(AD.plan[t.id]))}) with the AI’s (${esc(mealNames(t.meals||AD.plan[t.id]))})${t.edited?' <span class="sub">– you’ve changed it since opening</span>':''}`)}</li>`).join('')}</ul>`:''}
+    ${fl.length?`<h4 class="lbl">Your foods the AI gives other values for</h4><p class="sub">Yours are kept unless you tick one.</p><ul class="adailist">${fl.map(f=>`<li>${box('f:'+f.id,f.on,
+      `Use the AI’s for <b>${esc(f.cur.n||f.id)}</b>: ${adFoodLine({...f.cur,...f.ai})} <span class="sub">(yours: ${adFoodLine(f.cur)})</span>`)}</li>`).join('')}</ul>`:''}
+    ${nf.length?`<p>New food${nf.length>1?'s':''} added: ${esc(nf.map(f=>f.ai.n||f.id).join(', '))}.</p>`:''}
+    ${d.sch?box('s',d.schOn,`Use the AI’s week: ${esc(DAYS.map((x,i)=>`${x} ${(adTpl(d.sch[i])||d.tpls.find(t=>t.id===d.sch[i])||{name:d.sch[i]}).name}`).join(', '))}`):''}
+    ${sameT||sameF?`<p class="sub">Unchanged: ${[sameT?`${sameT} day template${sameT>1?'s':''}`:'',sameF?`${sameF} food${sameF>1?'s':''}`:''].filter(Boolean).join(', ')}.</p>`:''}
+    ${!tl.length&&!fl.length&&!nf.length&&!d.sch?'<p>It matches the plan you have open – nothing to change.</p>':''}
+    <div class="adtools"><button class="btn" type="button" data-ad="aiuse">Use ticked</button><button class="ghost" type="button" data-ad="aidrop">Discard</button></div>`;
+}
+function adAiUse(){
+  const d=adAiDiff(), j=adAiPend.j, ids=new Set(d.tpls.filter(t=>t.on).map(t=>t.id));
+  const only=o=>Object.fromEntries(Object.entries(o&&typeof o==='object'?o:{}).filter(([id])=>ids.has(id)));
+  const foods={};d.foods.filter(f=>f.on).forEach(f=>{foods[f.id]=j.foods[f.id];});
+  if(j.foods&&j.foods.pudding&&!AD.pud)foods.pudding=j.foods.pudding;
+  let got;try{got=adApplyJson({foods,templates:(j.templates||[]).filter(t=>t&&ids.has(t.id)),plan:only(j.plan),targets:only(j.targets),schedule:d.schOn?j.schedule:undefined}).map(adTplName);}
+  catch(e){adMsg='';adErrs=[e.message+' Untick some day templates.'];return;}   /* too many day templates: nothing taken, the preview stays */
+  const nf=d.foods.filter(f=>f.on&&f.state==='new').length, cf=d.foods.filter(f=>f.on&&f.state==='changed').length;
+  const took=[got.join(', '),nf?`${nf} new food${nf>1?'s':''}`:'',cf?`new values for ${cf} of your foods`:'',d.schOn&&same(AD.schedule,j.schedule)?'week schedule':''].filter(Boolean);
+  adErrs=[];adMsg=took.length?`Took from ${adAiPend.label}: ${took.join(', ')}. Check it below, then save.`:'Nothing was ticked, so nothing changed.';
+  adAiPend=null;jobSeen('plan');
+}
 
 
 /* ---------- Delete progress photos between two dates (account admin, your own photos) ---------- */
@@ -617,7 +682,7 @@ $('#v-admin').addEventListener('click',async e=>{
     if(a==='reset'&&!confirm('Go back to the default checklist? Your own items are replaced (ticks already made stay).'))return;
     const items=clDraft.filter(x=>x.label.trim()), msg=$('#ad-clmsg');
     b.disabled=true;
-    try{CL=a==='reset'?await api('DELETE','/api/checklist'):await api('PUT','/api/checklist',{items});
+    try{CL=a==='reset'?await api('DELETE','/api/checklist',undefined,CL.updated):await api('PUT','/api/checklist',{items},CL.updated);
       clDraft=CL.items.map(x=>({...x}));clDirty=false;clRender();msg.textContent=a==='reset'?'Back to the default checklist.':'Checklist saved.';}
     catch(err){if(!err.signedOut)msg.textContent=err.message;}
     b.disabled=false;$('#ad-clsave').disabled=!clDirty;

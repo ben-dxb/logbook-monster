@@ -10,6 +10,7 @@ const { isDate, writeError } = require('./dates');
 const { isNum } = require('./num');
 const { FREE_KINDS } = require('../public/engine.js');
 const legacy = require('./legacy');
+const { stamp } = require('./version');
 
 const q = {
   appGet: db.prepare("SELECT data FROM app_config WHERE key = 'defaults'"),
@@ -189,7 +190,7 @@ function putMine(input, user) {
   if (from !== null && writeError(from)) throw new Error(writeError(from, 'The date it takes effect from must be a date'));
   const list = has ? myVersions(user).filter(x => x.from !== from) : [];
   if (list.length >= MAX_VERSIONS) throw new Error('Too many plan changes – delete some old ones first');
-  list.push({ from, ...data, updatedAt: new Date().toISOString().replace('T', ' ').slice(0, 19) });
+  list.push({ from, ...data, updatedAt: stamp() });
   storeMine(user, list, true);
   return forUser(user);
 }

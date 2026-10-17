@@ -160,7 +160,7 @@ function sAiPreview(){
 }
 async function sAiRead(file){
   if(file.size>10*1024*1024){sAiMsg='That file is over 10 MB.';renderSuppAi();return;}
-  sAiMsg='';sAi=null;
+  sAiMsg='';sAi=null;jobSeen('supps');
   try{await jobStart('/api/supps/ai-import','supps',file);}   /* read in the background: jobs.js brings the result to J_OPEN.supps */
   catch(err){if(err.signedOut)return;sAiMsg='The AI couldn’t read that: '+err.message;}
   renderSuppAi();
@@ -184,7 +184,7 @@ async function sAiAdd(btn){
     sMsg=[r.added?`Added ${r.added} to your library`:'',r.updated?`updated ${r.updated} you already had`:''].filter(Boolean).join(', ')+'.'
       +(day?` Logged ${r.entries.length} on ${fmtLong(day)}${skipped?` (${skipped} without an amount weren’t logged)`:''}.`:'');
     sMsg=sMsg[0].toUpperCase()+sMsg.slice(1);
-    sAi=null;renderSuppAi();renderSuppList();
+    sAi=null;jobSeen('supps');renderSuppAi();renderSuppList();
   }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message;err.hidden=false;}}
 }
 function renderSuppList(){
@@ -252,7 +252,7 @@ document.addEventListener('click',async e=>{
   else if(a==='log'){sPick=String(id);go('supps/'+sDate);}
   else if(a==='sdel')sDeleteLib(id);
   else if(a==='aiadd'&&sAi)sAiAdd(b);
-  else if(a==='aidrop'){sAi=null;renderSuppAi();}
+  else if(a==='aidrop'){sAi=null;jobSeen('supps');renderSuppAi();}
   else if(a==='quick'){const s=sById(id);if(!s)return;b.disabled=true;
     try{await sAdd({date:sDate,supplement:s.id,amount:s.amount,unit:s.unit});}catch(err){if(!err.signedOut)alert(err.message);}b.disabled=false;}
   else if(a==='del'){

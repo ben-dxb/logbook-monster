@@ -8,6 +8,7 @@ const { isDate, writeError } = require('./dates');
 const { isNum } = require('./num');
 const ai = require('./ai');
 const jobs = require('./jobs');
+const version = require('./version');
 
 const q = {
   exercises: db.prepare(`SELECT e.id, e.name, e.notes, e.trend, e.parts, COUNT(s.id) AS sets, MAX(s.at) AS last
@@ -24,11 +25,11 @@ const q = {
   trendIds: db.prepare('SELECT id FROM exercises WHERE user_id = ? AND trend = 1 ORDER BY id'),
   delExercise: db.prepare('DELETE FROM exercises WHERE user_id = ? AND id = ?'),
 
-  workouts: db.prepare('SELECT id, name, description, items FROM workouts WHERE user_id = ? ORDER BY position, id'),
-  workout: db.prepare('SELECT id FROM workouts WHERE user_id = ? AND id = ?'),
+  workouts: db.prepare('SELECT id, name, description, items, updated_at AS updated FROM workouts WHERE user_id = ? ORDER BY position, id'),
+  workout: db.prepare('SELECT id, updated_at FROM workouts WHERE user_id = ? AND id = ?'),
   countWorkouts: db.prepare('SELECT COUNT(*) AS n, COALESCE(MAX(position), 0) AS pos FROM workouts WHERE user_id = ?'),
   addWorkout: db.prepare('INSERT INTO workouts (user_id, name, description, items, position) VALUES (?, ?, ?, ?, ?)'),
-  putWorkout: db.prepare(`UPDATE workouts SET name = ?, description = ?, items = ?, updated_at = datetime('now') WHERE user_id = ? AND id = ?`),
+  putWorkout: db.prepare('UPDATE workouts SET name = ?, description = ?, items = ?, updated_at = ? WHERE user_id = ? AND id = ?'),
   moveWorkout: db.prepare('UPDATE workouts SET position = ? WHERE user_id = ? AND id = ?'),
   delWorkout: db.prepare('DELETE FROM workouts WHERE user_id = ? AND id = ?'),
 
@@ -257,10 +258,13 @@ router.post('/workouts', send(req => {
 }));
 router.put('/workouts/:id', send(req => {
   const id = idOf(req.params.id);
-  if (!q.workout.get(req.user.id, id)) throw notFound('workout');
+  const old = q.workout.get(req.user.id, id);
+  if (!old) throw notFound('workout');
   const w = cleanWorkout(req.body, req.user);
-  q.putWorkout.run(w.name, w.description, w.items, req.user.id, id);
-  return { id };
+  version.check(req, old.updated_at);
+  const updated = version.stamp();
+  q.putWorkout.run(w.name, w.description, w.items, updated, req.user.id, id);
+  return { id, updated };
 }));
 router.delete('/workouts/:id', send(req => { q.delWorkout.run(req.user.id, idOf(req.params.id)); return { ok: true }; }));
 /* The list order: every workout id, top first. */

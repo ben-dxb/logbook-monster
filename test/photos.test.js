@@ -20,7 +20,7 @@ const fakeAi = http.createServer((req, res) => {
     const img = Buffer.from(j.messages[1].content[1].image_url.url.split(',')[1], 'base64').toString('latin1');
     const m = /pose:(\w+)/.exec(img), st = /style:(\w+)/.exec(img);
     res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ model: 'test/vision', choices: [{ message: { content: JSON.stringify({ pose: m ? m[1] : 'upside-down', style: st ? st[1] : 'flexy' }) } }] }));
+    setTimeout(() => res.end(JSON.stringify({ model: 'test/vision', choices: [{ message: { content: JSON.stringify({ pose: m ? m[1] : 'upside-down', style: st ? st[1] : 'flexy' }) } }] })), /slow/.test(img) ? 500 : 0);   /* "slow": answers after half a second */
   });
 });
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -242,6 +242,32 @@ test('progress photos: the AI tags the pose, from the thumbnail, only when asked
   assert.deepStrictEqual(await left(`/api/photos/${bare.id}/ai-pose`), [409, start]);
   assert.deepStrictEqual(await left(`/api/photos/${p.id}/ai-pose`), [200, start]);
   assert.deepStrictEqual(await left(), [404, start - 1]);
+});
+
+test('progress photos: an AI pose is saved only over the pose it was asked about, never over one set by hand meanwhile', async () => {
+  const ann = await signIn('ann@example.com');
+  const p = (await ann('POST', '/api/photos?date=2026-10-08&pose=other&ai=1', jpeg('x'))).body;
+  await ann('PUT', `/api/photos/${p.id}/thumb`, jpeg('pose:front style:front_relaxed slow'));
+  /* set by hand while the AI looks: the answer comes back but the hand edit stays */
+  const asking = ann('POST', `/api/photos/${p.id}/ai-pose`, { save: true });
+  await new Promise(ok => setTimeout(ok, 150));
+  assert.strictEqual((await ann('PUT', `/api/photos/${p.id}`, { date: '2026-10-08', pose: 'back', style: 'back_relaxed', note: '' })).body.poseAi, false);
+  let r = await asking;
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual([r.body.pose, r.body.saved, r.body.photo.pose, r.body.photo.style, r.body.photo.poseAi], ['front', false, 'back', 'back_relaxed', false]);
+  /* the app sends the pose it saw when the run started: one set by hand since (in another tab) is kept too */
+  r = await ann('POST', `/api/photos/${p.id}/ai-pose`, { save: true, if: { pose: 'other', style: '' } });
+  assert.deepStrictEqual([r.body.saved, r.body.photo.pose, r.body.photo.poseAi], [false, 'back', false]);
+  /* asked about the pose the photo has (the person said redo it): saved, and the AI's now */
+  r = await ann('POST', `/api/photos/${p.id}/ai-pose`, { save: true, if: { pose: 'back', style: 'back_relaxed' } });
+  assert.deepStrictEqual([r.body.saved, r.body.photo.pose, r.body.photo.style, r.body.photo.poseAi], [true, 'front', 'front_relaxed', true]);
+  /* still the AI's: a later answer replaces it whatever the app saw */
+  await ann('PUT', `/api/photos/${p.id}/thumb`, jpeg('pose:left style:relaxed'));
+  r = await ann('POST', `/api/photos/${p.id}/ai-pose`, { save: true, if: { pose: 'other', style: '' } });
+  assert.deepStrictEqual([r.body.saved, r.body.photo.pose, r.body.photo.poseAi], [true, 'left', true]);
+  /* without save nothing is written, as before */
+  r = await ann('POST', `/api/photos/${p.id}/ai-pose`, {});
+  assert.strictEqual(r.body.saved, false);
 });
 
 test('progress photos: delete every photo between two dates, only your own, files and all', async () => {

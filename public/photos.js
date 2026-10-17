@@ -99,16 +99,16 @@ function pPoseOptions(sel,withAi){
 function pStyleOptions(sel){
   return `<option value=""${sel?'':' selected'}>None</option>`+PSTYLES.map(v=>`<option value="${v}"${v===sel?' selected':''}>${esc(pStyleName(v))}</option>`).join('');
 }
-/* the AI's pose for a photo; save stores it too */
+/* the AI's pose for a photo; save stores it too, but only while the photo still has the pose it had when asked (seen) or the AI's */
 /* the AI only ever gets the small version: a photo without one (from before thumbnails) gets one first */
-async function pAskAi(id,save){
+async function pAskAi(id,save,seen){
   const p=PHOTOS.find(x=>x.id===id);
   if(p&&!p.tv){
     try{const b=await(await fetch(pSrc(p),{credentials:'same-origin'})).blob();
       const t=await pSend('PUT',`/api/photos/${id}/thumb`,await pShrink(b,P_THUMB,0.8));const i=PHOTOS.findIndex(x=>x.id===id);if(i>=0)PHOTOS[i]=t;}
     catch(e){if(e.signedOut)throw e;}
   }
-  return api('POST',`/api/photos/${id}/ai-pose`,{save});
+  return api('POST',`/api/photos/${id}/ai-pose`,{save,...(seen?{if:{pose:seen.pose,style:seen.style||''}}:{})});
 }
 const P_AI_NOTE='The AI looks at the small version of each photo, sent to the AI service set up for this app; nothing else about you goes with it.';
 function pCatalogPage(){
@@ -283,7 +283,7 @@ async function pUpload(form){
         try{p=await pSend('PUT',`/api/photos/${p.id}/thumb`,small);}catch(e){if(e.signedOut)throw e;}   /* the catalog falls back to the full picture */
         PHOTOS.push(p);done++;dates.add(d);if(when[i].own)own++;
         if(byAi){
-          try{const a=await pAskAi(p.id,true);const k=PHOTOS.findIndex(x=>x.id===p.id);if(k>=0)PHOTOS[k]=a.photo;}
+          try{const a=await pAskAi(p.id,true,p);const k=PHOTOS.findIndex(x=>x.id===p.id);if(k>=0)PHOTOS[k]=a.photo;}
           catch(e){if(e.signedOut)throw e;aiMiss++;}   /* stays "other", not counted as set by hand */
         }
       }catch(e){
@@ -321,7 +321,7 @@ function pOnePage(p){
   return gHead('#photos',`${pLabel(p)} · ${fmtShort(p.date)}`,nav)+`
     <figure class="pbig"><a class="pzoom" href="${pSrc(p)}" target="_blank" rel="noopener" title="Scroll to zoom, drag to move around, double-click to reset"><img src="${pSrc(p)}" alt="${esc(pLabel(p)+' photo, '+fmtLong(p.date))}"></a>
       <figcaption>${esc(fmtLong(p.date))}${pKg(p.date)?' · '+esc(pKg(p.date)):''}${p.note?' · '+esc(p.note):''}</figcaption></figure>
-    <form id="p-eform" class="panel sform" data-id="${p.id}">
+    <form id="p-eform" class="panel sform" data-id="${p.id}" data-ver="${esc(p.updated||'')}">
       <label class="f"><span class="lbl">Date taken</span><input id="p-edate" type="date" required value="${p.date}"></label>
       <label class="f"><span class="lbl">Pose</span><select id="p-epose">${pPoseOptions(p.pose)}</select></label>
       <label class="f"><span class="lbl">Pose type</span><select id="p-estyle">${pStyleOptions(p.style)}</select></label>
@@ -338,7 +338,7 @@ async function pSave(form){
   const err=$('#p-eerr'), id=+form.dataset.id, btn=form.querySelector('button[type=submit]');
   btn.disabled=true;err.hidden=true;
   try{
-    const p=await api('PUT','/api/photos/'+id,{date:$('#p-edate').value,pose:$('#p-epose').value,style:$('#p-estyle').value,note:$('#p-enote').value});
+    const p=await api('PUT','/api/photos/'+id,{date:$('#p-edate').value,pose:$('#p-epose').value,style:$('#p-estyle').value,note:$('#p-enote').value},form.dataset.ver||undefined);
     PHOTOS=PHOTOS.filter(x=>x.id!==id);PHOTOS.push(p);pSort();
     pMsg='Saved.';go('photos');
   }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message;err.hidden=false;}}
@@ -372,18 +372,22 @@ async function pAiTagAll(onlyNew){
   if(!confirm(`Let the AI look at ${list.length===1?'this photo':`these ${list.length} photos`} and set ${list.length===1?'its':'their'} pose (front, left or right side, back or other) and pose type (relaxed, double biceps, most muscular…)?\n\n${P_AI_NOTE}`))return;
   pAiBusy=true;pMsg='';
   const btn=()=>$(onlyNew?'#p-aiuntag':'#p-aibtn'), other=$(onlyNew?'#p-aibtn':'#p-aiuntag');if(other)other.disabled=true;
-  let done=0, changed=0, miss=0, why='';
+  let done=0, changed=0, miss=0, kept=0, why='';
   try{
     for(const p of list){
       const b=btn();if(b){b.disabled=true;b.textContent=`Tagging ${done+1} of ${list.length}…`;}
+      /* a photo edited (or deleted) here since the run started is left as it is now; the server checks edits from other tabs */
+      const cur=pById(p.id);
+      if(!cur||cur.pose!==p.pose||(cur.style||'')!==(p.style||'')){kept++;done++;continue;}
       try{
-        const a=await pAskAi(p.id,true);
-        if(a.photo.pose!==p.pose||a.photo.style!==p.style)changed++;
+        const a=await pAskAi(p.id,true,p);
+        if(a.saved===false)kept++;
+        else if(a.photo.pose!==p.pose||a.photo.style!==p.style)changed++;
         const i=PHOTOS.findIndex(x=>x.id===p.id);if(i>=0)PHOTOS[i]=a.photo;
       }catch(e){if(e.signedOut)return;miss++;why=e.message;if(/OpenRouter|API key|wait a while|set up/.test(why))break;}   /* the same for the rest */
       done++;
     }
-    pMsg=`The AI looked at ${done-miss} photo${done-miss===1?'':'s'} and changed the pose of ${changed}.`+(miss?` ${miss} couldn’t be tagged: ${why}`:'')+(done<list.length?` Stopped before the last ${list.length-done}.`:'');
+    pMsg=`The AI looked at ${done-miss-kept} photo${done-miss-kept===1?'':'s'} and changed the pose of ${changed}.`+(kept?` ${kept} changed by you during the run ${kept===1?'was':'were'} left as you set ${kept===1?'it':'them'}.`:'')+(miss?` ${miss} couldn’t be tagged: ${why}`:'')+(done<list.length?` Stopped before the last ${list.length-done}.`:'');
   }finally{pAiBusy=false;}
   if(view==='photos'&&!location.hash.replace(/^#/,'').split('/')[1]){
     const a=$('#p-aibtn'), u=$('#p-aiuntag');
@@ -393,14 +397,17 @@ async function pAiTagAll(onlyNew){
   }
 }
 async function pAiOne(b){
-  const say=$('#p-aisay');b.disabled=true;say.textContent='Asking the AI…';
+  const say=$('#p-aisay'), form=b.closest('form'), id=+b.dataset.id;b.disabled=true;say.textContent='Asking the AI…';
+  /* the answer belongs to this photo's form: dropped if the person has moved to another photo (or left) meanwhile */
+  const here=()=>form&&form.isConnected&&+form.dataset.id===id;
   try{
-    const a=await pAskAi(+b.dataset.id,false);
+    const a=await pAskAi(id,false);
+    if(!here())return;
     const sel=$('#p-epose'), st=$('#p-estyle');if(!sel||!st)return;
-    const p=pById(+b.dataset.id), said=pLabel(a);
+    const p=pById(id), said=pLabel(a);
     sel.value=a.pose;st.value=a.style||'';
     say.textContent=p&&a.pose===p.pose&&(a.style||'')===p.style?`The AI agrees: ${said}.`:`The AI says ${said} – tap Save changes to keep it.`;
-  }catch(e){if(!e.signedOut)say.textContent=e.message;}
+  }catch(e){if(!e.signedOut&&here())say.textContent=e.message;}
   finally{b.disabled=false;}
 }
 
