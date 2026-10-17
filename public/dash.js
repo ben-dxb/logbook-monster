@@ -8,7 +8,9 @@
    Uses helpers from app.js (api, esc, todayStr, addDays…), admin.js (mineOn, typeOn, tnameOn), supps.js (SUPPS, sLoad, sDose) and photos.js (pThumb). */
 
 let CL=null;                     /* {items, custom, updated} */
-let dTicks={}, dAuto={supps:new Set(),gym:new Set()}, dGym=[], dPhotos=null, dDate=todayStr(), dTok=0, dErr={};
+let dTicks={}, dAuto={supps:new Set(),gym:new Set()}, dGym=[], dPhotos=null, dPhotoN=0, dDate=todayStr(), dTok=0, dErr={};
+/* the feeds as last read, kept while nothing has been written and the tab hasn't been away (WGEN, app.js) on the same day */
+let dFeeds=null, dFeedKey='';
 
 /* Is this day template a training one? "T" (what plan imports call training) or a name with "train" in it. */
 const dIsTraining=(id,name)=>id==='T'||/train/i.test(name||'');
@@ -35,9 +37,12 @@ async function renderDash(args){
     const from=addDays(t,-6);
     /* each feed on its own: one that fails shows its own message, the rest of the page still loads */
     const one=p=>Promise.resolve(p).then(v=>({v}),e=>({e}));
-    const [cl,days,slog,gym,ph,sp]=await Promise.all([CL||api('GET','/api/checklist'),api('GET',`/api/checklist/days?from=${from}&to=${t}`),
-      api('GET',`/api/supps/log?from=${from}&to=${t}`),api('GET','/api/gym/sessions?limit=60'),api('GET','/api/photos'),SUPPS?null:sLoad()].map(one));
+    const key=`${WGEN}|${t}`;
+    const feeds=dFeedKey===key&&dFeeds?dFeeds:await Promise.all([CL||api('GET','/api/checklist'),api('GET',`/api/checklist/days?from=${from}&to=${t}`),
+      api('GET',`/api/supps/log?from=${from}&to=${t}`),api('GET','/api/gym/sessions?limit=60'),api('GET','/api/photos?latest=1&to='+t),SUPPS?null:sLoad()].map(one));
     if(tok!==dTok||view!=='dash')return;
+    if(!feeds.some(r=>r.e)){dFeeds=feeds;dFeedKey=key;}
+    const [cl,days,slog,gym,ph,sp]=feeds;
     const out=[cl,days,slog,gym,ph,sp].find(r=>r.e&&r.e.signedOut);if(out)throw out.e;
     const msg=r=>r.e?r.e.message||'Something went wrong':'';
     dErr={checklist:msg(cl)||msg(days),auto:[slog.e&&'supplements',gym.e&&'gym sets'].filter(Boolean).join(' and '),gym:msg(gym),photos:msg(ph),supps:msg(sp)};
@@ -45,7 +50,7 @@ async function renderDash(args){
     for(const [d,q] of Object.entries(dQ))dTicks[d]=dApply(dTicks[d]||[],q.local);   /* ticks still on their way stay */
     dAuto.supps=new Set(((slog.v&&slog.v.entries)||[]).map(e=>e.date));
     dGym=gym.v||[];dAuto.gym=new Set(dGym.map(s=>s.date));
-    dPhotos=ph.v?ph.v.photos||[]:null;
+    dPhotos=ph.v?ph.v.photos||[]:null;dPhotoN=ph.v?ph.v.count||0:0;   /* only the newest of each pose, and how many in all */
     box.innerHTML=dPage();
   }catch(e){if(!e.signedOut&&tok===dTok)box.innerHTML=`<p class="note">Couldn’t load your dashboard: ${esc(e.message)}</p>`;}
 }
@@ -150,7 +155,7 @@ function dPhoto(){
   if(dErr.photos)return dCard('#photos','Progress photos',dFailed('your photos',dErr.photos));
   if(!dPhotos||!dPhotos.length)return dCard('#photos','Progress photos','<p>No progress photos yet.</p>');
   const t=todayStr(), past=dPhotos.filter(x=>x.date<=t), p=(past.length?past:dPhotos).reduce((a,b)=>b.date>a.date||(b.date===a.date&&b.id>a.id)?b:a);   /* not one dated ahead */
-  return dCard('#photos','Progress photos',`<div class="dphoto"><img src="${pThumb(p)}" alt="Latest progress photo, ${esc(p.pose)}" loading="lazy"><p>Latest: ${esc(fmtLong(p.date))}<br>${dPhotos.length} photo${dPhotos.length===1?'':'s'} in all</p></div>`);
+  return dCard('#photos','Progress photos',`<div class="dphoto"><img src="${pThumb(p)}" alt="Latest progress photo, ${esc(p.pose)}" loading="lazy"><p>Latest: ${esc(fmtLong(p.date))}<br>${dPhotoN} photo${dPhotoN===1?'':'s'} in all</p></div>`);
 }
 
 document.addEventListener('change',e=>{if(view==='dash'&&e.target.dataset.dk!=null)dTick(e.target);});

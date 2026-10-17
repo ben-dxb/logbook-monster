@@ -10,7 +10,9 @@
 const T_KEY='logbook-monster-timeline';
 const tRO=typeof SHARED!=='undefined';   /* a coach link: nothing to change, no links into the app, no AI */
 let TL=null, tTok=0, tAi=null, tAiErr='', tAiBusy=false, tCardDate=null, tCardTok=0;
-let tRange=90, tSmooth=true, tOn=new Set(['k','p','kg','str']);
+let tRange=90, tSmooth=true, tOn=new Set(['k','p','kg','str']), tReadKey='';
+/* the trends read is kept until a write or the tab is shown again (WGEN – app.js, coach.js), a new day or another range */
+const tKeyNow=()=>`${WGEN}|${todayStr()}|${tRange}`;
 try{const st=JSON.parse(localStorage.getItem(T_KEY)||'null');
   if(st){if([30,90,365,0].includes(st.range))tRange=st.range;if(typeof st.smooth==='boolean')tSmooth=st.smooth;if(Array.isArray(st.on))tOn=new Set(st.on.filter(k=>typeof k==='string'));}}catch{}
 function tKeep(){try{localStorage.setItem(T_KEY,JSON.stringify({range:tRange,smooth:tSmooth,on:[...tOn]}));}catch{}}
@@ -27,17 +29,18 @@ async function renderTimeline(args){
   const [d]=args||[], box=$('#t-body');
   if(!box.dataset.ready){box.innerHTML=tPage();box.dataset.ready='1';}
   if(!isDate(d||''))tCloseCard(true);
-  if(!TL||!isDate(d||''))await tLoad();
+  if(!TL||!isDate(d||'')&&tReadKey!==tKeyNow())await tLoad();
+  else if(!isDate(d||''))renderTrends();
   if(view==='timeline'&&isDate(d||''))tOpen(d);
 }
 async function tLoad(quiet){   /* quiet: the chart stays as it is until the new numbers are in */
-  const tok=++tTok;
+  const tok=++tTok, key=tKeyNow();
   if(!quiet)$('#t-chart').innerHTML='<p class="emptyc">Loading…</p>';
   try{
     const from=tRange?addDays(todayStr(),-tRange+1):'';
     const r=await api('GET',`/api/timeline/trends?to=${todayStr()}${from?'&from='+from:''}`);
     if(tok!==tTok||view!=='timeline')return;
-    TL=r;tExKept={};renderTrends();
+    TL=r;tReadKey=key;tExKept={};renderTrends();
   }catch(e){if(!e.signedOut&&tok===tTok)$('#t-chart').innerHTML=`<p class="emptyc">Couldn’t load your trends: ${esc(e.message)}</p>`;}
 }
 

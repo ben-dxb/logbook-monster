@@ -61,10 +61,13 @@ function allow(take) {
   }
   if (!take) return o;
   q.use.run(user ? user.id : 0, day);
-  q.old.run(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));
   if (s) s.calls++;
   return o;
 }
+/* Counts older than 30 days are dropped on start and once a day, not on every call. */
+function pruneUsage() { try { q.old.run(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)); } catch (e) { console.error('AI usage prune failed:', e.message); } }
+pruneUsage();
+setInterval(pruneUsage, 24 * 60 * 60 * 1000).unref();
 /* An hourly limit per account on a route that calls the AI. A request refused before any AI call (bad file, bad input,
    cap reached, a read already running) doesn't count. */
 const limiter = (limit, message, more = {}) => rateLimit({

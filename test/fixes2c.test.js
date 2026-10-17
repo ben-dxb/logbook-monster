@@ -26,6 +26,7 @@ before(async () => {
   /* what a database from before #69 can hold */
   const db = new DatabaseSync(DB);
   const uid = db.prepare("SELECT id FROM users WHERE email = 'ann@example.com'").get().id;
+  db.prepare("DELETE FROM app_config WHERE key = 'dates_fixed'").run();   /* create-user's start ran the fix on the empty database */
   const sum = JSON.stringify({ k: 1234, p: 100, c: 100, f: 40, targets: {} });
   for (const d of ['2026-02-30', '2026-02-31', '2026-03-03']) db.prepare('INSERT INTO days (user_id, date, data, summary) VALUES (?, ?, ?, ?)').run(uid, d, '{"meals":[],"off":[]}', sum);
   db.prepare('INSERT INTO weights (user_id, date, kg) VALUES (?, ?, ?)').run(uid, '2026-02-31', 81.5);

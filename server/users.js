@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const config = require('./config');
 const db = require('./db');
 const mail = require('./mail');
+const trendCache = require('./trendcache');
 
 const INVITE_DAYS = 7;
 
@@ -98,6 +99,7 @@ function remove(id, admin, isAdmin) {
   /* the account's rows go together or not at all (its photo files are the caller's, after this commits) */
   db.exec('BEGIN');
   try { q.remove.run(user.id); endSessions(user.id); db.exec('COMMIT'); } catch (e) { db.exec('ROLLBACK'); throw e; }
+  trendCache.drop(user.id);   /* the admin's request bumps only the admin's own kept trends */
   return { ok: true };
 }
 

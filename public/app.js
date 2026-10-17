@@ -19,6 +19,9 @@ const realDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||'')&&ymd(parse(s))===s;
 const isDate=s=>realDate(s)&&s>='2000-01-01'&&s<=lastDate();
 /* A list read more than 10 s ago is read again when its page or section is opened: another tab or device may have changed it. */
 const STALE_MS=10000, isStale=t=>!t||Date.now()-t>STALE_MS;
+/* Goes up on every write this tab sends (before and after it) and when the tab is shown again: the Dashboard's feeds and the
+   Timeline's trends are kept while it stays the same (dash.js, timeline.js). */
+let WGEN=0;const wrote=()=>{WGEN++;};
 const fmtLong=s=>parse(s).toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 const fmtShort=s=>parse(s).toLocaleDateString(undefined,{day:'numeric',month:'short'});
 const fmtMonth=s=>parse(s).toLocaleDateString(undefined,{month:'long',year:'numeric'});
@@ -39,6 +42,10 @@ let LIB=[], LIBV=0;                         /* the food library (yours and share
 /* ver: the version (`updated`) of the record this change was made on, null for none yet; a newer one on the server
    answers 409 (e.conflict) and nothing is saved (server/version.js) */
 async function api(method,url,body,ver,again){
+  if(method!=='GET'){wrote();try{return await api2(method,url,body,ver,again);}finally{wrote();}}
+  return api2(method,url,body,ver,again);
+}
+async function api2(method,url,body,ver,again){
   let r;
   try{r=await fetch(url,{method,credentials:'same-origin',
     headers:{...(body!==undefined?{'content-type':'application/json'}:{}),'x-csrf-token':csrf,...TZH,...(ver!==undefined?{'x-version':ver==null?'none':ver}:{})},
@@ -607,7 +614,7 @@ function rollToday(){const t=todayStr(),was=TODAY;if(t===was)return;TODAY=t;
    anything is added to the old one (a tap that moves it on only moves it on) */
 function newDay(){const cur=S.cur;if(todayStr()===TODAY)return;rollToday();
   if((view==='day'&&S.cur!==cur)||view==='dash'){numNote(`It’s ${fmtLong(TODAY)} now – showing the new day.`);route();}}
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)newDay();});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){wrote();newDay();}});
 ['pointerdown','keydown'].forEach(t=>document.addEventListener(t,newDay,true));
 (function atMidnight(){const n=new Date(),m=new Date(n.getFullYear(),n.getMonth(),n.getDate()+1,0,0,1);setTimeout(()=>{newDay();atMidnight();},m-n);})();
 function route(){

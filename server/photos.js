@@ -23,6 +23,9 @@ const COLS = 'id, date, pose, style, pose_ai, note, size, created_at AS created,
 const q = {
   list: db.prepare(`SELECT ${COLS} FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date DESC, id DESC`),
   get: db.prepare(`SELECT ${COLS} FROM photos WHERE user_id = ? AND id = ?`),
+  /* the newest of each pose up to a date (the Dashboard's card) */
+  latest: db.prepare(`SELECT ${COLS} FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY pose ORDER BY date DESC, id DESC) AS n
+    FROM photos WHERE user_id = ? AND date <= ?) WHERE n = 1 ORDER BY date DESC, id DESC`),
   files: db.prepare('SELECT file, type, thumb, thumb_size FROM photos WHERE user_id = ? AND id = ?'),
   /* through a coach link: only a photo some Timeline day card shows – the latest (highest id) of its pose on its date */
   shown: db.prepare(`SELECT file, type, thumb FROM photos p WHERE user_id = ? AND id = ?
@@ -143,6 +146,14 @@ const rawImage = limit => express.raw({ type: ['image/jpeg', 'image/png', 'image
 router.get('/', (req, res) => {
   if (req.share) return res.status(404).json({ error: 'Not found' });   /* a coach sees only the photos on the Timeline's day cards */
   const from = isDate(req.query.from) ? req.query.from : '0000-01-01', to = isDate(req.query.to) ? req.query.to : '9999-12-31';
+  /* ?latest=1(&to=): only the newest photo of each pose on or before `to` – or, if every photo is dated after it, the newest of
+     each overall – and how many there are in all, for the Dashboard's card */
+  if (req.query.latest === '1') {
+    const count = q.count.get(req.user.id).n;
+    let rows = count ? q.latest.all(req.user.id, to) : [];
+    if (count && !rows.length) rows = q.latest.all(req.user.id, '9999-12-31');
+    return res.json({ photos: rows.map(view), count });
+  }
   res.json({ photos: q.list.all(req.user.id, from, to).map(view), poses: PICK, styles: STYLES, ai: ai.status().configured });
 });
 
