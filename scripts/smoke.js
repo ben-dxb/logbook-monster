@@ -46,6 +46,7 @@ const MON = later(0), FROM = later(3), MON2 = later(7);
 
 execSync(`"${node[0]}" ${node[1]} scripts/create-user.js smoke@example.com`, { cwd: root, env: { ...env, NEW_PASSWORD: 'tidy-pass-phrase-1' }, stdio: 'ignore' });
 for (const w of [1100, 390]) execSync(`"${node[0]}" ${node[1]} scripts/create-user.js smokebye${w}@example.com`, { cwd: root, env: { ...env, NEW_PASSWORD: 'tidy-pass-phrase-1' }, stdio: 'ignore' });
+for (const w of [1100, 390]) execSync(`"${node[0]}" ${node[1]} scripts/create-user.js smokep5t${w}@example.com`, { cwd: root, env: { ...env, NEW_PASSWORD: 'tidy-pass-phrase-1' }, stdio: 'ignore' });
 for (const w of [1100, 390]) execSync(`"${node[0]}" ${node[1]} scripts/create-user.js smoke2fa${w}@example.com`, { cwd: root, env: { ...env, NEW_PASSWORD: 'tidy-pass-phrase-1' }, stdio: 'ignore' });
 const srv = spawn(node[0], [node[1], 'server/index.js'], { cwd: root, env, stdio: 'ignore' });
 
@@ -237,9 +238,8 @@ async function trackerKeepsFood(browser, pg, ctx) {
   await p2.evaluate(async d => { const r = await api('GET', '/api/days/' + d); r.data.off.push({ n: 'Phone yoghurt', k: 100, p: 10, c: 5, f: 2 });
     await api('PUT', '/api/days/' + d, { data: r.data, summary: { k: 0, p: 0, c: 0, f: 0, targets: r.data.targets } }); }, d4);
   await c2.close();
-  let said = ''; pg.once('dialog', dl => { said = dl.message(); dl.accept(); });
   await signIn(pg); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
-  expect(await until(() => said), 'signing in should say a stashed change was not put back');
+  expect(await until(() => pg.evaluate(() => !$('#bootnote').hidden && /weren’t put back/.test($('#bootmsg').textContent))), 'signing in should say (in the note under the header, not an alert) a stashed change was not put back');
   await pg.waitForTimeout(800);
   const off4 = await offOf(d4);
   expect(/Phone yoghurt/.test(off4) && !/Skittles/.test(off4) && /Phone yoghurt/.test(await pg.textContent('#offlist')), 'a stash should not overwrite a newer copy: ' + off4);
@@ -384,6 +384,52 @@ async function deleteAccount(browser, w, h) {
   await ctx.close();
 }
 
+/* Phase 5 Dashboard / Daily Tracker / History for a new account: each empty part says so with the button that starts it,
+   no "0 / 0 – on target" without targets, no one else's pack or pudding wording, the hidden date box shows its focus, and
+   failures are said in words that name the action, next to the control – never a browser alert. */
+async function trackerP5(browser, w, h) {
+  const ctx = await browser.newContext({ viewport: { width: w, height: h } }), pg = await ctx.newPage(), errs = [];
+  pg.on('pageerror', e => errs.push(e.message)); pg.on('dialog', d => { errs.push('browser dialog: ' + d.message()); d.dismiss(); });
+  const overflow = async what => { const x = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth); expect(x <= 1, `horizontal overflow of ${x}px ${what} at ${w}px wide`); };
+  await pg.goto(BASE + '/login'); await pg.fill('#email', `smokep5t${w}@example.com`); await pg.fill('#password', 'tidy-pass-phrase-1'); await pg.click('#submit');
+  await pg.waitForSelector('#v-dash:not([hidden]) .dcheck');
+  const start = await pg.evaluate(() => [...document.querySelectorAll('#d-body .dstart')].map(c => [c.querySelector('h2').textContent, c.querySelector('a.btn').getAttribute('href')]));
+  expect(JSON.stringify(start) === JSON.stringify([['Food today', '#account'], ['Gym', '#gym/new'], ['Supplement regime', '#supps/lib'], ['Progress photos', '#photos']]),
+    'empty Dashboard cards should each have their start button: ' + JSON.stringify(start));
+  await overflow('on the empty Dashboard');
+  await pg.click('a[data-view=day]'); await pg.waitForSelector('#v-day:not([hidden]) #meals .noplan');
+  expect(await pg.locator('#sum .chip').count() === 0 && /no target/.test(await pg.textContent('#sum')), 'no on-target chips while the targets are 0');
+  expect(await pg.isHidden('#ft-pack') && await pg.isHidden('#pudpanel'), 'no pack-in-sauce note or pudding panel without them in the plan');
+  expect(!(await pg.evaluate(() => $('.dhelp').open)) && /shrinks to make room/.test(await pg.textContent('#v-day [aria-labelledby=oh] > p')), 'the balancing help is folded away');
+  await pg.focus('#datepick');
+  expect(await pg.evaluate(() => getComputedStyle($('.pick')).outlineStyle) === 'solid', 'Pick date shows its focus');
+  /* removing a day from history fails: said by the button, with Retry */
+  await pg.click('#status [data-act=savenow]'); await pg.waitForSelector('#status [data-act=unlog]');
+  await pg.route('**/api/days/*', r => r.request().method() === 'DELETE' ? r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"Server broke"}' }) : r.continue());
+  await pg.click('#status [data-act=unlog]'); await answer(pg, true);
+  await pg.waitForSelector('#status .optnote', { timeout: 5000 });
+  expect(/Couldn’t remove .* from your history: Server broke\. Retry/.test(await pg.textContent('#status .optnote')), 'unlog failure note: ' + await pg.textContent('#status .optnote'));
+  await pg.unroute('**/api/days/*'); await pg.click('#status .optnote button');
+  await pg.waitForSelector('#status [data-act=savenow]', { timeout: 5000 });
+  await pg.click('a[data-view=history]'); await pg.waitForSelector('#v-history:not([hidden]) #hempty:not([hidden]) a.btn');
+  expect(await pg.isHidden('#msum') && /Nothing logged yet/.test(await pg.textContent('#hempty')), 'an empty History says so instead of a row of –');
+  await overflow('on the empty History');
+  await pg.click('.htabs a[data-h=timeline]'); await pg.waitForSelector('#t-chart .emptyc .btn');
+  expect(/Nothing logged/.test(await pg.textContent('#t-chart')), 'an empty Timeline says so: ' + await pg.textContent('#t-chart'));
+  if (await pg.locator('#t-chart [data-ta=rangeall]').count()) { await pg.click('#t-chart [data-ta=rangeall]'); await pg.waitForSelector('[data-ta=range][data-r="0"][aria-pressed=true]'); await pg.waitForSelector('#t-chart a.btn[href^="#day/"]'); }
+  /* the AI summary error names what failed */
+  await pg.evaluate(() => api('PUT', '/api/weights/' + todayStr(), { kg: 80 })); await pg.evaluate(() => tLoad()); await pg.waitForSelector('#t-chart svg');
+  await pg.route('**/api/timeline/summary', r => r.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"The AI service is busy – try again in a minute"}' }));
+  await pg.evaluate(() => { TL.ai = true; tOn = new Set(['kg']); renderTrends(); }); await pg.click('#t-aibtn');
+  await pg.waitForSelector('#t-ai .aderr');
+  expect(await pg.textContent('#t-ai .aderr') === 'Couldn’t summarise your metrics: The AI service is busy – try again in a minute.', 'AI summary error: ' + await pg.textContent('#t-ai .aderr'));
+  /* a failed AI read is said once, not "The AI couldn’t read …: The AI couldn’t …" */
+  const job = await pg.evaluate(() => { JOBS = [{ id: 1, kind: 'plan', status: 'failed', label: 'a.pdf', error: 'The AI couldn’t find a meal plan in that file' }]; jRender(); const t = $('#jobs').textContent; JOBS = []; jRender(); return t; });
+  expect(/^Your meal plan \(a\.pdf\) wasn’t read: The AI couldn’t find a meal plan in that file\./.test(job), 'job failure text: ' + job);
+  expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
+  await ctx.close();
+}
+
 /* A sensitive admin change on a sign-in over 15 minutes old asks for the password again, then goes through. */
 /* Phase 1C bugs: sign-in lands on /#dash, one failed feed leaves the rest of the Dashboard and the super admin pages working,
    entries kept when a library copy fails, a quick Undo is saved, old days keep their foods' names, one e1RM rule. */
@@ -412,9 +458,9 @@ async function phase1c(browser) {
   expect(await pg.evaluate(() => document.querySelector('#o-n').maxLength) === 80, 'the off-plan name box should stop at 80');
   expect(await pg.evaluate(() => libSync && Object.keys(day().lib || {}).length > 0), 'a day keeps a copy of its plan foods');
   await pg.route('**/api/foods', r => r.request().method() === 'POST' ? r.fulfill({ status: 400, contentType: 'application/json', body: '{"error":"Name is too long"}' }) : r.continue());
-  pg.once('dialog', dg => dg.accept());
   await pg.fill('#o-n', 'Smoke long off-plan'); await pg.fill('#o-k', '120'); await pg.check('#o-save'); await pg.click('#offform button[type=submit]');
   await pg.waitForFunction(() => /Smoke long off-plan/.test(document.querySelector('#offlist').textContent), null, { timeout: 5000 });
+  expect(/couldn’t be saved to your food library: Name is too long\./.test(await pg.textContent('#offform .optnote')), 'the failed library copy is said by its box, not in an alert');
   await pg.unroute('**/api/foods');
   /* a meal edit undone while its save is on the way: the undo is saved too */
   const d2 = later(31);
@@ -2147,6 +2193,7 @@ async function formKit(browser) {
       await ctx.close();
       await twoStep(browser, w, h);
       await deleteAccount(browser, w, h);
+      await trackerP5(browser, w, h);
     }
     await versionedAssets(browser);
     await recheck(browser);

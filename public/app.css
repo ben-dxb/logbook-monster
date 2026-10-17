@@ -36,6 +36,7 @@ main:focus,#vh:focus{outline:0}
 .nav{width:36px;height:36px;border-radius:99px;border:1px solid var(--line);background:var(--surface);font-size:var(--fs-l);line-height:1;padding:0}
 .pick{position:relative;overflow:hidden;display:inline-flex}
 .pick input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}
+.pick:focus-within{outline:2px solid var(--info);outline-offset:2px}   /* the date box itself is invisible: its label shows the focus */
 .daystate{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between}
 .status{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:var(--fs-s);color:var(--muted)}
 .status .chip{align-self:auto}
@@ -158,6 +159,7 @@ footer{font-size:var(--fs-xs);color:var(--muted)}
 .cell .pr,.cell .wg{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cell.logged{background:var(--surface)}
 .cell:not(.logged) .dn{color:var(--muted)}
+.hempty{margin-bottom:12px}.hempty p{margin:0 0 8px}.hempty p:last-child{margin:0}
 .msum{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px}
 
 /* ---------- charts (gym, timeline) ---------- */
@@ -177,6 +179,7 @@ footer{font-size:var(--fs-xs);color:var(--muted)}
 .chart .cross{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
 .chart .tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--bg);border-radius:6px;padding:5px 8px;font-size:var(--fs-xs);white-space:nowrap;transform:translate(-50%,-100%);margin-top:-10px}
 .chart .emptyc{color:var(--muted);font-size:var(--fs-s);padding:40px 0;text-align:center}
+.chart .emptyc p{margin:0 auto 10px;max-width:46ch}.chart .emptyc p:last-child{margin-bottom:0}
 
 @media (max-width:700px){
   .boxes{grid-template-columns:minmax(0,1fr)}
@@ -660,7 +663,9 @@ html.hasjobs:has(#g-quick){scroll-padding-bottom:calc(var(--gq-h,170px) + var(--
 .dtick.done span:first-of-type{color:var(--muted);text-decoration:line-through}
 .dcard{color:var(--ink);text-decoration:none}
 .dcard h2{display:flex;justify-content:space-between;align-items:center}
-.dcard:hover{border-color:var(--info)}
+a.dcard:hover{border-color:var(--info)}
+.dstart p:last-child{margin-bottom:0}
+.dhelp{margin:0 0 12px}.dhelp summary{cursor:pointer;color:var(--muted);font-size:var(--fs-s)}
 .dmacs{display:flex;flex-direction:column;gap:6px}
 .dmac{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:2px 8px;align-items:baseline;font-size:var(--fs-s)}
 .dbar{grid-column:1/-1;width:100%;height:6px;accent-color:var(--good)}
