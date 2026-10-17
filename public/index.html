@@ -29,6 +29,7 @@
         <a class="ghost" href="#account" id="accountlink">Account admin</a>
         <a class="ghost" href="#admin" id="adminlink" hidden>Super admin</a>
         <a class="ghost" href="/api/export" id="exportlink" download>Download my data</a>
+        <a class="ghost" href="/api/photos/zip" id="photozip" download>Download my photos</a>
         <details id="pwbox"><summary>Change password</summary>
           <form id="pwform" class="pwform">
             <label class="f" id="pwcur"><span class="lbl">Current password</span><input id="pw-cur" type="password" autocomplete="current-password"></label>
@@ -326,6 +327,7 @@
         <label class="f"><span class="lbl">To</span><input id="ad-pd-to" type="date" required></label>
         <button class="btn" type="submit" id="ad-pd-btn" disabled>Delete photos</button>
       </form>
+      <p><a class="ghost" id="ad-pd-dl" href="/api/photos/zip" download>Download all my photos</a></p>
       <p id="ad-pdmsg" class="sub" role="status"></p>
     </section>
     <section class="panel admine" aria-labelledby="ad-delh">

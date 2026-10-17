@@ -323,6 +323,15 @@ if (!db.prepare('PRAGMA table_info(photos)').all().some(c => c.name === 'updated
   db.exec('ALTER TABLE photos ADD COLUMN updated_at TEXT');
 }
 
+/* Added later (p5-photos): mid – a ~1000 px JPEG made in the browser for the photo and Compare pages and the coach's day card (the
+   full file only when zoomed or opened), its size counted with the rest; width/height of the stored file, so the page keeps the photo's
+   room before it loads (NULL until known – filled in at start-up from the file); ckey – the upload's own key, sent again when an
+   upload is retried, so a photo that went in before its answer was lost isn't stored twice. */
+for (const [col, type] of [['mid', 'TEXT'], ['mid_size', 'INTEGER NOT NULL DEFAULT 0'], ['width', 'INTEGER'], ['height', 'INTEGER'], ['ckey', 'TEXT']]) {
+  if (!db.prepare('PRAGMA table_info(photos)').all().some(c => c.name === col)) db.exec(`ALTER TABLE photos ADD COLUMN ${col} ${type}`);
+}
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS photos_ckey ON photos(user_id, ckey) WHERE ckey IS NOT NULL');
+
 /* Added later: when a gym set was last changed (NULL: never since it was logged), the version an edit is checked against. */
 if (!db.prepare('PRAGMA table_info(sets)').all().some(c => c.name === 'updated_at')) {
   db.exec('ALTER TABLE sets ADD COLUMN updated_at TEXT');

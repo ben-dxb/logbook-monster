@@ -60,6 +60,59 @@ const until = async (fn, ms = 5000) => { for (const end = Date.now() + ms; Date.
 /* Logged food is never lost: Timeline controls and the protein buttons on Account admin leave an unloaded day alone, changes kept
    from a sign-out are saved wherever you sign in (but never over a newer copy, nor into another account), and a tab left open
    past midnight uses the new date. */
+/* p5-photos-01/12: a bulk upload that loses the network partway – one photo stored but its answer lost – sends only the rest when
+   Upload is pressed again: no duplicates, the thumbnail and middle size of the one whose answer was lost go up then, and the
+   catalog matches the server after the failure. Stop lets the photos in flight finish, then stops. "Download all" is a ZIP. */
+async function photosResume(pg, pic, errs) {
+  const errsAt = errs.length;
+  const DAY = '2026-05-05';
+  const server = () => pg.evaluate(async d => (await api('GET', `/api/photos?from=${d}&to=${d}`)).photos, DAY);
+  const files = [];
+  for (let i = 0; i < 6; i++) files.push({ name: `resume${i}.png`, mimeType: 'image/png', buffer: await pic(40 + i, 60, `#${i}${i}${i}`) });
+  await pg.click('#p-addbtn'); await pg.waitForSelector('#p-form:not([hidden])');
+  await pg.uncheck('#p-exif'); await pg.setInputFiles('#p-file', files); await pg.fill('#p-date', DAY);
+  let posts = 0;
+  const cut = async r => {
+    if (r.request().method() !== 'POST') return r.continue();
+    posts++;
+    if (posts <= 2) return r.continue();
+    if (posts === 3) { await r.fetch(); return r.abort('connectionreset'); }   /* stored on the server, its answer lost */
+    return r.abort('internetdisconnected');
+  };
+  await pg.route(/\/api\/photos\?/, cut);
+  await pg.click('#p-form button[type=submit]');
+  await pg.waitForFunction(() => /not sent yet – tap “Upload the rest”/.test(document.querySelector('#p-err').textContent) && !pBusy, null, { timeout: 15000 });
+  await pg.unroute(/\/api\/photos\?/, cut);
+  const mid = await server();
+  expect(mid.length === 3, `three should be on the server (one whose answer was lost): ${mid.length}`);
+  expect(await pg.evaluate(d => PHOTOS.filter(p => p.date === d).length, DAY) === 3, 'after the failure the app reads the list again, so it shows what the server has');
+  expect(await pg.textContent('#p-form button[type=submit]') === 'Upload the rest', 'the button should offer to upload the rest');
+  await pg.click('#p-form button[type=submit]');
+  await pg.waitForFunction(() => /Added 3 photos .*3 had gone up already/.test(document.querySelector('#p-list').textContent), null, { timeout: 15000 });
+  const all = await server();
+  expect(all.length === 6 && new Set(all.map(p => p.id)).size === 6 && all.every(p => p.tv && p.mv),
+    `Upload the rest: no duplicates, and every photo with its thumbnail and middle size: ${JSON.stringify(all.map(p => [p.id, !!p.tv, !!p.mv]))}`);
+  expect(await pg.evaluate(d => PHOTOS.filter(p => p.date === d).length, DAY) === 6 && await pg.isHidden('#p-err'), 'the catalog matches the server');
+  /* Stop: the three on their way finish, the rest wait for "Upload the rest" */
+  await pg.evaluate(async d => { await api('DELETE', `/api/photos?from=${d}&to=${d}`); await pLoad(); renderPhotoList(); }, DAY);
+  await pg.click('#p-addbtn'); await pg.setInputFiles('#p-file', files); await pg.fill('#p-date', DAY);
+  const slow = async r => { if (r.request().method() === 'POST') await new Promise(ok => setTimeout(ok, 700)); return r.continue(); };
+  await pg.route(/\/api\/photos\?/, slow);
+  await pg.click('#p-form button[type=submit]'); await pg.click('#p-upstop');
+  await pg.waitForFunction(() => !pBusy && /Stopped\./.test(document.querySelector('#p-err').textContent), null, { timeout: 15000 });
+  await pg.unroute(/\/api\/photos\?/, slow);
+  const err = await pg.textContent('#p-err'), stopped = await server();
+  expect(/Added 3 of 6\. Stopped\. 3 not sent yet/.test(err) && stopped.length === 3, `Stop should let the photos in flight finish: ${err} (${stopped.length} on the server)`);
+  /* "Download all": a ZIP of the photos */
+  const [dl] = await Promise.all([pg.waitForEvent('download'), pg.click('#p-zip')]);
+  expect(/^logbook-monster-photos-\d{4}-\d\d-\d\d\.zip$/.test(dl.suggestedFilename()), 'Download all should save a ZIP: ' + dl.suggestedFilename());
+  await pg.evaluate(async d => { await api('DELETE', `/api/photos?from=${d}&to=${d}`); pUpErr = ''; pSent.clear(); pSentKeep(); pAddOpen = false; await pLoad(); renderPhotos([]); }, DAY);
+  await pg.waitForSelector('#p-form[hidden]', { state: 'attached' });
+  /* the requests cut on purpose above show as console errors: only those are let go */
+  const rest = errs.splice(errsAt).filter(m => !/net::ERR_(CONNECTION_RESET|INTERNET_DISCONNECTED)/.test(m));
+  errs.push(...rest);
+}
+
 async function trackerKeepsFood(browser, pg, ctx) {
   const errs = []; pg.on('pageerror', e => errs.push(e.message));
   const server = d => pg.evaluate(async d => { const r = await fetch('/api/days/' + d); return r.ok ? (await r.json()).data : null; }, d);
@@ -291,7 +344,7 @@ async function phase1c(browser) {
   await pg.evaluate(() => { location.hash = '#supps/lib/new'; }); await pg.waitForSelector('#s-lamt');
   expect(await pg.inputValue('#s-lamt') === '', 'the new supplement amount should start empty');
   /* Photos use the app's weigh-ins: one cleared on the Daily Tracker is gone there too */
-  await pg.evaluate(() => { location.hash = '#photos'; }); await pg.waitForSelector('#p-form');
+  await pg.evaluate(() => { location.hash = '#photos'; }); await pg.waitForSelector('#p-list');
   const wd = await pg.evaluate(async () => { const d = addDays(todayStr(), -3); await api('PUT', '/api/weights/' + d, { kg: 91 }); WEIGHTS[d] = 91; return d; });
   await pg.evaluate(async d => { await api('DELETE', '/api/weights/' + d); delete WEIGHTS[d]; }, wd);
   expect(await pg.evaluate(d => !pWeights().some(w => w.date === d), wd), 'a deleted weigh-in should not drive the photo filters');
@@ -1214,7 +1267,10 @@ async function recheck(browser) {
       /* progress photos: upload two days of pictures (shrunk in the browser, with thumbnails), edit one, filter by bodyweight,
          jump to a date, pick two to compare, match a weight */
       if (first) await pg.evaluate(async () => { await api('PUT', '/api/weights/2026-09-01', { kg: 85 }); await api('PUT', '/api/weights/2026-10-01', { kg: 80.4 }); });
-      await pg.click('a[data-view=photos]'); await pg.waitForSelector('#v-photos:not([hidden]) #p-form');
+      await pg.click('a[data-view=photos]'); await pg.waitForSelector('#v-photos:not([hidden]) #p-list');
+      /* the upload form is behind "Add photos" once there are photos, so the first ones are on the first screen (p5-photos-14) */
+      expect(await pg.isVisible('#p-form') === first && await pg.getAttribute('#p-addbtn', 'aria-expanded') === String(first),
+        `the upload form should be open only while there are no photos (first pass: ${first})`);
       if (first) {
         const pic = async (w, h, colour) => Buffer.from(await pg.evaluate(([w, h, colour]) => {
           const c = document.createElement('canvas'); c.width = w; c.height = h;
@@ -1232,6 +1288,7 @@ async function recheck(browser) {
         const tiff = Buffer.concat([Buffer.from([0x49, 0x49, 42, 0, 8, 0, 0, 0, 1, 0, 0x69, 0x87, 4, 0, 1, 0, 0, 0, 26, 0, 0, 0, 0, 0, 0, 0,
           1, 0, 0x03, 0x90, 2, 0, when.length, 0, 0, 0, 44, 0, 0, 0, 0, 0, 0, 0]), when]);
         const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, 0, tiff.length + 8]), Buffer.from('Exif\0\0', 'latin1'), tiff]);
+        await pg.click('#p-addbtn');   /* the form closed once the first photos were in */
         await pg.uncheck('#p-exif'); await pg.check('#p-exif');
         await pg.setInputFiles('#p-file', { name: 'later.jpg', mimeType: 'image/jpeg', buffer: Buffer.concat([jpg.subarray(0, 2), app1, jpg.subarray(2)]) });
         await pg.waitForFunction(() => /Taken on (1 Oct|Oct 1)\b/.test(document.querySelector('#p-pick').textContent), null, { timeout: 5000 });
@@ -1240,14 +1297,47 @@ async function recheck(browser) {
         const big = await pg.evaluate(async () => (await api('GET', '/api/photos')).photos.find(p => p.note === 'smoke start'));
         expect(big && big.tv && big.size < 1500000, 'uploaded photo should be shrunk and have a thumbnail');
         expect(big.pose === 'other' && !(await pg.locator('#p-pose').count()), 'without AI there is no pose to pick on upload and photos go in as Other');
+        expect(big.mv && big.w === 1500 && big.h === 2000, `a middle size should go up with the photo, and its size be known: ${JSON.stringify(big)}`);
+        expect(await pg.isHidden('#p-form') && await pg.getAttribute('#p-addbtn', 'aria-expanded') === 'false', 'the form closes once the photos are in');
+        await photosResume(pg, pic, errs);
       }
       expect(await pg.locator('#p-list .pday').count() === 2 && await pg.locator('#p-list .ptile').count() === 3, 'catalog should show 3 photos over 2 days');
       await pg.waitForFunction(() => [...document.querySelectorAll('#p-list .ptile img')].every(i => i.complete && i.naturalWidth > 0), null, { timeout: 5000 });
       expect(/85 kg/.test(await pg.textContent('#p-d-2026-09-01 h3')), 'a day should show its weigh-in');
       const pscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(pscroll <= 1, `horizontal overflow of ${pscroll}px on the photos page at ${w}px wide`);
+      if (!first) expect(await pg.evaluate(() => document.querySelector('#p-list .ptile').getBoundingClientRect().top < innerHeight), 'on a phone the first photo should be on the first screen');
+      if (first) {
+        /* a thumbnail that won't load falls back to the bigger picture instead of a broken tile; a German short date keeps one full stop */
+        const errsAt = errs.length, gone = r => r.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
+        await pg.route('**/api/photos/*/thumb?*', gone);
+        await pg.evaluate(() => { document.querySelector('#p-list').innerHTML = ''; renderPhotoList(); });
+        await pg.waitForFunction(() => [...document.querySelectorAll('#p-list .ptile img')].every(i => i.dataset.fell && i.complete && i.naturalWidth > 0), null, { timeout: 5000 });
+        await pg.unroute('**/api/photos/*/thumb?*', gone);
+        errs.push(...errs.splice(errsAt).filter(m => !/404/.test(m)));
+        expect(await pg.evaluate(() => pDot('17. Okt.') + '|' + pDot('1 Oct')) === '17. Okt.|1 Oct.', 'one full stop after a date that ends with one');
+      }
       await pg.click('#p-d-2026-09-01 .ptile >> nth=0'); await pg.waitForSelector('#p-eform');
       await pg.waitForFunction(() => { const i = document.querySelector('.pbig img'); return i && i.complete && i.naturalWidth > 0; }, null, { timeout: 5000 });
+      /* the photo keeps its room before it loads (width and height), loads first and at the middle size, not the 2000 px file (p5-photos-02/13) */
+      const pimg = await pg.evaluate(() => { const i = document.querySelector('.pbig img'), z = i.closest('.pzoom');
+        return { w: i.getAttribute('width'), h: i.getAttribute('height'), pri: i.getAttribute('fetchpriority'), src: i.currentSrc, sized: z.classList.contains('sized'),
+          ratio: z.clientHeight ? z.clientWidth / z.clientHeight : 0, back: document.querySelector('#p-body .pback').textContent }; });
+      expect(pimg.sized && +pimg.w > 0 && +pimg.h > 0 && pimg.pri === 'high' && /\/mid\?/.test(pimg.src) && Math.abs(pimg.ratio - pimg.w / pimg.h) < 0.03,
+        `the photo should be sized from its stored size and load the middle size: ${JSON.stringify(pimg)}`);
+      expect(pimg.back === '← Photos', 'back to the catalog in words, not another ‹');
+      expect(await pg.isVisible('.pbig .pzbar .sub'), 'the zoom hint is on the page, not only in a title');
+      /* + zooms in (and swaps in the full picture), Fit goes back */
+      await pg.click('.pbig [data-pa=zin]');
+      await pg.waitForFunction(() => { const i = document.querySelector('.pbig img'); return /scale/.test(i.style.transform) && /\/file\?/.test(i.currentSrc || i.src); });
+      await pg.click('.pbig [data-pa=zfit]');
+      expect(await pg.evaluate(() => document.querySelector('.pbig img').style.transform) === '' && await pg.isDisabled('.pbig [data-pa=zout]'), 'Fit shows the whole photo again');
+      /* an unsaved change asks before leaving: Cancel stays, with the change kept */
+      await pg.fill('#p-enote', 'smoke unsaved');
+      const leave = []; pg.once('dialog', d => { leave.push(d.message()); d.dismiss(); });
+      const here = pg.url(); await pg.click('#p-body .pback'); await pg.waitForTimeout(300);
+      expect(leave.length === 1 && /without saving/.test(leave[0]) && pg.url() === here && await pg.inputValue('#p-enote') === 'smoke unsaved',
+        `leaving with an unsaved change should ask, and Cancel should stay: ${leave.join()} ${pg.url()}`);
       if (w > 600) {
         /* the mouse wheel zooms in on the photo, dragging moves the zoomed view, a double-click goes back */
         const zb = await pg.locator('.pzoom').boundingBox(), zx = zb.x + zb.width / 2, zy = zb.y + zb.height / 2;
@@ -1335,7 +1425,9 @@ async function recheck(browser) {
       await pg.fill('#p-jump', '2026-09-04'); await pg.waitForSelector('#p-d-2026-09-01.hit');
       /* pick two photos in the catalog and compare them, older on the left */
       await pg.click('#p-selbtn'); await pg.waitForSelector('#p-selbar:not([hidden])');
-      await pg.click('#p-d-2026-10-01 .ptile'); await pg.click('#p-d-2026-09-01 .ptile >> nth=0');
+      await pg.focus('#p-d-2026-10-01 .ptile'); await pg.keyboard.press(' ');   /* Space picks, as on a button (p5-photos-05) */
+      expect(await pg.getAttribute('#p-d-2026-10-01 .ptile', 'aria-pressed') === 'true', 'Space should pick a photo');
+      await pg.click('#p-d-2026-09-01 .ptile >> nth=0');
       expect(await pg.locator('#p-list .ptile.on').count() === 2, 'two photos should be picked');
       await pg.click('[data-pa=cmpgo]'); await pg.waitForSelector('#p-cmp .pside');
       await pg.waitForFunction(() => document.querySelectorAll('#p-cmp .pside img').length === 2 && /30 days apart · -4\.6 kg/.test(document.querySelector('#p-cmpsum').textContent), null, { timeout: 5000 });
@@ -1359,10 +1451,19 @@ async function recheck(browser) {
         expect((await ct())[0] === '' && pg.url() === cmpUrl, 'a double-click should show the whole photo again and stay on Compare');
         await pg.mouse.move(0, 0);
       }
-      await pg.click('#p-cmp .pside >> nth=0 >> [data-pa=match]'); await pg.waitForFunction(() => document.querySelectorAll('#p-cmp .pside img').length === 2);
-      const other = await pg.evaluate(() => [...document.querySelectorAll('#p-ca option')].find(o => !o.selected && !/Oct/.test(o.textContent)).value);
-      await pg.selectOption('#p-ca', other); await pg.waitForFunction(u => location.href !== u, cmpUrl);
+      await pg.evaluate(() => { document.querySelector('#p-cmp').dataset.old = '1'; });   /* to know when the page has been drawn again */
+      await pg.click('#p-cmp .pside >> nth=0 >> [data-pa=match]'); await pg.waitForSelector('#p-cmp:not([data-old])');
       await pg.waitForFunction(() => document.querySelectorAll('#p-cmp .pside img').length === 2);
+      const other = await pg.evaluate(() => [...document.querySelectorAll('#p-ca option')].find(o => !o.selected && !/Oct/.test(o.textContent)).value);
+      /* from the keyboard a pick waits for Enter or Show – no reload per arrow key – and focus stays on the list (p5-photos-06) */
+      const cmpAt = pg.url();
+      await pg.focus('#p-ca'); await pg.selectOption('#p-ca', other); await pg.waitForTimeout(200);
+      expect(pg.url() === cmpAt && await pg.isVisible('[data-pa=cmpshow][data-for=p-ca]') && await pg.evaluate(() => document.activeElement.id) === 'p-ca',
+        'a keyboard pick should wait for Enter or Show');
+      await pg.keyboard.press('Enter'); await pg.waitForFunction(u => location.href !== u, cmpAt);
+      await pg.waitForFunction(() => document.querySelectorAll('#p-cmp .pside img').length === 2);
+      expect(/^p-c[ab]$/.test(await pg.evaluate(() => document.activeElement.id)) && await pg.evaluate(o => document.activeElement.value === o, other),
+        'focus should stay on the list that was used');
       /* timeline: the trend chart, switching metrics on and off, a followed supplement, a day's card from the chart and from a date */
       await pg.click('a[data-view=history]'); await pg.click('#v-history .htabs [data-h=timeline]'); await pg.waitForSelector('#v-timeline:not([hidden]) #t-chart svg', { timeout: 5000 });
       expect(await pg.getAttribute('a[data-view=history]', 'aria-current') === 'page' && await pg.getAttribute('#v-timeline .htabs [data-h=timeline]', 'aria-current') === 'page', 'the Timeline should be a tab of History');
@@ -1387,6 +1488,7 @@ async function recheck(browser) {
       expect(tscroll <= 1, `horizontal overflow of ${tscroll}px on the timeline at ${w}px wide`);
       await pg.hover('#t-hit'); await pg.waitForSelector('#t-tip:not([hidden])');
       await pg.click('#t-hit'); await pg.waitForSelector('#t-card[open] .tcgrid', { timeout: 5000 });
+      expect(await pg.evaluate(() => document.activeElement.id) === 't-ctitle', 'opening a day card should put focus on its heading (p5-photos-04)');
       expect(/^#history\/timeline\/\d{4}-\d\d-\d\d$/.test(await pg.evaluate(() => location.hash)), 'a point on the chart should open its day');
       await pg.click('#t-card [data-ta=close]'); await pg.waitForFunction(() => !document.querySelector('#t-card').open && location.hash === '#history/timeline');
       await pg.click('#t-pick [data-ta=go] >> nth=0'); await pg.waitForSelector('#t-card[open] .tcfood .stat', { timeout: 5000 });
@@ -1397,6 +1499,8 @@ async function recheck(browser) {
       expect(dscroll <= 1, `horizontal overflow of ${dscroll}px with the day card open at ${w}px wide`);
       const t0 = await pg.textContent('#t-ctitle');
       await pg.click('#t-card [data-ta=cmove][data-n="-1"]'); await pg.waitForFunction(t => document.querySelector('#t-ctitle').textContent !== t, t0);
+      await pg.waitForSelector('#t-card .tcgrid', { timeout: 5000 });
+      expect(await pg.evaluate(() => document.activeElement.matches('#t-card [data-ta=cmove][data-n="-1"]')), 'focus should stay on ‹ after moving a day');
       await pg.keyboard.press('Escape'); await pg.waitForFunction(() => !document.querySelector('#t-card').open && location.hash === '#history/timeline');
       await pg.evaluate(() => { location.hash = '#timeline'; }); await pg.waitForFunction(() => location.hash === '#history/timeline' && !document.querySelector('#v-timeline').hidden);
       /* coach link: made on Account admin, opened with no sign-in (read only: no edit controls, no AI), then switched off */
@@ -1413,7 +1517,10 @@ async function recheck(browser) {
       let coachOff = false;   /* once switched off, the link's 404 is expected */
       cp.on('console', m => { if (m.type() === 'error' && !coachOff) errs.push('coach: ' + m.text() + ' ' + JSON.stringify(m.location())); });
       await cp.goto(coachUrl); await cp.waitForSelector('#c-main:not([hidden]) #t-chart svg', { timeout: 5000 });
-      expect(/smoke’s logbook/.test(await cp.textContent('#c-who')) && /Smoke coach/.test(await cp.textContent('#c-until')), 'the coach page should say whose logbook it is');
+      /* an account with nothing logged: one line, not a "Not logged" row per day */
+      const none = await cp.evaluate(() => { const s = SUMS, w = WTS; SUMS = {}; WTS = {}; cRenderDays(); const t = document.querySelector('#c-days').textContent; SUMS = s; WTS = w; cRenderDays(); return t; });
+      expect(/Nothing logged in the last 14 days/.test(none) && !/Not logged/.test(none), 'the coach page should sum up days with nothing logged in one line: ' + none);
+      expect(await cp.textContent('#c-who') === 'Logbook' && /Smoke coach/.test(await cp.textContent('#c-until')), 'the coach page should say whose logbook it is');
       expect(await cp.locator('#c-days .cday').count() === 14 && /80\.5 kg/.test(await cp.textContent('#c-days')), 'the coach page should list recent days with weight');
       expect(!(await cp.locator('#t-aibtn, #t-expick, .tclink, input[type=number]').count()), 'the coach page should have nothing to edit');
       await cp.click('#c-days .cday >> nth=0'); await cp.waitForFunction(() => document.querySelector('#t-card').open && /Atlantis hack squat/.test(document.querySelector('#t-card').textContent), null, { timeout: 5000 });
