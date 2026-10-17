@@ -89,7 +89,7 @@ test('gym sets: blank or letters for reps or weight are refused, not logged as 0
   }
   const r = await ann('POST', '/api/gym/import-sets', { sets: [{ name: 'Leg press', reps: '', kg: 90, note: 'bad reps', at: `${DAY}T11:00:00` }] });
   assert.strictEqual(r.status, 400);
-  assert.strictEqual((await ann('GET', `/api/gym/sets?exercise=${ex}`)).body.length, 1, 'only the good set is stored');
+  assert.strictEqual((await ann('GET', `/api/gym/sets?exercise=${ex}`)).body.sets.length, 1, 'only the good set is stored');
 });
 
 test('foods and supplements: letters are refused', async () => {

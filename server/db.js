@@ -11,6 +11,9 @@ try { fs.chmodSync(config.dbPath, 0o600); } catch {}
 /* Node's built-in SQLite: nothing to compile, works the same on Windows, macOS and Linux.
    secure_delete: deleted rows are overwritten, so a copy of the file doesn't still hold them. */
 const db = new DatabaseSync(config.dbPath);
+/* incremental: free pages can be handed back to the disk (the daily upkeep, server/upkeep.js). Takes effect on a new database
+   here, before any table; an older one switches at its next VACUUM (upkeep.atStart). */
+db.exec('PRAGMA auto_vacuum = INCREMENTAL');
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA secure_delete = ON;');
 /* synchronous = NORMAL, chosen on purpose: in WAL mode a commit then writes the WAL without waiting on an fsync (it syncs at
    each checkpoint instead), so a save no longer pays for one or two flushes to disk. The database can't be corrupted this way

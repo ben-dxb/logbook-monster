@@ -27,7 +27,7 @@ console.error = (...a) => { logged.push(a.map(x => (x instanceof Error ? `${x.co
 require('../server/index');
 const db = require('../server/db');
 const storage = require('../server/storage');
-const photos = require('../server/photos');
+const upkeep = require('../server/upkeep');
 
 function browser() {
   let cookie = '', csrf = '';
@@ -97,7 +97,7 @@ test('/healthz says not ok when a disk it writes to has under 200 MB free', asyn
   } finally { storage.limits.low = was; }
 });
 
-test('a photo write that fails part-way leaves no file and says storage is full; a delete that fails is tried again', async () => {
+test('a photo write that fails part-way leaves no file and says storage is full; a delete that fails is left to the sweep', async () => {
   const ann = await signIn();
   const write = fs.promises.writeFile;
   fs.promises.writeFile = async (file, bytes, opts) => {   /* writes half, then the disk is full */
@@ -119,11 +119,12 @@ test('a photo write that fails part-way leaves no file and says storage is full;
     assert.strictEqual((await ann('DELETE', `/api/photos/${p.id}`)).status, 200);
     await new Promise(r => setTimeout(r, 100));
     assert.strictEqual(files().length, 1, 'still there');
-    assert.strictEqual(photos.undeleted.size, 1, 'kept to try again');
   } finally { fs.promises.unlink = unlink; }
-  photos.retryDeletes();
-  await new Promise(r => setTimeout(r, 100));
-  assert.deepStrictEqual([files(), photos.undeleted.size], [[], 0], 'gone on the next try');
+  /* no row refers to it now: the photo file sweep (server/upkeep.js) takes it once it is over an hour old */
+  const old = (Date.now() - 2 * 3600000) / 1000;
+  fs.utimesSync(path.join(PHOTOS, files()[0]), old, old);
+  assert.strictEqual(await upkeep.sweep(false), 1);
+  assert.deepStrictEqual(files(), [], 'gone after the sweep');
 });
 
 test('storage.full knows the codes', () => {

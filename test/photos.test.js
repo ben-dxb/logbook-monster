@@ -379,3 +379,29 @@ test('progress photos: an AI answer saved from the form stays the AI’s, and on
   r = await ann('PUT', `/api/photos/${q.id}`, { date: '2026-10-09', pose: 'other', style: '', note: 'later' });
   assert.deepStrictEqual([r.body.poseAi, r.body.aiSaw], [true, true]);
 });
+
+test('progress photos: thumbnails replaced in parallel leave one file and no orphans; deleting one photo is in the security log', async () => {
+  const ann = await signIn('ann@example.com');
+  const p = (await ann('POST', '/api/photos?date=2026-10-10&pose=front', jpeg('race'))).body;
+  const all = await Promise.all(Array.from({ length: 6 }, (_, i) => ann('PUT', `/api/photos/${p.id}/thumb`, jpeg('race-thumb-' + i))));
+  assert.deepStrictEqual(all.map(r => r.status), [200, 200, 200, 200, 200, 200]);
+  const db = new DatabaseSync(env.DB_PATH, { readOnly: true });
+  const row = db.prepare('SELECT thumb, thumb_size FROM photos WHERE id = ?').get(p.id);
+  assert.strictEqual(row.thumb_size, fs.statSync(path.join(PHOTO_DIR, row.thumb)).size);
+  const used = new Set(db.prepare('SELECT file, thumb FROM photos').all().flatMap(r => [r.file, r.thumb]).filter(Boolean));
+  let orphans;
+  for (let i = 0; i < 40; i++) {                                 /* the losers' files are deleted right after the answer */
+    orphans = files().filter(f => !used.has(f));
+    if (!orphans.length) break;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  assert.deepStrictEqual(orphans, [], 'every file on disk belongs to a photo');
+  assert.ok((await ann('GET', `/api/photos/${p.id}/thumb`)).bytes.toString('latin1').startsWith('\xff\xd8\xff\xe0smoke-jpeg-race-thumb-'));
+
+  assert.strictEqual((await ann('DELETE', `/api/photos/${p.id}`)).status, 200);
+  assert.strictEqual((await ann('DELETE', `/api/photos/${p.id}`)).status, 200, 'deleting again is fine, and not logged twice');
+  const logged = db.prepare("SELECT detail FROM audit WHERE event = 'photo.deleted'").all().map(r => JSON.parse(r.detail)).filter(d => d.id === p.id);
+  assert.strictEqual(logged.length, 1);
+  assert.ok((await ann('GET', '/api/my/log')).body.rows.some(e => e.event === 'photo.deleted'), 'shown on Account admin');
+  db.close();
+});

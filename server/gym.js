@@ -35,7 +35,12 @@ const q = {
   delWorkout: db.prepare('DELETE FROM workouts WHERE user_id = ? AND id = ?'),
 
   /* updated: the version an edit is checked against (server/version.js); null until the set is first changed */
-  setsFor: db.prepare('SELECT id, exercise_id AS e, reps, kg, note, at, updated_at AS updated FROM sets WHERE user_id = ? AND exercise_id = ? ORDER BY at, id'),
+  /* one exercise's sets a page at a time, newest first: the day of the PAGE-th set back from a date decides where the page ends */
+  pageEnd: db.prepare('SELECT substr(at, 1, 10) AS d FROM sets WHERE user_id = ? AND exercise_id = ? AND at < ? ORDER BY at DESC, id DESC LIMIT 1 OFFSET ?'),
+  page: db.prepare('SELECT id, exercise_id AS e, reps, kg, note, at, updated_at AS updated FROM sets WHERE user_id = ? AND exercise_id = ? AND at >= ? AND at < ? ORDER BY at DESC, id DESC'),
+  older: db.prepare('SELECT 1 FROM sets WHERE user_id = ? AND exercise_id = ? AND at < ? LIMIT 1'),
+  /* every set of it without notes, for the records, the chart and the 🏆 marks */
+  lite: db.prepare('SELECT id, reps, kg, at FROM sets WHERE user_id = ? AND exercise_id = ? ORDER BY at, id'),
   setsOn: db.prepare(`SELECT id, exercise_id AS e, reps, kg, note, at, updated_at AS updated FROM sets WHERE user_id = ? AND at >= ? AND at < ? ORDER BY at, id`),
   set: db.prepare('SELECT id, exercise_id AS e, reps, kg, note, at, updated_at AS updated FROM sets WHERE user_id = ? AND id = ?'),
   addSet: db.prepare('INSERT INTO sets (user_id, exercise_id, reps, kg, note, at) VALUES (?, ?, ?, ?, ?, ?)'),
@@ -213,6 +218,56 @@ const aiLimit = ai.limiter(12, 'That’s a lot of AI reads – wait a while and 
 
 /* ---------- routes ---------- */
 const router = express.Router();
+/* Records, the chart's points and the 🏆 marks of one exercise, from all its sets (oldest first) – worked out here so the app
+   doesn't need every set (2,000 sets with notes are ~0.7 MB). Epley as on the Timeline: no weight or over 20 reps gives none (0).
+   A set's score: the e1RM of a weighted set; an assisted (negative kg) or bodyweight set of 1–20 reps scores its weight the other
+   way round, so less assistance is progress and any weighted set beats every assisted one. null: says nothing. */
+const e1rm = s => (s.kg > 0 && s.reps >= 1 && s.reps <= 20 ? (s.reps === 1 ? s.kg : s.kg * (1 + s.reps / 30)) : 0);
+const score = s => (s.kg > 0 ? (e1rm(s) || null) : s.reps >= 1 && s.reps <= 20 ? s.kg / (1 + s.reps / 30) : null);
+const r2 = v => Math.round(v * 100) / 100;
+function exStats(sets) {
+  const pr = new Set(), days = new Map();
+  let best = null;
+  for (const s of sets) {
+    const d = s.at.slice(0, 10);
+    let o = days.get(d);
+    if (!o) days.set(d, o = { d, e: 0, k: -Infinity, v: 0, w: 0 });
+    o.e = Math.max(o.e, e1rm(s)); o.k = Math.max(o.k, s.kg); o.v += s.reps * s.kg; if (s.kg > 0) o.w += s.reps * s.kg;
+    const v = score(s);
+    if (v != null) { if (best != null && v > best + 1e-9) pr.add(s.id); best = best == null ? v : Math.max(best, v); }
+  }
+  /* a day whose volume beats every day before it; the best day counts only weighted sets – assistance isn't load moved */
+  let bestVol = -1, bd = null, bdv = 0;
+  const chart = [...days.values()].map(o => {
+    const vp = bestVol >= 0 && o.v > bestVol + 1e-9;
+    bestVol = Math.max(bestVol, o.v);
+    if (o.w > bdv) { bdv = o.w; bd = o.d; }
+    return { d: o.d, e: r2(o.e), k: o.k, ...(vp ? { vp: 1 } : {}) };
+  });
+  const slim = s => s && { reps: s.reps, kg: s.kg, at: s.at };
+  const max = (f, l = sets) => l.reduce((b, s) => (f(s) > f(b) ? s : b), l[0]);
+  const heavy = sets.filter(s => s.kg > 0), reps = [];
+  for (let r = 1; r <= 15; r++) { const ok = sets.filter(s => s.reps >= r); if (ok.length) reps.push([r, slim(ok.reduce((b, s) => (s.kg > b.kg ? s : b), ok[0]))]); }
+  const stats = { n: sets.length, nd: days.size, pr: [...pr], assisted: sets.some(s => s.kg < 0), days: chart,
+    records: sets.length ? { b1: slim(max(e1rm)), bk: slim(max(s => s.kg * 10000 + s.reps)), br: slim(max(s => s.reps * 10000 + s.kg)),
+      bv: heavy.length ? slim(max(s => s.reps * s.kg, heavy)) : null, bd, bdv, reps } : null };
+  return stats;
+}
+/* GET /api/gym/sets?exercise=5[&before=2026-09-01]: the newest sets of an exercise from before that date, whole days, at least
+   PAGE sets unless there are no more; before: the date to ask from for the next page (null when there is none). The first page
+   (no before) also carries the stats, whose pr lists the ids of the 🏆 sets. &stats=1: the stats alone – what the app reads after
+   it logs, edits or deletes a set, instead of the pages again. */
+const PAGE = 200;
+function setsPage(uid, ex, before) {
+  const to = before || '9999-12-31~';
+  const end = q.pageEnd.get(uid, ex, to, PAGE - 1);
+  const from = end ? end.d : '0000';
+  const sets = q.page.all(uid, ex, from, to);
+  const more = !!(end && q.older.get(uid, ex, from));
+  return { sets, more, before: more ? from : null, ...(before ? {} : { stats: exStats(q.lite.all(uid, ex)) }) };
+}
+const statsOf = (uid, ex) => ({ stats: exStats(q.lite.all(uid, ex)) });
+
 const send = fn => (req, res) => {
   try { res.json(fn(req)); }
   catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); if (!e.status) console.error(e); }
@@ -297,7 +352,12 @@ router.put('/order', send(req => {
 }));
 
 router.get('/sets', send(req => {
-  if (req.query.exercise !== undefined) return q.setsFor.all(req.user.id, idOf(req.query.exercise));
+  if (req.query.exercise !== undefined) {
+    const before = req.query.before;
+    if (before !== undefined && !isDate(before)) throw fail('Bad date');
+    if (req.query.stats === '1') return statsOf(req.user.id, idOf(req.query.exercise));
+    return setsPage(req.user.id, idOf(req.query.exercise), before);
+  }
   const d = String(req.query.date || '');
   if (!isDate(d)) throw fail('Give an exercise or a date');
   const next = new Date(Date.parse(d + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10);
@@ -388,4 +448,4 @@ router.post('/import-sets', send(req => {
 /* For the data export. */
 function exportFor(user) { return { ...overview(user), sets: q.allSets.all(user.id) }; }
 
-module.exports = { router, exportFor };
+module.exports = { exStats, setsPage, router, exportFor };

@@ -253,15 +253,29 @@ progress photos folder (`PHOTO_DIR`, default `data/photos/` next to the database
 photos, the pictures are files). Copying the `.db` file alone loses every photo, and copying it while the app runs
 can give a broken copy (recent changes sit in the `-wal` file beside it).
 
-Without Docker (needs the `sqlite3` command-line tool; `VACUUM INTO` gives a safe copy while the app runs):
+`npm run backup` makes a safe copy of both while the app runs, with Node alone – no `sqlite3` tool, and the same on
+Windows, macOS and Linux. Run it from the app's folder (it reads `DB_PATH` / `PHOTO_DIR` from `.env` like the app):
 
 ```bash
-mkdir -p backup
-sqlite3 data/logbook-monster.db "VACUUM INTO 'backup/logbook-monster.db'"
-cp -a data/photos backup/                     # photos added after the database copy are only extra files
+npm run backup -- ../logbook-backups              # Windows: npm run backup -- D:\logbook-backups
+npm run restore-check -- ../logbook-backups       # checks the newest backup in that folder
 ```
 
-With Docker, stop the app for a moment and copy the whole volume (database and photos):
+Each run makes a new folder, `logbook-monster-<date>T<time>/`, with the database (`VACUUM INTO`: one consistent file,
+no `-wal`), the `photos` folder and – when `SESSION_SECRET` isn't set – the `.session-secret` file the app made beside
+the database. Only your user can open it (folders 0700, files 0600; on Windows the folder's own permissions apply). It
+prints the sizes and how long it took. The photos are copied first, then the database, then any photos added
+meanwhile, and the copy is then checked: the app writes a photo's file before its row and deletes the row before the
+file, so every photo in the database copy has its file in the backup (a photo deleted while the backup ran is left out).
+`npm run restore-check` opens a backup read-only and reports the database's own check, rows per table and photo rows
+against files – it exits with an error if a photo's file is missing. Copy the backup off the machine.
+
+**Keep your secrets with it.** The saved AI key, email password and authenticator keys are sealed with `SEAL_KEY` (or
+`SESSION_SECRET` while `SEAL_KEY` isn't set). Without the same value a restored database can't open them. When
+`SESSION_SECRET` / `SEAL_KEY` are set in `.env` they are not in the backup – keep a copy of `.env` somewhere as safe as
+the backup itself.
+
+With Docker, stop the app for a moment and copy the whole volume (database, photos and `.session-secret`):
 
 ```bash
 docker compose stop
@@ -269,10 +283,29 @@ docker run --rm -v mealswap_mealswap-data:/data -v "$PWD":/out alpine tar czf /o
 docker compose start
 ```
 
-To restore, stop the app, put the database and the `photos` folder back where they were (Docker: `docker run --rm
--v mealswap_mealswap-data:/data -v "$PWD":/out alpine sh -c "rm -rf /data/* && tar xzf /out/logbook-monster-backup.tgz -C /data"`),
-remove any `logbook-monster.db-wal` / `-shm` files left beside the restored database, and start it again. Keep the
-same `SEAL_KEY` (or `SESSION_SECRET` without one): the saved AI key, SMTP password and authenticator keys are sealed with it.
+Or, without stopping it: `docker compose exec logbook-monster npm run backup -- /app/data/backups`, then
+`docker compose cp logbook-monster:/app/data/backups ./logbook-backups` and delete the folder from the volume
+(`docker compose exec logbook-monster rm -rf /app/data/backups`) so it doesn't fill it.
+
+To restore, stop the app and put the backup's database file back as `DB_PATH` (default `data/logbook-monster.db`),
+its `photos` folder as `PHOTO_DIR` (default `data/photos`) and, if the backup has one, `.session-secret` beside the
+database. Remove any `logbook-monster.db-wal` / `-shm` files left beside the restored database, and start the app.
+On Windows (PowerShell, app stopped):
+
+```powershell
+$b = "D:\logbook-backups\logbook-monster-2026-10-17T09-30-00"
+Remove-Item data\logbook-monster.db-wal, data\logbook-monster.db-shm -ErrorAction SilentlyContinue
+Copy-Item "$b\logbook-monster.db" data\ -Force
+Remove-Item data\photos -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item "$b\photos" data\photos -Recurse
+if (Test-Path "$b\.session-secret") { Copy-Item "$b\.session-secret" data\ -Force }
+```
+
+Docker: `docker run --rm -v mealswap_mealswap-data:/data -v "$PWD":/out alpine sh -c "rm -rf /data/* && tar xzf /out/logbook-monster-backup.tgz -C /data"`.
+Keep the same `SEAL_KEY` (or `SESSION_SECRET` without one) in `.env`.
+
+The app looks after the files itself: at start and once a day it hands the database's free pages back to the disk
+(the file shrinks after big deletes), deletes photo files no photo refers to once they are an hour old, and makes the
+data folder and files readable by its own user only.
 
 Each user can also download their own data from the account menu (photo details only, not the pictures).
 
