@@ -355,3 +355,27 @@ test('progress photos: camera data (GPS included) is stripped on upload, even fr
   assert.strictEqual(r.status, 200);
   assert.ok((await ondisk(r.body.id)).equals(riff(Buffer.concat([vp8x(0x20), frame]))));
 });
+
+test('progress photos: an AI answer saved from the form stays the AI’s, and one the AI called Other is no longer untagged (PR-PH-021/022)', async () => {
+  const ann = await signIn('ann@example.com');
+  const p = (await ann('POST', '/api/photos?date=2026-10-09&pose=back', jpeg('x'))).body;
+  assert.deepStrictEqual([p.poseAi, p.aiSaw], [false, false]);
+  await ann('PUT', `/api/photos/${p.id}/thumb`, jpeg('pose:front style:front_relaxed'));
+  /* "Ask AI" (not saved), then Save changes with the AI's answer: the AI's, not set by hand */
+  const a = (await ann('POST', `/api/photos/${p.id}/ai-pose`, {})).body;
+  assert.deepStrictEqual([a.pose, a.saved], ['front', false]);
+  let r = await ann('PUT', `/api/photos/${p.id}`, { date: '2026-10-09', pose: a.pose, style: a.style, note: 'n', ai: true });
+  assert.deepStrictEqual([r.body.pose, r.body.poseAi, r.body.aiSaw], ['front', true, true]);
+  /* another pose than the AI's (no ai flag) is the person's */
+  r = await ann('PUT', `/api/photos/${p.id}`, { date: '2026-10-09', pose: 'left', style: '', note: 'n' });
+  assert.deepStrictEqual([r.body.poseAi, r.body.aiSaw], [false, false]);
+  /* uploaded for the AI, which says Other: marked as seen by the AI */
+  const q = (await ann('POST', '/api/photos?date=2026-10-09&pose=other&ai=1', jpeg('x'))).body;
+  assert.deepStrictEqual([q.poseAi, q.aiSaw], [true, false]);
+  await ann('PUT', `/api/photos/${q.id}/thumb`, jpeg('no-hint'));
+  r = await ann('POST', `/api/photos/${q.id}/ai-pose`, { save: true });
+  assert.deepStrictEqual([r.body.photo.pose, r.body.photo.style, r.body.photo.poseAi, r.body.photo.aiSaw], ['other', '', true, true]);
+  /* a note change keeps it the AI's */
+  r = await ann('PUT', `/api/photos/${q.id}`, { date: '2026-10-09', pose: 'other', style: '', note: 'later' });
+  assert.deepStrictEqual([r.body.poseAi, r.body.aiSaw], [true, true]);
+});

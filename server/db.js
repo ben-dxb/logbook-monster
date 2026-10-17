@@ -250,7 +250,8 @@ if (!db.prepare('PRAGMA table_info(exercises)').all().some(c => c.name === 'part
 }
 
 /* Added later: pose_ai = 1 when a photo's pose came from the AI (or was left for it: "Let AI tell" on upload, the
-   AI not answering), so "Tag poses with AI" can leave the poses people set themselves alone. Older photos count as set by hand. */
+   AI not answering), so "Tag poses with AI" can leave the poses people set themselves alone. Older photos count as set by hand.
+   2: the AI has answered for it (photos.js aiSaw), so "Tag only untagged" doesn't ask again about one it called Other. */
 if (!db.prepare('PRAGMA table_info(photos)').all().some(c => c.name === 'pose_ai')) {
   db.exec('ALTER TABLE photos ADD COLUMN pose_ai INTEGER NOT NULL DEFAULT 0');
 }
@@ -312,6 +313,11 @@ if (!db.prepare('PRAGMA table_info(photos)').all().some(c => c.name === 'thumb_s
 /* Added later: when a photo's details were last changed (NULL: never since upload), the version a change is checked against. */
 if (!db.prepare('PRAGMA table_info(photos)').all().some(c => c.name === 'updated_at')) {
   db.exec('ALTER TABLE photos ADD COLUMN updated_at TEXT');
+}
+
+/* Added later: when a gym set was last changed (NULL: never since it was logged), the version an edit is checked against. */
+if (!db.prepare('PRAGMA table_info(sets)').all().some(c => c.name === 'updated_at')) {
+  db.exec('ALTER TABLE sets ADD COLUMN updated_at TEXT');
 }
 
 /* Added later: the security log (server/audit.js). No foreign keys: a removed account's rows stay, to show who removed it. */

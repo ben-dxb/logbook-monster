@@ -142,3 +142,40 @@ test('workouts: an edit made on an older copy is refused', async () => {
   assert.match(r.body.error, CONFLICT);
   assert.strictEqual((await A('GET', '/api/gym')).body.workouts.find(x => x.id === id).items[0].target, '5 × 3 from B');
 });
+
+test('gym sets: an edit made on an older copy is refused (NEW-gym-foods-photos-01)', async () => {
+  const ex = (await A('POST', '/api/gym/exercises', { name: 'Version row' })).body;
+  const set = (await A('POST', '/api/gym/sets', { exercise: ex.id, reps: 5, kg: 50, note: 'Z', at: '2026-10-14T10:00' })).body;
+  assert.strictEqual(set.updated, null);
+  const edit = b => ({ exercise: ex.id, reps: 5, kg: 50, note: 'Z', at: '2026-10-14T10:00', ...b });
+  /* tab A saves first (on the copy it loaded, never changed: 'none'), tab B's save on the same copy is refused */
+  const a = await A('PUT', '/api/gym/sets/' + set.id, edit({ note: 'A note' }), null);
+  assert.strictEqual(a.status, 200);
+  assert.match(a.body.updated, /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}$/);
+  const r = await B('PUT', '/api/gym/sets/' + set.id, edit({ reps: 9 }), null);
+  assert.strictEqual(r.status, 409);
+  assert.match(r.body.error, CONFLICT);
+  assert.deepStrictEqual((({ reps, note }) => ({ reps, note }))((await A('GET', '/api/gym/sets/' + set.id)).body), { reps: 5, note: 'A note' });
+  /* on the copy it has now, it goes through */
+  assert.strictEqual((await B('PUT', '/api/gym/sets/' + set.id, edit({ reps: 9, note: 'A note' }), a.body.updated)).status, 200);
+  assert.strictEqual((await B('PUT', '/api/gym/sets/' + set.id, edit({ reps: 8 }))).status, 200, 'no x-version: not checked');
+});
+
+test('workouts: a refused workout makes none of the new exercises named in it (PR-GY-003)', async () => {
+  const count = async () => (await A('GET', '/api/gym')).body.exercises.length;
+  const n = await count();
+  const items = [{ name: 'Atomic incline', target: '3 × 10' }];
+  assert.strictEqual((await A('POST', '/api/gym/workouts', { name: 'x'.repeat(300), items })).status, 400);
+  assert.strictEqual((await A('POST', '/api/gym/workouts', { name: 'Ok', description: 'd'.repeat(1001), items })).status, 400);
+  assert.strictEqual((await A('POST', '/api/gym/workouts', { name: 'Ok', items: [...items, { e: 999999 }] })).status, 400);
+  assert.strictEqual(await count(), n, 'no exercise left behind');
+  const ok = await A('POST', '/api/gym/workouts', { name: 'Atomic', items: [...items, { name: 'atomic INCLINE' }] });
+  assert.strictEqual(ok.status, 200);
+  const g = (await A('GET', '/api/gym')).body, w = g.workouts.find(x => x.id === ok.body.id), e = g.exercises.find(x => x.name === 'Atomic incline');
+  assert.strictEqual(g.exercises.length, n + 1);
+  assert.deepStrictEqual(w.items, [{ e: e.id, target: '3 × 10' }, { e: e.id }]);
+  /* an edit adding a new one, refused for an old version, makes none either */
+  const r = await A('PUT', '/api/gym/workouts/' + w.id, { name: 'Atomic', items: [{ name: 'Atomic face pull' }] }, '2000-01-01 00:00:00.000');
+  assert.strictEqual(r.status, 409);
+  assert.strictEqual(await count(), n + 1);
+});

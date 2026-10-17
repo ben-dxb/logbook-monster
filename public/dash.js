@@ -58,7 +58,7 @@ function dPage(){
 }
 
 /* ---------- the checklist ---------- */
-const dFailed=(what,m)=>`<p class="note" role="alert">Couldn’t load ${what}: ${esc(m)}. Reload the page to try again.</p>`;
+const dFailed=(what,m)=>`<p class="note" role="alert">Couldn’t load ${what}: ${esc(m)}${/[.?!]$/.test(m)?'':'.'} Reload the page to try again.</p>`;
 function dChecklist(){
   if(dErr.checklist)return `<div class="dhead"><h2 id="d-ch">Daily checklist</h2></div>${dFailed('your checklist',dErr.checklist)}`;
   const t=todayStr(), items=dItems(dDate), n=items.filter(it=>dDone(it,dDate)).length;

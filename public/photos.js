@@ -82,13 +82,22 @@ async function renderPhotos(args){
   try{
     if(!PHOTOS){box.innerHTML=tabs+'<p class="note">Loading…</p>';await pLoad();if(tok!==pTok||view!=='photos')return;}
     if(/^\d+$/.test(a||'')){
-      const p=pById(+a);
+      let p=pById(+a);
+      if(!p){await pLoad();if(tok!==pTok||view!=='photos')return;p=pById(+a);}   /* uploaded in another tab since? */
       box.innerHTML=p?pOnePage(p):gHead('#photos','Photo')+gEmpty('That photo isn’t here any more.');return;
     }
     if(cmp){box.innerHTML=tabs+pCmpPage(+x||0,+y||0);return;}
     box.innerHTML=tabs+pCatalogPage();renderPhotoList();
   }catch(e){if(!e.signedOut&&tok===pTok)box.innerHTML=tabs+gEmpty('Couldn’t load your photos: '+e.message);}
 }
+
+/* back to this tab: the photos again, in case another tab or device added, changed or deleted some. Only the catalog is
+   drawn again, and not while an upload or an AI run is going (they add to the list as they go). */
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden||!PHOTOS||pBusy||pAiBusy)return;
+  const tok=pTok;
+  pLoad().then(()=>{if(tok===pTok&&view==='photos'&&$('#p-list'))renderPhotoList();}).catch(()=>{});
+});
 
 /* ---------- the catalog: upload, then every day with photos, newest first ---------- */
 function pPoseOptions(sel,withAi){
@@ -325,7 +334,7 @@ function pOnePage(p){
     <figure class="pbig"><a class="pzoom" href="${pSrc(p)}" target="_blank" rel="noopener" title="Scroll to zoom, drag to move around, double-click to reset"><img src="${pSrc(p)}" alt="${esc(pLabel(p)+' photo, '+fmtLong(p.date))}"></a>
       <figcaption>${esc(fmtLong(p.date))}${pKg(p.date)?' · '+esc(pKg(p.date)):''}${p.note?' · '+esc(p.note):''}</figcaption></figure>
     <form id="p-eform" class="panel sform" data-id="${p.id}" data-ver="${esc(p.updated||'')}">
-      <label class="f"><span class="lbl">Date taken</span><input id="p-edate" type="date" required value="${esc(p.date)}"></label>
+      <label class="f"><span class="lbl">Date taken</span><input id="p-edate" type="date" required value="${esc(p.date)}" max="${todayStr()}"></label>
       <label class="f"><span class="lbl">Pose</span><select id="p-epose">${pPoseOptions(p.pose)}</select></label>
       <label class="f"><span class="lbl">Pose type</span><select id="p-estyle">${pStyleOptions(p.style)}</select></label>
       ${pAi?`<div class="factions"><button class="ghost" type="button" data-pa="aione" data-id="${p.id}" title="${esc(P_AI_NOTE)}">Ask AI for the pose</button><span id="p-aisay" class="sub" role="status"></span></div>`:''}
@@ -341,10 +350,12 @@ async function pSave(form){
   const err=$('#p-eerr'), id=+form.dataset.id, btn=form.querySelector('button[type=submit]');
   btn.disabled=true;err.hidden=true;
   try{
-    const p=await api('PUT','/api/photos/'+id,{date:$('#p-edate').value,pose:$('#p-epose').value,style:$('#p-estyle').value,note:$('#p-enote').value},form.dataset.ver||undefined);
+    const pose=$('#p-epose').value, style=$('#p-estyle').value, said=form.dataset.ai?JSON.parse(form.dataset.ai):null;
+    const p=await api('PUT','/api/photos/'+id,{date:$('#p-edate').value,pose,style,note:$('#p-enote').value,   /* the AI's answer, kept: still the AI's */
+      ...(said&&said.pose===pose&&said.style===style?{ai:true}:{})},form.dataset.ver||undefined);
     PHOTOS=PHOTOS.filter(x=>x.id!==id);PHOTOS.push(p);pSort();
     pMsg='Saved.';go('photos');
-  }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message;err.hidden=false;}}
+  }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message;err.hidden=false;if(e.conflict||/No such/.test(e.message))pLoad().catch(()=>{});}}
 }
 async function pDelete(id){
   const p=pById(id);if(!p)return;
@@ -354,9 +365,9 @@ async function pDelete(id){
 }
 
 
-/* untagged: still under Other with no pose type, and not put there by hand (uploads with no pose picked go in like this),
-   or an older photo that says only Side, not which side */
-const pUntagged=p=>p.poseAi&&p.pose==='other'&&!p.style||p.pose==='side';
+/* untagged: still under Other with no pose type, and not put there by hand (uploads with no pose picked go in like this) nor by the
+   AI (aiSaw: it already looked and said Other), or an older photo that says only Side, not which side */
+const pUntagged=p=>p.poseAi&&!p.aiSaw&&p.pose==='other'&&!p.style||p.pose==='side';
 /* "Tag poses with AI": the AI sets the pose of the photos the catalog shows (so pick Other first to sort only those).
    Poses the person set themselves (poseAi false) are redone only if they say so. "Tag only untagged" (onlyNew) skips
    every photo that already has a pose or pose type, whoever set it – except an older plain Side, which needs a left or right. */
@@ -408,7 +419,7 @@ async function pAiOne(b){
     if(!here())return;
     const sel=$('#p-epose'), st=$('#p-estyle');if(!sel||!st)return;
     const p=pById(id), said=pLabel(a);
-    sel.value=a.pose;st.value=a.style||'';
+    sel.value=a.pose;st.value=a.style||'';form.dataset.ai=JSON.stringify({pose:a.pose,style:a.style||''});
     say.textContent=p&&a.pose===p.pose&&(a.style||'')===p.style?`The AI agrees: ${said}.`:`The AI says ${said} – tap Save changes to keep it.`;
   }catch(e){if(!e.signedOut&&here())say.textContent=e.message;}
   finally{b.disabled=false;}
