@@ -61,8 +61,8 @@ document.addEventListener('click',async e=>{
       if(a==='promote'){await api('POST',`/api/admin/${R.path}/promote`);kyMsg[k]='';await kyAfter(k);kySay(k,`Promoted. Now revoke the old ${R.what} at ${R.where} and press Test old.`);return;}
       const slot=b.dataset.slot;kySay(k,`Testing the ${slot} ${R.what}…`);
       const r=await api('POST',`/api/admin/${R.path}/verify`,{slot});
-      kySay(k,slot==='old'?(r.dead?`The old ${R.what} is refused – it’s dead. Recorded in the security log.`:r.ok?`The old ${R.what} still works – revoke it at ${R.where}, then test again.`:`Couldn’t tell: ${r.error||'HTTP '+r.status}. Try again.`)
-        :r.ok?`The ${slot} ${R.what} works.`:`The ${slot} ${R.what} didn’t work: ${r.error||(r.dead?'it was refused':'HTTP '+r.status)}.`);
+      kySay(k,slot==='old'?(r.dead?`The old ${R.what} is refused – it’s dead. Recorded in the security log.`:r.ok?`The old ${R.what} still works – revoke it at ${R.where}, then test again.`:`Couldn’t tell: ${r.error||`${R.where} answered with error ${r.status}`}. Try again.`)
+        :r.ok?`The ${slot} ${R.what} works.`:`The ${slot} ${R.what} didn’t work: ${r.error||(r.dead?'it was refused':`${R.where} answered with error ${r.status}`)}.`);
       kyLoad();
     }catch(err){if(!err.signedOut)kySay(k,err.message);}
   });

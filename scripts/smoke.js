@@ -347,13 +347,25 @@ async function twoStep(browser, w, h) {
   await pg.fill('#code', code(1)); await pg.click('#codebtn');
   await pg.waitForSelector('#v-dash:not([hidden])');
   await pg.click('#acct>summary'); await pg.click('#logout'); await pg.waitForURL(/\/login/);
-  let said = ''; pg.once('dialog', d => { said = d.message(); d.accept(); });
+  let native = ''; pg.once('dialog', d => { native = d.message(); d.accept(); });
   await login(); await pg.waitForSelector('#second:not([hidden]) #code');
   await pg.fill('#code', recovery); await pg.click('#codebtn');
   await pg.waitForSelector('#v-dash:not([hidden])');
-  expect(/recovery code/.test(said), 'using a recovery code should say it won’t work again');
-  await pg.click('#acct>summary'); await pg.click('#tfbox>summary');
-  await pg.waitForFunction(() => /9 recovery codes left/.test(document.querySelector('#tfbody').textContent), null, { timeout: 5000 });
+  /* no alert(): the app opens Two-step sign-in on the account menu and says there that the code won't work again */
+  await pg.waitForFunction(() => /9 recovery codes left/.test(document.querySelector('#tfbody').textContent)
+    && /recovery code – it won’t work again/.test(document.querySelector('#tfmsg').textContent), null, { timeout: 5000 });
+  expect(!native && await pg.evaluate(() => document.querySelector('#acct').open && document.activeElement === document.querySelector('#tfbox>summary')),
+    'using a recovery code should open Two-step sign-in and say it won’t work again, without a native dialog');
+  await overflow('after a recovery code sign-in');
+  /* Account admin › Security & data opens the same boxes on the account menu */
+  await pg.goto(BASE + '/#account/security'); await pg.waitForSelector('#ad-tfopen');
+  await pg.evaluate(() => { document.querySelector('#acct').open = false; document.querySelector('#tfbox').open = false; });
+  await pg.click('#ad-tfopen');
+  await pg.waitForFunction(() => document.querySelector('#acct').open && document.querySelector('#tfbox').open && /recovery codes left/.test(document.querySelector('#tfbody').textContent), null, { timeout: 5000 });
+  await pg.evaluate(() => { document.querySelector('#acct').open = false; });
+  await pg.click('#ad-pwopen');
+  expect(await pg.evaluate(() => document.querySelector('#acct').open && document.querySelector('#pwbox').open && document.activeElement === document.querySelector('#pwbox>summary')),
+    'Security & data’s Change password should open it on the account menu');
   expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
   await ctx.close();
 }
