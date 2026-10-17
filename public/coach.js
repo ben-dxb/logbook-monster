@@ -36,7 +36,7 @@ const pLabel=p=>pPoseName(p.pose)+(p.style?' · '+pStyleIn(p.pose,p.style):'');
 const sNum=n=>String(Math.round(n*1000)/1000);
 const sUnitTxt=(u,n)=>/s$/.test(u)&&+n===1?u.slice(0,-1):u;
 const sDose=(n,u)=>`${sNum(n)} ${sUnitTxt(u,n)}`;
-let view='timeline', DEFS={mine:null,myVersions:[]};
+let view='timeline', DEFS={myVersions:[]};
 /* the person's own plan changes each apply from a date (as in admin.js) */
 function mineOn(date){let v=null;for(const x of DEFS.myVersions||[])if(!x.from||x.from<=date)v=x;return v;}
 /* the day template a date's weekday uses, and a template's name, from the plan in effect on that date */

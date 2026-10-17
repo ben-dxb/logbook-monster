@@ -401,12 +401,29 @@ async function phase2cLibrary(browser) {
   const w = await pg.evaluate(ex => api('POST', '/api/gym/workouts', { name: 'Smoke other tab workout', items: [{ e: ex }] }), ex);
   await hash('#gym/w/' + w.id); await pg.waitForFunction(() => /Smoke other tab workout/.test(document.querySelector('#g-body h2').textContent), null, { timeout: 5000 });
   /* a set changed in another tab since this one loaded it: the save is refused and says why */
-  const sid = await pg.evaluate(ex => api('GET', '/api/gym/sets?exercise=' + ex).then(l => l[0].id), ex);
+  const sid = await pg.evaluate(ex => api('GET', '/api/gym/sets?exercise=' + ex).then(l => l.sets.at(-1).id), ex);   /* newest first: the oldest */
   await hash('#gym/s/' + sid, '#g-setform');
   await pg.evaluate(async ([id, ex]) => api('PUT', '/api/gym/sets/' + id, { exercise: ex, reps: 6, kg: -30, note: 'other tab', at: addDays(todayStr(), -2) + 'T10:00' }), [sid, ex]);
   await pg.fill('#g-sr', '9'); await pg.click('#g-setform button[type=submit]');
   await pg.waitForFunction(() => /another tab or device/.test(document.querySelector('#g-smsg').textContent), null, { timeout: 5000 });
   expect(await pg.evaluate(id => api('GET', '/api/gym/sets/' + id).then(s => s.reps === 6 && s.note === 'other tab'), sid), 'the other tab’s edit should stay');
+
+  /* gym: an exercise's sets come a page of days at a time; "Show older sets" reads the next page, the Records count every set */
+  const many = await pg.evaluate(async () => {
+    const sets = [];
+    for (let d = 0; d < 50; d++) for (let i = 0; i < 5; i++) sets.push({ name: 'Smoke paged press', reps: 5 + i, kg: 40 + d, note: '', at: addDays(todayStr(), -60 + d) + `T10:0${i}:00` });
+    await api('POST', '/api/gym/import-sets', { sets });
+    return (await api('GET', '/api/gym')).exercises.find(e => e.name === 'Smoke paged press').id;
+  });
+  await hash('#gym/e/' + many, '#g-body .gday');
+  expect(await pg.locator('#g-body .gday').count() === 30, 'the first 30 days of sets should show');
+  await pg.click('[data-g=more]');
+  await pg.waitForFunction(() => document.querySelectorAll('#g-body .gday').length === 50, null, { timeout: 5000 });
+  expect(!(await pg.locator('[data-g=more]').count()), 'no "Show older sets" once every day is shown');
+  await pg.click('[data-g=tab][data-t=records]'); await pg.waitForSelector('#g-body .wstats', { timeout: 5000 });
+  const recs = await pg.textContent('#g-body .wstats');
+  expect(/250\s*sets/.test(recs) && /on 50 days/.test(recs) && /89\s*kg/.test(recs), 'Records should count all 250 sets: ' + recs.slice(0, 300));
+  await pg.click('[data-g=tab][data-t=sets]'); await pg.waitForSelector('#g-body .gday');
 
   /* foods: Raw/Cooked on your own food closes its Add form; a food made in another tab opens by its link */
   const f = await pg.evaluate(() => api('POST', '/api/foods', { name: 'Smoke thigh (raw)', unit: 'g', kind: 'ingredient', k: 180, p: 20, c: 0, f: 10, state: 'raw', yield: 75 }));

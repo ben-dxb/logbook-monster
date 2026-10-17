@@ -4,7 +4,7 @@
    #gym/sessions, #gym/d/2026-10-15, #gym/x (all exercises). Uses helpers from app.js. */
 
 let GY=null;                     /* {exercises:[{id,name,notes,parts,sets,last}], workouts:[{id,name,description,items}], parts:[{id,name}], ai} */
-const GSETS={}, GREAD={};                  /* exercise id -> its sets, oldest first */
+const GSETS={}, GREAD={};                  /* exercise id -> {sets (the days read so far, oldest first; pr: 🏆), more, before (where the next page starts), stats (records, chart, from the server)} */
 const GDAY={};                   /* date -> sets that day */
 let gSessions=null, gArgs=[], gTok=0, gTimer=null, gBackE='#gym', gStale=false, gReadAt=0;   /* gStale: GY to load again before the next page */
 let gCsv=null;                    /* a history CSV being checked: {file, text, res, dateOrder, unit, busy, done, total} */
@@ -60,22 +60,20 @@ async function gTagAi(ids){
 function gHead(back,title,extra){return `<div class="gbar"><a class="nav" href="${esc(back)}" aria-label="Back">‹</a><h2>${esc(title)}</h2>${extra||''}</div>`;}
 
 async function gLoad(){const ai=GY?GY.ai:false;GY=await api('GET','/api/gym');gReadAt=Date.now();if(GY.ai==null)GY.ai=ai;}
-async function gSetsOf(id){if(!GSETS[id]||isStale(GREAD['e'+id])){GSETS[id]=(await api('GET','/api/gym/sets?exercise='+id))||[];GREAD['e'+id]=Date.now();}return GSETS[id];}
+async function gSetsOf(id){if(!GSETS[id]||isStale(GREAD['e'+id])){const r=await api('GET','/api/gym/sets?exercise='+id);
+  GSETS[id]={sets:r.sets.reverse(),more:r.more,before:r.before,stats:r.stats};GREAD['e'+id]=Date.now();}return GSETS[id];}
+/* the page of older days before the ones read (the server sends whole days, newest first) */
+async function gSetsMore(id){const X=GSETS[id],r=await api('GET',`/api/gym/sets?exercise=${id}&before=${X.before}`);
+  if(GSETS[id]!==X)return;X.sets=r.sets.reverse().concat(X.sets);X.more=r.more;X.before=r.before;}
 async function gSetsOn(d){if(!GDAY[d]||isStale(GREAD['d'+d])){GDAY[d]=(await api('GET','/api/gym/sets?date='+d))||[];GREAD['d'+d]=Date.now();}return GDAY[d];}
 /* after a set changes: counts on the list pages and the per-day caches are out of date */
 function gChanged(){gSessions=null;Object.keys(GDAY).forEach(k=>delete GDAY[k]);}
 
-/* A set's strength score for 🏆: the estimated 1RM of a weighted set; an assisted (negative kg) or bodyweight set of 1–20 reps
-   scores its weight the other way round (kg ÷ (1 + reps/30), never above 0), so less assistance – or more reps on the same – is progress,
-   and any weighted set beats every assisted one. null: says nothing (no reps, over 20 reps). */
-const gScore=s=>s.kg>0?(e1rm(s)||null):s.reps>=1&&s.reps<=20?s.kg/(1+s.reps/30):null;
-/* Per exercise: sets by day, which sets beat the best score so far, which days beat the best volume. */
-function gAnalyse(sets){
-  const days=new Map(), pr=new Set(), volPr=new Set();let best=null,bestVol=-1;
-  sets.forEach(s=>{const d=s.at.slice(0,10);if(!days.has(d))days.set(d,[]);days.get(d).push(s);
-    const v=gScore(s);if(v!=null){if(best!=null&&v>best+1e-9)pr.add(s.id);best=best==null?v:Math.max(best,v);}});
-  for(const [d,ss] of days){const v=ss.reduce((a,s)=>a+s.reps*s.kg,0);if(bestVol>=0&&v>bestVol+1e-9)volPr.add(d);bestVol=Math.max(bestVol,v);}
-  return {days,pr,volPr};
+/* Per exercise: the sets read so far by day, and which days beat the best volume before them. Which sets beat the best score so far
+   (🏆, s.pr) and the records come from the server, worked out over every set (exStats in server/gym.js). */
+function gAnalyse(X){
+  const days=new Map();X.sets.forEach(s=>{const d=s.at.slice(0,10);if(!days.has(d))days.set(d,[]);days.get(d).push(s);});
+  return {days,volPr:new Set(X.stats.days.filter(p=>p.vp).map(p=>p.d))};
 }
 
 /* ---------- routing ---------- */
@@ -221,22 +219,25 @@ async function gSaveDraft(){
 async function gExercisePage(id){
   const e=exById(id);
   if(!e)return gHead(gBackE,'Exercise')+gEmpty('This exercise doesn’t exist any more.');
-  const sets=await gSetsOf(id), A=gAnalyse(sets), last=sets[sets.length-1];
+  let X=await gSetsOf(id);
+  const nDays=()=>new Set(X.sets.map(s=>s.at.slice(0,10))).size;
+  while(X.more&&nDays()<=gShow){await gSetsMore(id);if(GSETS[id]!==X)X=await gSetsOf(id);}   /* a day more than shown, to compare the oldest shown with */
+  const sets=X.sets, A=gAnalyse(X), last=sets[sets.length-1];
   if(!gQuick||gQuick.e!==id)gQuick={e:id,reps:last?last.reps:8,kg:last?last.kg:20,note:''};
   const tabs=[['sets','Sets'],['chart','Chart'],['records','Records']].map(([t,n])=>`<button type="button" data-g="tab" data-t="${t}" aria-pressed="${gTab===t}">${n}</button>`).join('');
   let body;
   if(gTab==='chart')body=`<section class="panel"><h2>Estimated 1 rep max</h2><div class="clegend"><span><i class="sw line"></i>Best estimated 1RM of the day</span><span><i class="sw dots"></i>Heaviest weight</span></div><div class="chart" id="g-chart"></div><p class="sub">From weighted sets of 1–20 reps (Epley), as on the Timeline.</p></section>`;
-  else if(gTab==='records')body=gRecords(sets,A);
+  else if(gTab==='records')body=gRecords(X.stats);
   else{
     const days=[...A.days.keys()].reverse();
     body=days.length?`<div class="gdays">${days.slice(0,gShow).map((d,di)=>{const ss=A.days.get(d), prev=A.days.get(days[di+1]);
       const cmp=(v,ix,k)=>{const p=prev&&prev[ix];return !p||v===p[k]?'':v>p[k]?' up':' down';};
       return `<section class="gday"><h3><a href="#gym/d/${d}">${esc(dayLabel(d))} ›</a>${A.volPr.has(d)?'<span class="chip gvol">🏆 Volume</span>':''}</h3>
-        ${ss.map((s,ix)=>{const isPr=A.pr.has(s.id);return `<a class="gset" href="#gym/s/${s.id}"><span class="gi">${ix+1}</span>
+        ${ss.map((s,ix)=>{const isPr=!!s.pr;return `<a class="gset" href="#gym/s/${s.id}"><span class="gi">${ix+1}</span>
           <span class="gtm">${ix?`<span class="grest">+${fmtDur(atMs(s.at)-atMs(ss[ix-1].at))}</span>`:esc(s.at.slice(11,16))}${isPr?` <span class="gtro" title="${s.kg>0?'Best estimated 1RM so far':'Least assistance so far'}">🏆</span>`:''}</span>
           <span class="gnum${isPr?' pr':cmp(s.reps,ix,'reps')}">${s.reps}<small>rep</small></span><span class="gnum${isPr?' pr':cmp(s.kg,ix,'kg')}">${kgTxt(s.kg)}<small>kg</small></span><i class="gch">›</i>
           ${s.note?`<span class="gnote">${esc(s.note)}</span>`:''}</a>`;}).join('')}</section>`;}).join('')}
-      ${days.length>gShow?`<button class="ghost" type="button" data-g="more">Show older sets</button>`:''}</div>`
+      ${days.length>gShow||X.more?`<button class="ghost" type="button" data-g="more">Show older sets</button>`:''}</div>`
       :gEmpty('No sets yet – log your first one below.');
   }
   const Q=gQuick;
@@ -258,27 +259,25 @@ async function gExercisePage(id){
           ${GY.parts.map(p=>`<label class="tog"><input type="checkbox" name="g-part" value="${p.id}"${e.parts.includes(p.id)?' checked':''}> ${esc(p.name)}</label>`).join('')}
           ${GY.ai?`<button class="ghost" type="button" data-g="aitag1" data-id="${e.id}"${gTagBusy?' disabled':''}>✦ ${gTagBusy?'Asking AI…':'Ask AI'}</button>`:''}</fieldset>
         <p class="sub" role="status">${esc(gTagMsg)}</p>
-        <div class="gactions"><button class="btn" type="submit">Save</button><button class="ghost" type="button" data-g="exdel">Delete exercise and its ${sets.length} set${sets.length===1?'':'s'}</button></div>
+        <div class="gactions"><button class="btn" type="submit">Save</button><button class="ghost" type="button" data-g="exdel">Delete exercise and its ${X.stats.n} set${X.stats.n===1?'':'s'}</button></div>
         <p id="g-exmsg" class="sub" role="status"></p></form>
     </details>`;
 }
 function gAfterExercise(id){
-  if(gTab==='chart')gChart(GSETS[id]||[]);
-  const last=(GSETS[id]||[]).slice(-1)[0], el=$('#g-rest');
+  const X=GSETS[id];
+  if(gTab==='chart')gChart(X?X.stats.days:[]);
+  const last=X&&X.sets[X.sets.length-1], el=$('#g-rest');
   if(!last||!el)return;
   const tick=()=>{const ms=Date.now()-atMs(last.at);if(!document.body.contains(el)||ms<0||ms>3*3600000){el.textContent='';return;}el.textContent='Rest '+fmtDur(ms);};
   tick();gTimer=setInterval(tick,1000);
 }
 /* An assisted set (negative kg) shows as "assisted 20 kg"; volume counts only weighted sets – assistance isn't load moved. */
 const gKg=kg=>kg<0?`assisted ${kgTxt(-kg)}`:kgTxt(kg);
-function gRecords(sets,A){
-  if(!sets.length)return gEmpty('No sets yet.');
-  const max=(f,l=sets)=>l.reduce((b,s)=>(f(s)>f(b)?s:b),l[0]);
+/* T: the stats of every set (server/gym.js) – the best set by each measure, the best day's volume, the heaviest for at least r reps */
+function gRecords(T){
+  if(!T.records)return gEmpty('No sets yet.');
   const when=s=>`${s.reps} × ${gKg(s.kg)} kg · ${fmtShort(s.at.slice(0,10))}`;
-  const heavy=sets.filter(s=>s.kg>0);
-  const b1=max(e1rm), bk=max(s=>s.kg*10000+s.reps), br=max(s=>s.reps*10000+s.kg), bv=heavy.length?max(s=>s.reps*s.kg,heavy):null;
-  let bd=null,bdv=0;for(const [d,ss] of A.days){const v=ss.reduce((a,s)=>a+(s.kg>0?s.reps*s.kg:0),0);if(v>bdv){bdv=v;bd=d;}}
-  const reps=[];for(let r=1;r<=15;r++){const ok=sets.filter(s=>s.reps>=r);if(ok.length)reps.push([r,ok.reduce((b,s)=>(s.kg>b.kg?s:b),ok[0])]);}
+  const {b1,bk,br,bv,bd,bdv,reps}=T.records;
   const noVol='only weighted sets count – assistance isn’t load moved';
   return `<div class="wstats">${[
     e1rm(b1)>0?['Est. 1 rep max',`${kgTxt(Math.round(e1rm(b1)*10)/10)}<i>kg</i>`,when(b1)]:['Est. 1 rep max','–','needs a weighted set of 1–20 reps'],
@@ -286,15 +285,14 @@ function gRecords(sets,A){
     ['Most reps',`${br.reps}<i>reps</i>`,when(br)],
     bv?['Best set volume',`${kgTxt(Math.round(bv.reps*bv.kg))}<i>kg</i>`,when(bv)]:['Best set volume','–',noVol],
     bd?['Best day volume',`${kgTxt(Math.round(bdv))}<i>kg</i>`,fmtShort(bd)]:['Best day volume','–',noVol],
-    ['Logged',`${sets.length}<i>sets</i>`,`on ${A.days.size} day${A.days.size===1?'':'s'}`],
+    ['Logged',`${T.n}<i>sets</i>`,`on ${T.nd} day${T.nd===1?'':'s'}`],
   ].map(([l,v,s])=>`<div class="stat"><span class="lbl">${l}</span><span class="num">${v}</span><span class="sub">${esc(s)}</span></div>`).join('')}</div>
-  <section class="panel"><h2>Rep maxes</h2><p>The heaviest weight you’ve moved for at least that many reps${sets.some(s=>s.kg<0)?' (for assisted sets, the least assistance)':''}.</p>
+  <section class="panel"><h2>Rep maxes</h2><p>The heaviest weight you’ve moved for at least that many reps${T.assisted?' (for assisted sets, the least assistance)':''}.</p>
     <div class="greps">${reps.map(([r,s])=>`<span class="lbl">${r} rep${r>1?'s':''}</span><b>${gKg(s.kg)} kg</b><span class="sub">${esc(fmtShort(s.at.slice(0,10)))}${s.reps>r?` (${s.reps} reps)`:''}</span>`).join('')}</div></section>`;
 }
-function gChart(sets){
+/* pts: each day's best estimated 1RM (e) and heaviest weight (k), oldest first (stats.days from the server) */
+function gChart(pts){
   const box=$('#g-chart');if(!box)return;
-  const days=new Map();sets.forEach(s=>{const d=s.at.slice(0,10),o=days.get(d)||{d,e:0,k:-Infinity};o.e=Math.max(o.e,e1rm(s));o.k=Math.max(o.k,s.kg);days.set(d,o);});
-  const pts=[...days.values()];
   if(pts.length<2){box.innerHTML='<p class="emptyc">Log this exercise on two different days to see a trend.</p>';return;}
   const W=Math.max(300,box.clientWidth||600), H=Math.round(Math.min(320,Math.max(220,W*0.42))), m={l:44,r:12,t:12,b:26};
   const t0=parse(pts[0].d).getTime(), t1=parse(pts[pts.length-1].d).getTime();
@@ -312,7 +310,7 @@ function gChart(sets){
 
 /* ---------- edit one set ---------- */
 async function gSetPage(id){
-  let s=null;for(const k in GSETS){s=GSETS[k].find(x=>x.id===id);if(s)break;}
+  let s=null;for(const k in GSETS){s=GSETS[k].sets.find(x=>x.id===id);if(s)break;}
   if(!s)s=await api('GET','/api/gym/sets/'+id);
   if(!s)return gHead(gBackE,'Edit set')+gEmpty('This set doesn’t exist any more.');
   return gHead('#gym/e/'+s.e,'Edit set')+`<form id="g-setform" class="panel gsetform" data-id="${s.id}" data-ver="${esc(s.updated||'')}">
@@ -414,7 +412,7 @@ async function gLogSet(){
   const btn=$('#g-quick .gok');btn.disabled=true;
   try{
     const s=await api('POST','/api/gym/sets',{exercise:Q.e,reps,kg,note,at:nowAt()});
-    (GSETS[Q.e]=GSETS[Q.e]||[]).push(s);
+    delete GSETS[Q.e];   /* read again: its 🏆 and the records count every set */
     const e=exById(Q.e);if(e){e.sets++;e.last=s.at;}
     Object.assign(Q,{reps,kg,note:''});gChanged();
     if(gTab!=='sets')gTab='sets';
@@ -519,7 +517,7 @@ async function gSubmit(f){
     catch(err){if(!err.signedOut)$('#g-exmsg').textContent=err.message;}}
   else if(f.id==='g-setform'){const id=+f.dataset.id, t=$('#g-st').value;
     const body={exercise:+$('#g-se').value,reps:+$('#g-sr').value,kg:+$('#g-sk').value,note:$('#g-sn').value,at:`${$('#g-sd').value}T${t.length===5?t+':00':t}`};
-    const old=Object.keys(GSETS).find(k=>GSETS[k].some(s=>s.id===id));
+    const old=Object.keys(GSETS).find(k=>GSETS[k].sets.some(s=>s.id===id));
     try{const s=await api('PUT','/api/gym/sets/'+id,body,f.dataset.ver||null);   /* changed (or deleted) in another tab since: 409 / 404 */
       if(old)delete GSETS[old];delete GSETS[s.e];gChanged();await gLoad();go('gym/e/'+s.e);}
     catch(err){if(err.signedOut)return;$('#g-smsg').textContent=err.message;

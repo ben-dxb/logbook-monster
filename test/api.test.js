@@ -10,6 +10,14 @@ const path = require('node:path');
 const http = require('node:http');
 
 const [PORT, AI_PORT, SMTP_PORT] = require('./_ports').freePorts(3);
+/* the plan change in effect today, picked from myVersions as the app does (mineOn); null for none or an empty one */
+const mineOf = b => {
+  assert.ok(!('mine' in b), 'the plan in effect isn’t sent twice');
+  const t = new Date().toISOString().slice(0, 10);
+  let v = null;
+  for (const x of b.myVersions) if (!x.from || x.from <= t) v = x;
+  return v && (Object.keys(v.foods || {}).length || (v.templates || []).length) ? v : null;
+};
 /* Stands in for OpenRouter: records the request and replies with a canned plan. */
 const aiSeen = [];
 /* a file starting "%PDF-1.4 SLOW" gets its reply after half a second */
@@ -210,7 +218,7 @@ test('no app defaults: every account starts with no meal plan, and a plan is che
   await friend.req('GET', '/auth/config');
   assert.strictEqual((await friend.req('POST', '/auth/register', { email: 'friend@example.com', password: 'longenough2' })).status, 200);
   assert.strictEqual((await friend.req('GET', '/api/me')).body.admin, false);
-  assert.strictEqual((await friend.req('GET', '/api/defaults')).body.mine, null);
+  assert.strictEqual(mineOf((await friend.req('GET', '/api/defaults')).body), null);
 });
 
 test('the super admin can switch the CSV / JSON plan files off for everyone', async () => {
@@ -244,32 +252,32 @@ test('account admin: day templates, foods and week of your own, only for yoursel
   };
   const saved = await friend.req('PUT', '/api/my/defaults', mine);
   assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
-  assert.deepStrictEqual(saved.body.mine.templates, [{ id: 'R', name: 'Rest' }, { id: 'HC', name: 'High carb day' }]);
-  assert.deepStrictEqual(saved.body.mine.schedule, mine.schedule);
-  assert.strictEqual(saved.body.mine.plan.R[0].name, 'Oat bowl');
-  assert.deepStrictEqual(saved.body.mine.plan.HC, []);                              /* a new template: no meals yet */
-  assert.deepStrictEqual(saved.body.mine.targets.HC, { k: 0, p: 0, c: 0, f: 0 });
-  assert.strictEqual(saved.body.mine.foods.skyr.unit, 'g');
-  assert.strictEqual(saved.body.mine.foods.skyr.max, null);
+  assert.deepStrictEqual(mineOf(saved.body).templates, [{ id: 'R', name: 'Rest' }, { id: 'HC', name: 'High carb day' }]);
+  assert.deepStrictEqual(mineOf(saved.body).schedule, mine.schedule);
+  assert.strictEqual(mineOf(saved.body).plan.R[0].name, 'Oat bowl');
+  assert.deepStrictEqual(mineOf(saved.body).plan.HC, []);                              /* a new template: no meals yet */
+  assert.deepStrictEqual(mineOf(saved.body).targets.HC, { k: 0, p: 0, c: 0, f: 0 });
+  assert.strictEqual(mineOf(saved.body).foods.skyr.unit, 'g');
+  assert.strictEqual(mineOf(saved.body).foods.skyr.max, null);
   assert.strictEqual((await friend.req('POST', '/api/my/ai-import', {})).status, 400);   /* no key yet: open to accounts, but nothing to read with */
   assert.deepStrictEqual((await friend.req('GET', '/api/export')).body.defaults.foods.oats.n, 'Oats');
   /* a plan file from before templates (T / R / S keys) still loads, with those names */
   const old = await friend.req('PUT', '/api/my/defaults', { foods: { oats: OATS }, plan: { R: [{ id: '1', name: 'Oats', p: [], c: [{ f: 'oats', g: 80 }], x: [] }] } });
-  assert.deepStrictEqual(old.body.mine.templates, [{ id: 'R', name: 'Rest' }]);
+  assert.deepStrictEqual(mineOf(old.body).templates, [{ id: 'R', name: 'Rest' }]);
 
   const admin = client();
   await admin.req('GET', '/auth/config');
   await admin.req('POST', '/auth/login', { email: 'me@example.com', password: 'longenough1' });
   await admin.req('GET', '/api/me');
-  assert.strictEqual((await admin.req('GET', '/api/defaults')).body.mine, null);   /* someone else's plan stays theirs */
+  assert.strictEqual(mineOf((await admin.req('GET', '/api/defaults')).body), null);   /* someone else's plan stays theirs */
 
-  assert.strictEqual((await friend.req('DELETE', '/api/my/defaults')).body.mine, null);
+  assert.strictEqual(mineOf((await friend.req('DELETE', '/api/my/defaults')).body), null);
   await friend.req('PUT', '/api/my/defaults', mine);
-  assert.strictEqual((await friend.req('PUT', '/api/my/defaults', {})).body.mine, null);   /* nothing at all = no plan */
+  assert.strictEqual(mineOf((await friend.req('PUT', '/api/my/defaults', {})).body), null);   /* nothing at all = no plan */
   /* free foods: only the kinds set are kept, as true/false */
   const fr = await friend.req('PUT', '/api/my/defaults', { ...mine, free: { sauce: 1, veg: false, pizza: true } });
-  assert.deepStrictEqual(fr.body.mine.free, { sauce: true, veg: false });
-  assert.strictEqual((await friend.req('PUT', '/api/my/defaults', { free: { sauce: true } })).body.mine, null, 'free foods alone are no plan (PR-PL-029)');
+  assert.deepStrictEqual(mineOf(fr.body).free, { sauce: true, veg: false });
+  assert.strictEqual(mineOf((await friend.req('PUT', '/api/my/defaults', { free: { sauce: true } })).body), null, 'free foods alone are no plan (PR-PL-029)');
   assert.strictEqual((await friend.req('PUT', '/api/my/defaults', { free: 'yes' })).status, 400);
   await friend.req('DELETE', '/api/my/defaults');
 });
@@ -285,19 +293,19 @@ test('account admin: plan changes take effect from a date, earlier days keep the
   const names = r => r.body.myVersions.map(v => [v.from, v.plan && v.plan.R ? v.plan.R[0].name : null]);
   let r = await friend.req('PUT', '/api/my/defaults', plan('Old bowl'));
   assert.deepStrictEqual(names(r), [[null, 'Old bowl']]);
-  assert.strictEqual(r.body.mine.plan.R[0].name, 'Old bowl');
+  assert.strictEqual(mineOf(r.body).plan.R[0].name, 'Old bowl');
 
   r = await friend.req('PUT', '/api/my/defaults', { ...plan('Future bowl'), from: FUT });
   assert.strictEqual(r.status, 200);
   assert.deepStrictEqual(names(r), [[null, 'Old bowl'], [FUT, 'Future bowl']]);
-  assert.strictEqual(r.body.mine.plan.R[0].name, 'Old bowl', 'today still uses the plan in effect now');
+  assert.strictEqual(mineOf(r.body).plan.R[0].name, 'Old bowl', 'today still uses the plan in effect now');
   r = await friend.req('PUT', '/api/my/defaults', { ...plan('Past bowl'), from: '2020-03-02' });
-  assert.strictEqual(r.body.mine.plan.R[0].name, 'Past bowl');
+  assert.strictEqual(mineOf(r.body).plan.R[0].name, 'Past bowl');
   r = await friend.req('PUT', '/api/my/defaults', { ...plan('Past bowl 2'), from: '2020-03-02' });   /* same date replaces it */
   assert.deepStrictEqual(names(r), [[null, 'Old bowl'], ['2020-03-02', 'Past bowl 2'], [FUT, 'Future bowl']]);
   /* nothing from a date = no plan from then on */
   r = await friend.req('PUT', '/api/my/defaults', { from: '2021-01-01' });
-  assert.strictEqual(r.body.mine, null);
+  assert.strictEqual(mineOf(r.body), null);
   assert.strictEqual(r.body.myVersions.length, 4);
   for (const from of ['2020-13-01', 'soon']) assert.strictEqual((await friend.req('PUT', '/api/my/defaults', { from })).status, 400);
 
@@ -312,7 +320,7 @@ test('account admin: plan changes take effect from a date, earlier days keep the
 
   assert.strictEqual((await friend.req('DELETE', '/api/my/defaults/2998-01-01')).status, 404);
   r = await friend.req('DELETE', '/api/my/defaults/2021-01-01');
-  assert.strictEqual(r.body.mine.plan.R[0].name, 'Past bowl 2');
+  assert.strictEqual(mineOf(r.body).plan.R[0].name, 'Past bowl 2');
   r = await friend.req('DELETE', '/api/my/defaults/start');
   assert.deepStrictEqual(names(r), [['2020-03-02', 'Past bowl 2'], [FUT, 'Future bowl']]);
   /* without a date, a save replaces every change */
@@ -657,7 +665,7 @@ test('gym: exercises, workouts and sets belong to one account and are checked', 
   for (const bad of [{ reps: 1.5 }, { reps: -1 }, { kg: 'heavy' }, { at: '2026-13-01T10:00' }, { at: 'yesterday' }, { exercise: 123456 }])
     assert.strictEqual((await me.req('POST', '/api/gym/sets', { ...set, ...bad })).status, 400, JSON.stringify(bad));
   assert.strictEqual((await me.req('PUT', '/api/gym/sets/' + s1.body.id, { ...set, reps: 10 })).body.reps, 10);
-  assert.strictEqual((await me.req('GET', '/api/gym/sets?exercise=' + ex.body.id)).body.length, 2);
+  assert.strictEqual((await me.req('GET', '/api/gym/sets?exercise=' + ex.body.id)).body.sets.length, 2);
   assert.strictEqual((await me.req('GET', '/api/gym/sets?date=2026-10-15')).body.length, 2);
   assert.strictEqual((await me.req('GET', '/api/gym/sets?date=2026-10-16')).body.length, 0);
   const sessions = (await me.req('GET', '/api/gym/sessions')).body;
@@ -676,7 +684,7 @@ test('gym: exercises, workouts and sets belong to one account and are checked', 
   assert.strictEqual((await other.req('POST', '/api/gym/sets', set)).status, 400);
   await other.req('DELETE', '/api/gym/sets/' + s1.body.id);
   await other.req('DELETE', '/api/gym/exercises/' + ex.body.id);
-  assert.strictEqual((await me.req('GET', '/api/gym/sets?exercise=' + ex.body.id)).body.length, 2);
+  assert.strictEqual((await me.req('GET', '/api/gym/sets?exercise=' + ex.body.id)).body.sets.length, 2);
 
   /* body parts: set by hand, unknown ids dropped, other accounts can't */
   let px = await me.req('PUT', '/api/gym/exercises/' + ex.body.id, { name: 'Hack squat', notes: '', parts: ['quads', 'Glutes', 'wings', 'quads'] });
@@ -749,7 +757,7 @@ test('gym: history import matches exercises by name, keeps set order and skips s
   ];
   const r = await me.req('POST', '/api/gym/import-sets', { sets });
   assert.deepStrictEqual(r.body, { added: 4, skipped: 0, newExercises: 1 });
-  const lp = (await me.req('GET', '/api/gym/sets?exercise=' + mine.body.id)).body;
+  const lp = (await me.req('GET', '/api/gym/sets?exercise=' + mine.body.id)).body.sets.reverse();   /* newest first */
   assert.deepStrictEqual(lp.map(s => [s.reps, s.note]), [[10, ''], [8, ''], [10, 'last']]);   /* same order as the file */
   assert.deepStrictEqual((await me.req('POST', '/api/gym/import-sets', { sets })).body, { added: 0, skipped: 4, newExercises: 0 });
   assert.deepStrictEqual((await me.req('POST', '/api/gym/import-sets', { sets: [...sets, { ...sets[0], at: '2026-01-03T09:00:00' }] })).body,
