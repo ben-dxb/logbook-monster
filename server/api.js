@@ -107,10 +107,10 @@ router.delete('/my/defaults/:from', (req, res) => {
 
 /* AI: the OpenRouter key and models (super admin), and reading a plan PDF into an account's plan format. */
 const adminOnly = (req, res, next) => (defaults.isAdmin(req.user) ? next() : res.status(403).json({ error: 'Only the super admin can do this' }));
-/* ?bg=1 runs it in the background (server/jobs.js) */
+/* ?bg=1 runs it in the background (server/jobs.js); ?date= is the plan change being edited, whose foods the AI is told */
 const readPlan = (req, res) => {
   const buf = Buffer.isBuffer(req.body) ? req.body : null, type = String(req.get('content-type') || '').split(';')[0].trim();
-  return jobs.respond(req, res, 'plan', () => ai.check(buf, type), () => ai.importPlan(buf, type, req.user));
+  return jobs.respond(req, res, 'plan', () => ai.check(buf, type), () => ai.importPlan(buf, type, req.user, isDate(req.query.date) ? req.query.date : undefined));
 };
 router.get('/admin/ai', adminOnly, (req, res) => res.json(ai.status()));
 router.put('/admin/ai', adminOnly, (req, res) => {
