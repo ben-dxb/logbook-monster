@@ -15,6 +15,7 @@ const rateLimit = require('express-rate-limit');
 const { isDate, writeError } = require('./dates');
 const version = require('./version');
 const audit = require('./audit');
+const storage = require('./storage');
 
 fs.mkdirSync(config.photoDir, { recursive: true, mode: 0o700 });
 
@@ -136,11 +137,31 @@ function meta(b) {
 /* File names are random and never come from the request, so they can't point outside the folder. */
 const newName = ext => crypto.randomBytes(16).toString('hex') + ext;
 const fileAt = name => path.join(config.photoDir, path.basename(name));
-/* a file that can't be deleted is logged, not an error for the person – its row is gone already */
-const unlink = name => { if (name) fs.promises.unlink(fileAt(name)).catch(e => { if (e.code !== 'ENOENT') console.error(`Couldn’t delete photo file ${path.basename(name)}:`, e.code || e.message); }); };
+/* a file that can't be deleted is logged, not an error for the person – its row is gone already. It is tried again every
+   10 minutes while the server runs (a read-only folder made writable again), and dropped from the list once gone. */
+const undeleted = new Set();
+const unlink = name => {
+  if (!name) return;
+  fs.promises.unlink(fileAt(name)).then(() => undeleted.delete(name), e => {
+    if (e.code === 'ENOENT') return undeleted.delete(name);
+    if (!undeleted.has(name)) console.error(`Couldn’t delete photo file ${path.basename(name)} (will try again):`, e.code || e.message);
+    undeleted.add(name);
+  });
+};
+const retryDeletes = () => { for (const name of [...undeleted].slice(0, 200)) unlink(name); };
+setInterval(retryDeletes, 10 * 60 * 1000).unref();
+/* a write that fails part-way (a full disk) leaves an empty or partial file behind: removed before the error goes on */
+async function write(file, bytes) {
+  try { await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 }); }
+  catch (e) { if (e.code !== 'EEXIST') unlink(file); throw e; }
+}
 
 const router = express.Router();
-const send = (res, e) => { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); };
+const send = (res, e) => {
+  const full = storage.full(e);
+  if (!e.status) console.error(full ? `Photo storage full: ${e.code || e.message}` : e);
+  res.status(full ? 507 : e.status || 500).json({ error: full ? storage.FULL : e.status ? e.message : 'Something went wrong' });
+};
 const rawImage = limit => express.raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit });
 
 router.get('/', (req, res) => {
@@ -184,7 +205,7 @@ router.post('/', uploadLimit, rawImage(MAX_BYTES), async (req, res) => {
     const file = newName(EXT[type]), bytes = clean(req.body, type);
     const release = reserve(req.user.id, 1, bytes.length);
     try {
-      await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 });
+      await write(file, bytes);
       try {
         const { lastInsertRowid } = q.add.run(req.user.id, m.date, m.pose, m.style, req.query.ai === '1' ? 1 : 0, m.note, file, type, bytes.length);
         release();
@@ -203,8 +224,10 @@ router.put('/:id/thumb', uploadLimit, rawImage(MAX_THUMB), async (req, res) => {
     const file = newName('.jpg'), bytes = cleanJpeg(req.body);
     const release = reserve(req.user.id, 0, bytes.length - row.thumb_size);
     try {
-      await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 });
-      if (!q.thumb.run(file, bytes.length, req.user.id, id).changes) { unlink(file); throw fail('No such photo', 404); }   /* deleted meanwhile */
+      await write(file, bytes);
+      let changed;
+      try { changed = q.thumb.run(file, bytes.length, req.user.id, id).changes; } catch (e) { unlink(file); throw e; }
+      if (!changed) { unlink(file); throw fail('No such photo', 404); }   /* deleted meanwhile */
     } finally { release(); }
     unlink(row.thumb);
     res.json(view(q.get.get(req.user.id, id)));
@@ -322,4 +345,4 @@ const exportFor = user => q.all.all(user.id);
 const filesOf = userId => q.allFiles.all(userId);
 const removeFiles = rows => rows.forEach(r => { unlink(r.file); unlink(r.thumb); });
 
-module.exports = { router, exportFor, filesOf, removeFiles, view, POSES };
+module.exports = { router, exportFor, filesOf, removeFiles, view, POSES, undeleted, retryDeletes };

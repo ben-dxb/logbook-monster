@@ -402,7 +402,7 @@ async function pAiTagAll(onlyNew){
         if(a.saved===false)kept++;
         else if(a.photo.pose!==p.pose||a.photo.style!==p.style)changed++;
         const i=PHOTOS.findIndex(x=>x.id===p.id);if(i>=0)PHOTOS[i]=a.photo;
-      }catch(e){if(e.signedOut)return;miss++;why=e.message;if(/OpenRouter|API key|wait a while|set up/.test(why))break;}   /* the same for the rest */
+      }catch(e){if(e.signedOut)return;miss++;why=e.message;if(/OpenRouter|API key|wait a while|set up/.test(why)||[429,502,503].includes(e.status))break;}   /* the same for the rest */
       done++;
     }
     pMsg=`The AI looked at ${done-miss-kept} photo${done-miss-kept===1?'':'s'} and changed the pose of ${changed}.`+(kept?` ${kept} changed by you during the run ${kept===1?'was':'were'} left as you set ${kept===1?'it':'them'}.`:'')+(miss?` ${miss} couldn’t be tagged: ${why}`:'')+(done<list.length?` Stopped before the last ${list.length-done}.`:'');

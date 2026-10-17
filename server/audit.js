@@ -24,7 +24,7 @@ const OWN = ['signin.ok', 'signin.failed', 'signin.locked', 'second.asked', 'sec
 const EVENTS = ['signin.ok', 'signin.failed', 'signin.locked', 'signin.alert', 'second.asked', 'second.failed', 'second.locked',
   'recovery.used', 'twostep.on', 'twostep.off', 'recheck.ok', 'recheck.failed', 'signout', 'password.changed', 'google.linked',
   'invite.created', 'invite.accepted', 'account.removed', 'ai.settings', 'email.settings', 'options.changed', 'export',
-  'day.deleted', 'checklist.reset', 'photos.deleted', 'food.removed', 'supp.removed', 'coach.created', 'coach.off', 'coach.used', 'ai.cap'];
+  'day.deleted', 'checklist.reset', 'photos.deleted', 'food.removed', 'supp.removed', 'coach.created', 'coach.off', 'coach.used', 'ai.cap', 'ai.breaker'];
 
 const q = {
   add: db.prepare('INSERT INTO audit (at, user_id, actor_id, event, ip, detail) VALUES (?, ?, ?, ?, ?, ?)'),
