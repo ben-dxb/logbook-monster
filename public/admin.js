@@ -377,7 +377,7 @@ $('#ad-capform').addEventListener('submit',e=>{
 });
 $('#ad-capform').addEventListener('input',()=>{$('#ad-capmsg').textContent='';});   /* "Limits saved." is about the last save, not what's in the boxes now */
 $('#ad-file').addEventListener('change',e=>{const el=e.target;adUpload(el.files&&el.files[0]).finally(()=>{el.value='';});});
-window.addEventListener('beforeunload',e=>{if(adDirty()){e.preventDefault();e.returnValue='';}});
+window.addEventListener('beforeunload',e=>{if(!leaveOk&&adDirty()){e.preventDefault();e.returnValue='';}});
 
 /* what the server would refuse in your foods, said before sending: each at its field (id ad-fd-<food>-<key>) */
 function adFoodErrs(){

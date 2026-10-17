@@ -15,11 +15,13 @@ const { todayIn } = require('../server/dates');
 const [PORT, AI_PORT] = require('./_ports').freePorts(2);
 /* Stands in for OpenRouter: a workout plan, a food's values, or a meal plan (13 templates and rice pudding for a file saying MANY) */
 const reply = (res, obj) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ model: 'test/model', choices: [{ message: { content: JSON.stringify(obj) } }] })); };
+let lastSys = '';
 const fakeAi = http.createServer((req, res) => {
   let body = '';
   req.on('data', c => { body += c; });
   req.on('end', () => {
     const b = JSON.parse(body), sys = b.messages[0].content, file = b.messages[1].content[1];
+    lastSys = sys;
     if (/workout tracking app/.test(sys)) return reply(res, { workouts: [{ name: 'Upper A', exercises: [{ name: 'Bench press', target: '3 × 8' }] }], notes: [] });
     if (/estimate nutrition values/.test(sys)) return reply(res, { k: 120, p: 22, c: 0, f: 3, source: 'USDA', basis: [], confidence: 'high', at: '1999-01-01' });
     const text = file && file.file ? Buffer.from(file.file.file_data.split(',')[1], 'base64').toString() : '';
@@ -42,7 +44,7 @@ let srv, db;
 
 before(async () => {
   await new Promise(r => fakeAi.listen(AI_PORT, '127.0.0.1', r));
-  for (const who of ['admin', 'ann', 'bob', 'cara', 'dan']) {
+  for (const who of ['admin', 'ann', 'bob', 'cara', 'dan', 'eve']) {
     execFileSync(process.execPath, ['--disable-warning=ExperimentalWarning', 'scripts/create-user.js', `${who}@example.com`],
       { cwd: root, env: { ...env, NEW_PASSWORD: 'long-password-1' }, stdio: 'ignore' });
   }
@@ -207,4 +209,18 @@ test('PR-PL-043: a damaged saved plan gets a plain message, never the parser’s
   }
   assert.strictEqual((await cara('DELETE', '/api/my/defaults')).status, 200, 'deleting the whole plan still works');
   assert.deepStrictEqual((await cara('GET', '/api/defaults')).body, { myVersions: [] });
+});
+
+test('final-food: a plan read again is told the person’s own day templates, so it can reuse their ids', async () => {
+  const eve = await signIn('eve@example.com');
+  const plan = { templates: [{ id: 'D1', name: 'Lifting' }, { id: 'D2', name: 'Off day' }], schedule: ['D1', 'D2', 'D1', 'D2', 'D1', 'D2', 'D2'],
+    targets: { D1: { k: 2200, p: 180, c: 220, f: 60 }, D2: { k: 1800, p: 170, c: 140, f: 55 } }, plan: { D1: [], D2: [] }, foods: {} };
+  assert.strictEqual((await eve('PUT', '/api/my/defaults', plan)).status, 200);
+  const r = await read(eve, '/api/my/ai-import', 'again.pdf');
+  assert.strictEqual((await waitJob(eve, r.body.job.id)).status, 'done');
+  assert.match(lastSys, /D1 \| Lifting\nD2 \| Off day/);
+  /* an account with no plan yet isn't told about any */
+  const dan = await signIn('dan@example.com');
+  await waitJob(dan, (await read(dan, '/api/my/ai-import', 'first.pdf')).body.job.id);
+  assert.doesNotMatch(lastSys, /already has these day templates/);
 });
