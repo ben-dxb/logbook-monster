@@ -22,21 +22,25 @@ const SUMS={};                              /* date -> saved day summary (for ca
 const WEIGHTS={};                           /* date -> kg */
 const SAVED={days:{},settings:null};        /* last JSON stored on the server, to spot what changed */
 const LOGGED=new Set();                     /* dates stored on the server */
+const VER={};                               /* date -> the server's `updated` of the copy this tab has, sent with each save */
+const CONFLICT=new Set();                   /* dates changed in another tab or device since: this tab's edit stays on screen, unsaved */
 let view='day', month=todayStr().slice(0,7)+'-01', csrf='', ME='';
 let resetArmed=false, isAdmin=false, aiOn=false, planFiles=true;
 let LIB=[], LIBV=0;                         /* the food library (yours and shared), and a version to spot changes */
 
 /* ---------- server ---------- */
-async function api(method,url,body){
+/* ver: the version (`updated`) of the record this change was made on, null for none yet; a newer one on the server
+   answers 409 (e.conflict) and nothing is saved (server/version.js) */
+async function api(method,url,body,ver){
   let r;
   try{r=await fetch(url,{method,credentials:'same-origin',
-    headers:{...(body!==undefined?{'content-type':'application/json'}:{}),'x-csrf-token':csrf},
+    headers:{...(body!==undefined?{'content-type':'application/json'}:{}),'x-csrf-token':csrf,...(ver!==undefined?{'x-version':ver==null?'none':ver}:{})},
     body:body!==undefined?JSON.stringify(body):undefined});}
   catch{throw new Error('Can’t reach the server – is it still running?');}
   if(r.status===401){setTimeout(toLogin,0);const e=new Error('You were signed out');e.signedOut=true;throw e;}
   if(r.status===404&&method==='GET') return null;
   const j=await r.json().catch(()=>({}));
-  if(!r.ok) throw new Error(j.error||`HTTP ${r.status}`);
+  if(!r.ok){const e=new Error(j.error||`HTTP ${r.status}`);e.conflict=r.status===409&&ver!==undefined;throw e;}
   return j;
 }
 
@@ -63,7 +67,7 @@ async function restoreStash(){
   }catch{}
   const jobs=(st&&Array.isArray(st.jobs)?st.jobs:[]).filter(x=>Array.isArray(x)&&typeof x[1]==='string');
   const srv={};   /* the server's copy of each stashed day, read before anything changes (a failure leaves the stash for next time) */
-  for(const [k] of jobs)if(isDate(k)&&LOGGED.has(k))try{srv[k]=await api('GET','/api/days/'+k);}catch(e){if(e.signedOut)throw e;return [];}
+  for(const [k] of jobs)if(isDate(k)&&LOGGED.has(k))try{srv[k]=await api('GET','/api/days/'+k);if(srv[k])VER[k]=srv[k].updated;}catch(e){if(e.signedOut)throw e;return [];}
   const keep=[],skipped=[],utc=s=>s?Date.parse(s.replace(' ','T')+'Z'):0;
   for(const job of jobs){
     try{
@@ -103,6 +107,7 @@ function summaryOf(date,D){useDefs(date);const t=dayTotals(D),type=D.type||typeO
 function persist(){
   for(const [date,D] of Object.entries(S.days)){
     libSync(D);
+    if(CONFLICT.has(date))continue;
     const j=JSON.stringify(D);
     if(SAVED.days[date]===undefined){SAVED.days[date]=j;continue;}   /* first sight of an unsaved plan: baseline */
     if(SAVED.days[date]!==j) pending.set(date,j);
@@ -121,8 +126,10 @@ async function flush(){
     for(const [key,j] of jobs){
       if(key==='@settings'){await api('PUT','/api/settings',JSON.parse(j));SAVED.settings=j;continue;}
       const D=JSON.parse(j);const summary=summaryOf(key,D);
-      await api('PUT','/api/days/'+key,{data:D,summary});
-      SAVED.days[key]=j;LOGGED.add(key);SUMS[key]={date:key,...summary};
+      let r;
+      try{r=await api('PUT','/api/days/'+key,{data:D,summary},VER[key]??null);}
+      catch(e){if(!e.conflict)throw e;CONFLICT.add(key);pending.delete(key);continue;}   /* kept on screen; reload to see the other copy */
+      VER[key]=r.updated;SAVED.days[key]=j;LOGGED.add(key);SUMS[key]={date:key,...summary};
     }
     saveState=pending.size?'pending':'saved';saveErr='';
     if(pending.size)saveTimer=setTimeout(flush,600);else if(stashOut)dropStash();
@@ -144,7 +151,7 @@ async function loadDay(date){
   if(LOGGED.has(date)){
     showLoading(true);
     try{const r=await api('GET','/api/days/'+date);
-      if(r&&!S.days[date]){S.days[date]=migrate(r.data);SAVED.days[date]=JSON.stringify(S.days[date]);}
+      if(r&&!S.days[date]){S.days[date]=migrate(r.data);SAVED.days[date]=JSON.stringify(S.days[date]);VER[date]=r.updated;}
     }catch(e){showLoading(false);if(!e.signedOut)alert('Couldn’t load that day: '+e.message);return false;}
     showLoading(false);
   }
@@ -164,7 +171,7 @@ async function unlogDay(){
   const date=S.cur;
   if(!confirm(`Remove ${fmtLong(date)} from your history? This can’t be undone.`))return;
   try{await api('DELETE','/api/days/'+date);}catch(e){alert(e.message);return;}
-  LOGGED.delete(date);delete SUMS[date];pending.delete(date);
+  LOGGED.delete(date);delete SUMS[date];pending.delete(date);delete VER[date];CONFLICT.delete(date);
   S.days[date]=freshOn(date);SAVED.days[date]=JSON.stringify(S.days[date]);
   render();
 }
@@ -239,7 +246,9 @@ function renderStatus(){
   if(view!=='day')return;
   const date=S.cur, logged=LOGGED.has(date), p=pending.has(date);
   let h;
-  if(saveState==='error'&&(p||pending.size)) h=`<span class="chip bad">Not saved</span> ${esc(saveErr)} Retrying… <button class="ghost" data-act="retry">Retry now</button>`;
+  const cd=CONFLICT.has(date)?date:CONFLICT.values().next().value;
+  if(cd) h=`<span class="chip bad">Not saved</span> ${cd===date?'This day':esc(fmtLong(cd))} changed in another tab or device – reload to see it. Your change here isn’t saved. <button class="ghost" data-act="reload">Reload</button>`;
+  else if(saveState==='error'&&(p||pending.size)) h=`<span class="chip bad">Not saved</span> ${esc(saveErr)} Retrying… <button class="ghost" data-act="retry">Retry now</button>`;
   else if(saveState==='saving'||p) h='<span class="chip info">Saving…</span>';
   else if(logged) h=`<span class="chip ok">✓ Saved</span> In your history. <button class="ghost" data-act="unlog">Remove from history</button>`;
   else h='<span class="chip">Plan only</span> Not in your history yet – any change saves it. <button class="btn" data-act="savenow">Save day as is</button>';
@@ -516,6 +525,7 @@ document.addEventListener('click',e=>{
   else if(a==='savenow'){saveNow();}
   else if(a==='unlog'){unlogDay();}
   else if(a==='retry'){clearTimeout(saveTimer);saveState='pending';flush();}
+  else if(a==='reload')location.reload();
   else if(a==='del'){editMeal(+b.dataset.m,b.dataset.b,(D,m)=>{m[b.dataset.b].splice(+b.dataset.i,1);});}
   else if(a==='save'){saveMeal(+b.dataset.m);}
   else if(a==='undo'){undoMeal(+b.dataset.m);}

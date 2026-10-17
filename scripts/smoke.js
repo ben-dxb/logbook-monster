@@ -1,6 +1,6 @@
 'use strict';
 /* Browser smoke test: starts a throwaway server, signs in, weighs a meal-prep pack, edits and saves a day, logs a weight,
-   opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, shares a read-only coach link and opens it signed out, uploads a plan and adds a day template on Account admin, sets up AI models and invites someone on the Super admin tabs, builds a plan from nothing as the new account, switches a day to another template, at desktop and phone widths. Fails on any page error.
+   opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, shares a read-only coach link and opens it signed out, uploads a plan and adds a day template on Account admin, sets up AI models and invites someone on the Super admin tabs, builds a plan from nothing as the new account, switches a day to another template, edits one day in two tabs, at desktop and phone widths. Fails on any page error.
    Needs Playwright (npm i -g playwright, or available in the environment); skips if missing. */
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -117,6 +117,29 @@ async function trackerKeepsFood(browser, pg, ctx) {
   await p3.evaluate(() => { location.hash = '#day'; });
   await p3.waitForFunction(d => document.querySelector('#datepick').value === d && document.querySelector('#dtitle').textContent === 'Today', day2, { timeout: 5000 });
   await c3.close();
+  expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
+}
+
+/* Two tabs on the same day: the second tab's change, made on the copy it loaded before the first tab saved, isn't saved over
+   the first tab's – it says the day changed elsewhere and keeps the change on screen until a reload. */
+async function twoTabsOneDay(ctx) {
+  const errs = [], A = await ctx.newPage(), B = await ctx.newPage();
+  for (const p of [A, B]) p.on('pageerror', e => errs.push(e.message));
+  const open = async (p, d) => { await p.goto(BASE + '/#day/' + d); await p.waitForFunction(d => document.querySelector('#datepick').value === d && document.querySelector('#meals .meal'), d); };
+  const saved = p => p.waitForFunction(() => /Saved/.test(document.querySelector('#status').textContent) && !pending.size && !inFlight, null, { timeout: 5000 });
+  const d = localDay(new Date(Date.now() + 61 * 864e5));                    /* a day nobody has saved */
+  await open(A, d); await A.click('[data-act=savenow]'); await saved(A);
+  await open(B, d);                                                         /* B has the copy A saved */
+  await A.selectOption('#sn', 'skittles'); await A.click('#snackform button'); await saved(A);
+  await B.selectOption('#sn', 'reese'); await B.click('#snackform button');
+  await B.waitForFunction(() => /changed in another tab or device/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
+  expect(/Reese/.test(await B.textContent('#offlist')), 'the stale tab should keep its change on screen');
+  const off = await B.evaluate(async d => (await (await fetch('/api/days/' + d)).json()).data.off.map(o => o.n).join(), d);
+  expect(/Skittles/.test(off) && !/Reese/.test(off), 'the stale tab must not save over the newer day: ' + off);
+  await B.click('#status [data-act=reload]'); await B.waitForSelector('#v-day:not([hidden]) #meals .meal');
+  await B.waitForFunction(() => /Skittles/.test(document.querySelector('#offlist').textContent) && /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
+  await A.evaluate(async d => api('DELETE', '/api/days/' + d), d);
+  await A.close(); await B.close();
   expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
 }
 
@@ -854,6 +877,7 @@ async function trackerKeepsFood(browser, pg, ctx) {
         await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
         expect(/Skittles/.test(await pg.textContent('#offlist')), 'change made while signed out should be saved after sign-in');
         await trackerKeepsFood(browser, pg, ctx);
+        await twoTabsOneDay(ctx);
       }
       /* sign-out sends Clear-Site-Data: another account's unsaved changes waiting in this browser must survive it */
       const stash = JSON.stringify({ email: 'other@example.com', at: Date.now(), jobs: [] });

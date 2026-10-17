@@ -231,7 +231,7 @@ function fEditPage(f){
   const kinds=[['ingredient','Single ingredient'],['meal','Whole meal']].map(([k,l])=>`<button type="button" data-fa="fkind" data-v="${k}" aria-pressed="${v.kind===k}">${l}</button>`).join('');
   const box=(m,l)=>`<label class="f"><span class="lbl">${l} <span class="aimark" id="f-${m}-flag" hidden>⚑ AI</span></span><input id="f-${m}" type="number" inputmode="decimal" min="0" step="any" value="${esc(v[m])}"></label>`;
   return gHead('#foods',f?'Edit food':'New food')+`
-    <form id="f-form" class="panel fform" data-id="${f?f.id:''}" data-kind="${v.kind}">
+    <form id="f-form" class="panel fform" data-id="${f?f.id:''}" data-ver="${f&&f.updated?esc(f.updated):''}" data-kind="${v.kind}">
       <label class="f fwide"><span class="lbl">Name</span><input id="f-name" maxlength="80" required value="${esc(v.name)}" placeholder="e.g. Protein pancakes, or Chicken breast (raw)"></label>
       <div class="f fwide"><span class="lbl">This is a</span><div class="seg" role="group" aria-label="Type">${kinds}</div></div>
       <label class="f fwide"><span class="lbl">Values are</span><select id="f-unit">${unit}</select></label>
@@ -285,7 +285,7 @@ async function fSave(form){
   const id=form.dataset.id, btn=form.querySelector('button[type=submit]');
   btn.disabled=true;err.hidden=true;
   try{
-    const food=await api(id?'PUT':'POST','/api/foods'+(id?'/'+id:''),body);
+    const food=await api(id?'PUT':'POST','/api/foods'+(id?'/'+id:''),body,id&&form.dataset.ver||undefined);
     LIB=LIB.filter(x=>x.id!==food.id);LIB.push(food);fSort();
     fMsg=id?`Saved “${food.name}”.`:`Added “${food.name}” to your library.`;go('foods');
   }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message+(fAiOn&&/calories or macros/.test(e.message)?' – or tap “Fill blanks with AI”.':'');err.hidden=false;}}

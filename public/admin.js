@@ -325,7 +325,8 @@ window.addEventListener('beforeunload',e=>{if(adDirty()){e.preventDefault();e.re
 async function adSave(){
   adBusy=true;adStatus();
   if(adFromToday&&adFrom<todayStr())adFrom=todayStr();
-  try{const from=adFrom||null;adSaved_(await api('PUT','/api/my/defaults',{...adPayload(),from}),from);}
+  try{const from=adFrom||null, cur=(DEFS.myVersions||[]).find(v=>(v.from||null)===from);   /* the change this save replaces, as this tab has it */
+    adSaved_(await api('PUT','/api/my/defaults',{...adPayload(),from},(cur&&cur.updatedAt)||null),from);}
   catch(err){if(!err.signedOut){adErrs=[err.message];adMsg='Couldn’t save:';}}
   adBusy=false;renderAdmin();
 }
@@ -622,7 +623,7 @@ $('#v-admin').addEventListener('click',async e=>{
     if(a==='reset'&&!confirm('Go back to the default checklist? Your own items are replaced (ticks already made stay).'))return;
     const items=clDraft.filter(x=>x.label.trim()), msg=$('#ad-clmsg');
     b.disabled=true;
-    try{CL=a==='reset'?await api('DELETE','/api/checklist'):await api('PUT','/api/checklist',{items});
+    try{CL=a==='reset'?await api('DELETE','/api/checklist',undefined,CL.updated):await api('PUT','/api/checklist',{items},CL.updated);
       clDraft=CL.items.map(x=>({...x}));clDirty=false;clRender();msg.textContent=a==='reset'?'Back to the default checklist.':'Checklist saved.';}
     catch(err){if(!err.signedOut)msg.textContent=err.message;}
     b.disabled=false;$('#ad-clsave').disabled=!clDirty;

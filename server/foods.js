@@ -8,6 +8,7 @@ const express = require('express');
 const db = require('./db');
 const defaults = require('./defaults');
 const ai = require('./ai');
+const version = require('./version');
 
 const COLS = 'f.id, f.user_id, f.name, f.unit, f.kind, f.k, f.p, f.c, f.f, f.recipe, f.public, f.ai, f.state, f.yield, f.free, f.updated_at, u.name AS owner';
 const q = {
@@ -16,7 +17,7 @@ const q = {
   get: db.prepare(`SELECT ${COLS} FROM foods f JOIN users u ON u.id = f.user_id WHERE f.id = ?`),
   count: db.prepare('SELECT COUNT(*) AS n FROM foods WHERE user_id = ?'),
   add: db.prepare('INSERT INTO foods (user_id, name, unit, kind, k, p, c, f, recipe, public, ai, state, yield, free) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
-  put: db.prepare(`UPDATE foods SET name = ?, unit = ?, kind = ?, k = ?, p = ?, c = ?, f = ?, recipe = ?, public = ?, ai = ?, state = ?, yield = ?, free = ?, updated_at = datetime('now')
+  put: db.prepare(`UPDATE foods SET name = ?, unit = ?, kind = ?, k = ?, p = ?, c = ?, f = ?, recipe = ?, public = ?, ai = ?, state = ?, yield = ?, free = ?, updated_at = ?
     WHERE id = ? AND user_id = ?`),
   del: db.prepare('DELETE FROM foods WHERE id = ?'),
   mine: db.prepare('SELECT id, name, unit, kind, k, p, c, f, recipe, public, ai, state, yield, free FROM foods WHERE user_id = ? ORDER BY id'),
@@ -183,7 +184,8 @@ router.put('/:id', (req, res) => {
     if (!row || (row.user_id !== req.user.id && !row.public)) throw fail('No such food', 404);
     if (row.user_id !== req.user.id) throw fail('Only the person who added this food can change it', 403);
     const d = clean(req.body);
-    q.put.run(d.name, d.unit, d.kind, d.k, d.p, d.c, d.f, d.recipe, d.public, d.ai && JSON.stringify(d.ai), d.state, d.yield, d.free, row.id, req.user.id);
+    version.check(req, row.updated_at);
+    q.put.run(d.name, d.unit, d.kind, d.k, d.p, d.c, d.f, d.recipe, d.public, d.ai && JSON.stringify(d.ai), d.state, d.yield, d.free, version.stamp(), row.id, req.user.id);
     res.json(view(q.get.get(row.id), req.user));
   } catch (e) { send(res, e); }
 });
