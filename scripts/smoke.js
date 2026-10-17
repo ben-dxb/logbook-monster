@@ -1852,6 +1852,7 @@ async function formKit(browser) {
       expect(!(await cp.locator('#t-aibtn, #t-expick, .tclink, input[type=number]').count()), 'the coach page should have nothing to edit');
       await cp.click('#c-days .cday >> nth=0'); await cp.waitForFunction(() => document.querySelector('#t-card').open && /Atlantis hack squat/.test(document.querySelector('#t-card').textContent), null, { timeout: 5000 });
       expect(await cp.locator('#t-card .tcphotos .ptile img').count() >= 1, 'the coach should see the latest photos');
+      { const card = await cp.textContent('#t-card'); expect(/\d kg/.test(card) && !/\dkg/.test(card), 'the day card should write weights as “81.4 kg”: ' + (card.match(/.{0,20}\dkg.{0,10}/) || [''])[0]); }
       await cp.waitForFunction(() => [...document.querySelectorAll('#t-card .tcphotos img')].every(i => i.complete && i.naturalWidth > 0), null, { timeout: 5000 });
       const coachScroll = await cp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(coachScroll <= 1, `horizontal overflow of ${coachScroll}px on the coach page at ${w}px wide`);
@@ -2061,6 +2062,11 @@ async function formKit(browser) {
         expect(await pg.isVisible('#ad-keybanner') && /unknown age/.test(await pg.textContent('#ad-keybanner')), 'a credential of unknown age should show the banner');
         const kyScroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         expect(kyScroll <= 1, `horizontal overflow of ${kyScroll}px on the Keys tab at ${w}px wide`);
+        /* the old key's steps are said once while it's kept, and not at all once Test old proved it dead */
+        const kn = await pg.evaluate(() => { const keep = KY.slots, d = kyDead.ai, c = { name: 'OPENROUTER', next: 'To rotate: make a new one at the provider, Save as next, Test next, Promote, revoke the old one, Test old. Revoke the old one at the provider, then Test old – it must fail.' };
+          KY.slots = { ...keep, ai: { old: true, oldUntil: 123 } }; const live = kyNext(c); kyDead.ai = 123; const dead = kyNext(c); KY.slots = keep; kyDead.ai = d; return { live, dead }; });
+        expect(kn.live === 'To rotate: make a new one at the provider, Save as next, Test next, Promote. Revoke the old one at the provider, then Test old – it must fail.' && kn.dead === 'To rotate: make a new one at the provider, Save as next, Test next, Promote.', 'Keys next steps: ' + JSON.stringify(kn));
+        expect(/allows only one password: change it there, then straight away Save as next → Test next → Promote/.test(await pg.evaluate(() => { kyRot('mail'); return document.querySelector('#ad-rot-mail').textContent; })), 'the Email rotation box should cover a one-password provider');
         await pg.click('#ad-tabs [data-adt=ai]'); await pg.waitForSelector('[data-adtab=ai]:not([hidden]) [data-ky-form=ai]');
         expect(await pg.isDisabled('[data-ky=promote][data-k=ai]'), 'Promote is off until a next key is saved');
         await pg.fill('[data-ky-in=ai]', 'sk-or-v1-smoke-next-key'); await pg.click('[data-ky-form=ai] button[type=submit]');

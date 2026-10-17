@@ -276,7 +276,7 @@ function tCardBody(r){
   }else food=gEmpty('Nothing saved in the Daily Tracker for this day.');
   /* weight */
   const w=r.weight;
-  const weight=w?`<p class="tbig">${w.kg.toFixed(1)}<i>kg</i></p><p class="sub">${w.ago?`Last weigh-in, ${esc(fmtShort(w.date))} (${tAgo(w.ago)})`:'Weighed in that day'}${w.avg7!=null&&!w.ago?` · 7-day average ${w.avg7.toFixed(1)} kg`:''}</p>`
+  const weight=w?`<p class="tbig">${w.kg.toFixed(1)} <i>kg</i></p><p class="sub">${w.ago?`Last weigh-in, ${esc(fmtShort(w.date))} (${tAgo(w.ago)})`:'Weighed in that day'}${w.avg7!=null&&!w.ago?` · 7-day average ${w.avg7.toFixed(1)} kg`:''}</p>`
     :gEmpty('No weigh-ins up to this day.');
   /* photos: the latest of each pose up to this day */
   const photos=r.photos.length?`<div class="tcphotos">${r.photos.map(p=>`<a class="ptile" href="${tRO?pMid(p):'#photos/'+p.id}"${tRO?' target="_blank" rel="noopener"':''}><img src="${pThumb(p)}"${tSet(p)} data-full="${pThumb(p)===pMid(p)?pSrc(p):pMid(p)}" alt="${esc(pLabel(p)+' photo, '+fmtLong(p.date))}" loading="lazy" decoding="async"><span>${esc(pLabel(p))} · ${esc(p.ago?fmtShort(p.date):'that day')}</span></a>`).join('')}</div>`
@@ -287,7 +287,7 @@ function tCardBody(r){
     +(sp.regime.length?`<span class="lbl">Regime – the 14 days to this one</span><ul class="tclist">${sp.regime.map(x=>`<li><b>${esc(x.name)}</b> <span class="sub">${x.days} of 14 days · usually ${esc(x.usual)}</span></li>`).join('')}</ul>`:'');
   /* gym */
   const g=r.gym;
-  const gym=g.exercises.length?`<p class="sub">${g.sets} set${g.sets===1?'':'s'} · ${g.volume.toLocaleString()} kg volume</p><ul class="tclist">${g.exercises.map(x=>`<li><b>${esc(x.name)}</b>${x.best?` <span class="chip info">e1RM ${esc(tNum(x.best,'kg'))}</span>`:''}<small>${x.sets.map(s=>`${esc(s.reps)}×${esc(s.kg)}kg`).join(' · ')}</small></li>`).join('')}</ul>`
+  const gym=g.exercises.length?`<p class="sub">${g.sets} set${g.sets===1?'':'s'} · ${g.volume.toLocaleString()} kg volume</p><ul class="tclist">${g.exercises.map(x=>`<li><b>${esc(x.name)}</b>${x.best?` <span class="chip info">e1RM ${esc(tNum(x.best,'kg'))}</span>`:''}<small>${x.sets.map(s=>`${esc(s.reps)}×${esc(s.kg)} kg`).join(' · ')}</small></li>`).join('')}</ul>`
     :gEmpty(g.last?`No gym sets that day. Last session: ${fmtShort(g.last)}.`:'No gym sets up to this day.');
   return `<div class="tcgrid">${sec('tcfood','Food',food,[`#day/${d}`,'Open in Daily Tracker'])}
     ${sec('','Weight',weight,[`#day/${d}`,'Log in Daily Tracker'])}

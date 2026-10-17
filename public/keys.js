@@ -7,6 +7,16 @@ let KY=null, kyBusy=false;
 const KY_ROT={ai:{path:'ai',field:'key',what:'key',where:'OpenRouter'},mail:{path:'email',field:'pass',what:'password',where:'your email provider'}};
 const KY_TIER={ok:['ok','OK'],due:['info','Due soon'],stale:['bad','Over 30 days'],overdue:['bad','Overdue'],unknown:['bad','Age unknown'],info:['','No schedule']};
 const kyMsg={ai:'',mail:''};
+/* the old slot "Test old" proved dead, per key (by when that slot runs out): the steps for it aren't repeated */
+const kyDead={ai:null,mail:null};
+const KY_NAME={OPENROUTER:'ai',SMTP:'mail'};
+/* the server's next step without saying the old key's steps twice (once in the rotate how-to, once for the old slot), or at all once it tested dead */
+function kyNext(c){
+  const k=KY_NAME[c.name], s=k&&KY&&KY.slots&&KY.slots[k];if(!s||!s.old)return c.next;
+  let t=c.next.replace(', Promote, revoke the old one, Test old.',', Promote.');
+  if(kyDead[k]===s.oldUntil)t=t.replace(' Revoke the old one at the provider, then Test old – it must fail.','').replace('Revoke the old one at the provider, then Test old – it must fail.','');
+  return t.trim();
+}
 async function kyLoad(){
   if(kyBusy)return;kyBusy=true;
   try{KY=await api('GET','/api/admin/keys');}catch(e){if(e.signedOut)return;KY=KY||null;}finally{kyBusy=false;}
@@ -19,7 +29,7 @@ function kyRender(){
   if(el)el.innerHTML=!KY?'<p class="sub">Loading…</p>':KY.credentials.map(c=>{const [cl,txt]=KY_TIER[c.tier]||['',''];
     return `<div class="aduser kyrow"><span class="who"><b>${esc(c.label)}</b> <code>${esc(c.name)}</code>
       <span class="sub">${esc(c.where)} · ${esc(c.slots)}${c.rotate?` · ${c.days==null?'age unknown':`${c.days} day${c.days===1?'':'s'} old`}`:''}</span>
-      <span class="sub">${esc(c.next)}</span></span><span class="chip ${cl}">${esc(txt)}</span></div>`;}).join('');
+      <span class="sub">${esc(kyNext(c))}</span></span><span class="chip ${cl}">${esc(txt)}</span></div>`;}).join('');
   for(const k of Object.keys(KY_ROT))kyRot(k);
 }
 /* the rotation block on the AI / Email tab */
@@ -30,6 +40,7 @@ function kyRot(k){
   if(old&&old===document.activeElement){const m=el.querySelector('[data-ky-msg]');if(m)m.textContent=kyMsg[k];return;}
   el.innerHTML=`<h3 class="lbl">Rotate the ${R.what}</h3>
     <p class="sub">Make a new ${R.what} at ${R.where}, save it here as next and test it, then promote it. The one it replaces is kept for an hour: revoke it at ${R.where}, then Test old – it must fail. See docs/rotation.md.</p>
+    ${k==='mail'?'<p class="sub">If your provider allows only one password: change it there, then straight away Save as next → Test next → Promote. Test old should then fail.</p>':''}
     <form class="adkey" data-ky-form="${k}"><label class="f"><span class="lbl">Next ${R.what}</span><input type="password" autocomplete="off" spellcheck="false" data-ky-in="${k}" aria-describedby="ad-rot-${k}-msg"></label>
       <button class="btn" type="submit">Save as next</button></form>
     <div class="admailact"><button class="ghost" type="button" data-ky="test" data-k="${k}" data-slot="next"${s.next?'':' disabled'}>Test next</button>
@@ -63,6 +74,7 @@ document.addEventListener('click',async e=>{
       if(a==='promote'){await api('POST',`/api/admin/${R.path}/promote`);kyMsg[k]='';await kyAfter(k);kySay(k,`Promoted. Now revoke the old ${R.what} at ${R.where} and press Test old.`);return;}
       const slot=b.dataset.slot;kySay(k,`Testing the ${slot} ${R.what}…`);
       const r=await api('POST',`/api/admin/${R.path}/verify`,{slot});
+      if(slot==='old'&&r.dead)kyDead[k]=(KY&&KY.slots&&KY.slots[k]||{}).oldUntil||null;
       kySay(k,slot==='old'?(r.dead?`The old ${R.what} is refused – it’s dead. Recorded in the security log.`:r.ok?`The old ${R.what} still works – revoke it at ${R.where}, then test again.`:`Couldn’t tell: ${r.error||'HTTP '+r.status}. Try again.`)
         :r.ok?`The ${slot} ${R.what} works.`:`The ${slot} ${R.what} didn’t work: ${r.error||(r.dead?'it was refused':'HTTP '+r.status)}.`);
       kyLoad();
