@@ -4,7 +4,7 @@
    list of recent days. Everything comes from /coach/<secret>/api (server/shares.js), which only answers reads.
    #history/timeline/2026-10-15 opens that day's card, as in the app. */
 
-const SHARED={token:decodeURIComponent(location.pathname.split('/')[2]||'')};
+const SHARED={token:(s=>{try{return decodeURIComponent(s);}catch{return s;}})(location.pathname.split('/')[2]||'')};   /* a garbled link: its API says it doesn't work */
 SHARED.base='/coach/'+encodeURIComponent(SHARED.token);
 
 /* ---------- the helpers timeline.js uses from app.js, admin.js, gym.js, photos.js and supps.js ---------- */

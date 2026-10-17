@@ -102,6 +102,24 @@ test('wrong passwords from many addresses never lock the account: past 10 they s
   db.close();
 });
 
+test('coach links: 30 broken tries from one address are cut off, but a working link from there is never held back (NEW-04)', async () => {
+  const ip = '10.3.0.1';
+  const cfg = await fetch(BASE + '/auth/config', { headers: { 'x-forwarded-for': '10.3.9.1' } });
+  const cookie = cfg.headers.get('set-cookie').split(';')[0], { csrf } = await cfg.json();
+  const h = { cookie, 'content-type': 'application/json', 'x-csrf-token': csrf, 'x-forwarded-for': '10.3.9.1' };
+  const li = await fetch(BASE + '/auth/login', { method: 'POST', headers: h, body: JSON.stringify({ email: 'real@example.com', password: PASSWORD }) });
+  assert.strictEqual(li.status, 200);
+  if (li.headers.get('set-cookie')) h.cookie = li.headers.get('set-cookie').split(';')[0];
+  const me = await (await fetch(BASE + '/api/me', { headers: h })).json(); if (me.csrf) h['x-csrf-token'] = me.csrf;
+  const share = await (await fetch(BASE + '/api/shares', { method: 'POST', headers: h, body: JSON.stringify({ expires: new Date(Date.now() + 864e5).toISOString() }) })).json();
+  const token = share.url.split('/coach/')[1];
+  const get = t => fetch(`${BASE}/coach/${t}/api/info`, { headers: { 'x-forwarded-for': ip } }).then(r => r.status);
+  for (let i = 0; i < 5; i++) assert.strictEqual(await get(token), 200, 'working link');
+  for (let i = 0; i < 30; i++) assert.strictEqual(await get('made-up-' + i), 404, `broken try ${i + 1}`);
+  assert.strictEqual(await get('made-up-x'), 429, 'the 31st broken try is cut off');
+  assert.strictEqual(await get(token), 200, 'the working link still opens from that address');
+});
+
 test('without TRUST_PROXY a forged X-Forwarded-For is ignored: every address shares one bucket', async () => {
   env.TRUST_PROXY = '';
   await restart();

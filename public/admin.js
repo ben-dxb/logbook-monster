@@ -14,10 +14,10 @@ const AD_LEGACY={T:'Training',R:'Rest',S:'Saturday training'};   /* day types be
 const AD_MAX_TPL=12;
 let AD=null, AD_BASE=null, adSaved='', adType=null, adMsg='', adErrs=[], adBusy=false;
 let DEFS={mine:null,myVersions:[]};          /* your plan from the server: the change in effect today and every dated change */
-let DEFS_ON, adVer=null, adFrom='', adFromToday=false;          /* plan change applied now; the one being edited; the date a save takes effect from ('' = from the start) */
+let DEFS_ON, adVer=null, adFrom='', adFromToday=false, adFromBad=false;   /* adFromBad: the box holds a date that can't be used – refused, never read as blank */          /* plan change applied now; the one being edited; the date a save takes effect from ('' = from the start) */
 let adAi=null, adNotes=[], adSuper=false;
 const LOADERR={};   /* a part of the page whose data didn't load: its message, shown in its place */
-const loadErr=(what,k)=>`<p class="aderr" role="alert">Couldn’t load ${what}: ${esc(String(LOADERR[k]).replace(/[.?!]$/,''))}. Open this tab again or reload the page to try again.</p>`;
+const loadErr=(what,k)=>`<p class="aderr" role="alert">Couldn’t load ${what}: ${esc(endStop(LOADERR[k]))} Open this tab again or reload the page to try again.</p>`;
 const loadTry=async(k,fn)=>{try{const v=await fn();delete LOADERR[k];return v;}catch(e){if(e.signedOut)throw e;LOADERR[k]=e.message||'Something went wrong';return null;}};
 const AD_TABS=['ai','people','email','options','log'];
 let adTab='ai';                              /* the super admin tab shown */
@@ -41,7 +41,7 @@ function adPick(v){
   const td=todayStr(), now=mineOn(td);
   if(v===undefined)v=now;
   adVer=v;adFrom=v&&v!==now?v.from||'':td;   /* a change to today's plan starts today; another change keeps its own date */
-  adFromToday=adFrom===td;   /* …today when it is saved, if the page is left open past midnight */
+  adFromBad=false;adFromToday=adFrom===td;   /* …today when it is saved, if the page is left open past midnight */
 }
 
 /* ---------- draft ---------- */
@@ -209,16 +209,17 @@ function adTotals(){
 function adStatus(){
   const d=adDirty(), fe=$('#ad-from');
   fe.min='2000-01-01';fe.max=lastDate();
-  if(document.activeElement!==fe)fe.value=adFrom;
+  if(document.activeElement!==fe&&!adFromBad)fe.value=adFrom;
+  fe.setAttribute('aria-invalid',String(adFromBad));$('#ad-fromhint').classList.toggle('bad',adFromBad);
   const later=(DEFS.myVersions||[]).filter(v=>v.from&&v.from>(adFrom||'')&&v!==adVer).map(v=>fmtShort(v.from));
-  $('#ad-fromhint').textContent=(adFrom?`Your days from ${fmtShort(adFrom)} start from this plan; earlier days keep the plan they had.`:'Every day starts from this plan, back to the start.')
+  $('#ad-fromhint').textContent=adFromBad?'Pick a date from 2000 to a year from today – or clear the box for “from the start”. Nothing is saved until then.':(adFrom?`Your days from ${fmtShort(adFrom)} start from this plan; earlier days keep the plan they had.`:'Every day starts from this plan, back to the start.')
     +(later.length?` Later changes still apply from ${later.join(', ')}.`:'');
   $('#ad-status').innerHTML=adBusy?'<span class="chip info">Saving…</span>'
     :d?'<span class="chip bad">Unsaved changes</span> Nothing changes for your days until you save.'
     :!AD.templates.length&&adEmpty(adVer)?(adVer?`<span class="chip">No plan from ${esc(adVer.from?fmtShort(adVer.from):'the start')}</span> ${adVer.from?'Your days from then have no meal plan until a later change.':'Your days have no meal plan.'} Add a day template or upload a plan, then save it.`
       :'<span class="chip">No plan saved yet</span> Add a day template or upload a plan, then save it.')
     :`<span class="chip ok">✓ Saved</span> ${adVer&&adVer.from?`Your days from ${esc(fmtShort(adVer.from))} start from this plan.`:'Your new days start from this plan.'} Days already in your history keep their own amounts.`;
-  $('#ad-save').disabled=!d||adBusy;$('#ad-discard').hidden=!d;
+  $('#ad-save').disabled=!d||adBusy||adFromBad;$('#ad-discard').hidden=!d;
 }
 
 /* ---------- editing ---------- */
@@ -252,7 +253,7 @@ document.addEventListener('change',e=>{
   else if(a==='tname'){const t=adTpl(adType);if(t&&!t.name.trim())t.name='Day template';renderAdmin();}
   else if(a==='wday'){AD.schedule[+el.dataset.i]=el.value;}
   else if(a==='free'){AD.free[el.dataset.k]=el.checked;adTotals();}
-  else if(a==='from'){adFrom=isDate(el.value)?el.value:'';adFromToday=false;}
+  else if(a==='from'){const v=el.value;adFromBad=el.validity.badInput||(v!==''&&!isDate(v));if(!adFromBad){adFrom=v;adFromToday=false;}}   /* only a box really left empty means from the start */
   else if(a==='aipick'){if(adAiPend)adAiPend.on[el.dataset.key]=el.checked;return;}
   else if(a==='food'&&el.tagName==='SELECT'){AD.foods[el.dataset.id][el.dataset.k]=el.value;const s=$('#ad-fs-'+el.dataset.id);if(s)s.innerHTML=adFoodLine(AD.foods[el.dataset.id]);adTotals();}
   else return;
@@ -351,6 +352,7 @@ function adFoodErrs(){
 }
 async function adSave(){
   if(adFromToday&&adFrom<todayStr())adFrom=todayStr();
+  if(adFromBad){adErrs=['Pick a date from 2000 to a year from today in “Takes effect from”.'];adMsg='Couldn’t save:';renderAdmin();return;}
   const errs=adFoodErrs();
   if(errs.length){adErrs=errs;adMsg='Couldn’t save – fix these first:';renderAdmin();return;}
   const p=adPayload();
