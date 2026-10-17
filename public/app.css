@@ -195,7 +195,9 @@ footer{font-size:var(--fs-xs);color:var(--muted)}
   .grid4 .btn{grid-column:1/-1}
   .cell{min-height:58px;padding:4px;font-size:var(--fs-xs)}
   .cell .dn small,.cell .pr{display:none}
+  .cell .kc{flex-wrap:wrap;gap:0 3px}   /* a narrow cell puts the kcal under its ✓ / ▲ / ▼ rather than cutting it off */
 }
+@media (max-width:360px){.cell{padding:4px 2px}}   /* 320px wide: room for a four-figure kcal */
 /* ---------- admin: account admin (.mine) and super admin share one page ---------- */
 #v-admin.mine .adapp,#v-admin.mine .adsuper,#v-admin:not(.mine) .admine{display:none}
 #v-admin.nofiles .adfiles{display:none}
@@ -561,7 +563,8 @@ html.hasjobs:has(#g-quick){scroll-padding-bottom:calc(var(--gq-h,170px) + var(--
 .pday{scroll-margin-top:70px;border-radius:12px;transition:background .3s}
 .pday.hit{background:var(--soft)}
 @media (max-width:700px){.fform{grid-template-columns:repeat(2,minmax(0,1fr))}.grid5 .btn{order:1}}
-@media (max-width:560px){.views{flex-wrap:wrap;justify-content:center;border-radius:14px;width:100%;margin-right:0}.views a{padding:4px 10px;font-size:var(--fs-s)}}
+/* the menu is about 770px on one line: below that it wraps (it scrolled the whole page sideways from 561 to 767px – a phone turned sideways) */
+@media (max-width:800px){.views{flex-wrap:wrap;justify-content:center;border-radius:14px;width:100%;margin-right:0}.views a{padding:4px 10px;font-size:var(--fs-s)}}
 
 /* ---------- timeline ---------- */
 :root{--t0:#D9480F;--t1:#1E7A4C;--t2:#B08800;--t3:#C2255C;--t4:#1F4FB8;--t5:#6741D9;--t6:#0C8599;--t7:#5C940D;--t8:#9C36B5;--t9:#E8590C;--t10:#495057;--t11:#A61E4D}

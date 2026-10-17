@@ -445,6 +445,13 @@ async function trackerP5(browser, w, h) {
   /* a failed AI read is said once, not "The AI couldn’t read …: The AI couldn’t …" */
   const job = await pg.evaluate(() => { JOBS = [{ id: 1, kind: 'plan', status: 'failed', label: 'a.pdf', error: 'The AI couldn’t find a meal plan in that file' }]; jRender(); const t = $('#jobs').textContent; JOBS = []; jRender(); return t; });
   expect(/^Your meal plan \(a\.pdf\) wasn’t read: The AI couldn’t find a meal plan in that file\./.test(job), 'job failure text: ' + job);
+  /* a saved day's kcal fits its calendar cell (under its ✓ on a phone), and the menu wraps rather than scroll the page at 700px */
+  await pg.goto(BASE + '/#day'); await pg.click('#status [data-act=savenow]'); await pg.waitForSelector('#status [data-act=unlog]');
+  await pg.goto(BASE + '/#history'); await pg.waitForSelector('#cal .kc');
+  expect(await pg.evaluate(() => [...document.querySelectorAll('#cal .kc')].every(k => k.scrollWidth <= k.clientWidth + 0.5)), 'a calendar cell cuts off its kcal');
+  await pg.setViewportSize({ width: 700, height: h }); await pg.waitForFunction(() => document.documentElement.clientWidth === 700);
+  expect(await pg.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth) <= 0, 'the page scrolls sideways at 700px wide');
+  await pg.setViewportSize({ width: w, height: h });
   /* signing out with an unsaved plan asks first (the app's own dialog, before the session goes) – Stay keeps it all */
   await pg.goto(BASE + '/#account'); await pg.waitForSelector('#v-admin:not([hidden]) [data-ad=tadd]'); await pg.click('[data-ad=tadd]');
   await pg.click('#acct>summary'); await pg.click('#logout');
