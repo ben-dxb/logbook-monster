@@ -36,7 +36,7 @@ const allowed = host => config.smtpAllowHosts.includes(String(host).toLowerCase(
 const refuse = (msg, status, code) => Object.assign(new Error(msg), { status, code });
 
 /* How long sending may take (ms): the name lookup, each read from the server, and the whole send (queue, connect and message). */
-const LIMITS = { dns: 5000, socket: 15000, send: 30000, dnsKeep: 5 * 60 * 1000 };
+const LIMITS = { dns: 5000, socket: 15000, send: 30000, dnsKeep: 5 * 60 * 1000, authWait: 30 * 60 * 1000 };
 /* A name is looked up over DNS with a time limit (c-ares: not on the thread pool, so a dead DNS server can't block file reads);
    one DNS doesn't know (a hosts-file name such as localhost) goes through the system's lookup, also timed. Kept 5 minutes. */
 const resolver = new dns.promises.Resolver({ timeout: LIMITS.dns, tries: 1 });
@@ -85,11 +85,19 @@ function sealed(s) {
 }
 function stored() {
   const r = q.get.get(), s = r ? JSON.parse(r.data) : {};
-  for (const [k, f] of SLOTS) if (s[f]) { const v = box.unsealText(s[f]); if (v) { s[k] = v; delete s[f]; } }
+  let plain = false;
+  for (const [k, f] of SLOTS) {
+    if (s[k]) {   /* plain text, written by an older version after a rollback: it wins over a sealed one left from before */
+      plain = true;
+      if (s[f] && box.unsealText(s[f]) !== s[k]) { s[k + 'Id'] = creds.newKid(); if (k === 'pass') creds.record('SMTP', s[k + 'Id']); }
+      delete s[f];
+    } else if (s[f]) { const v = box.unsealText(s[f]); if (v) { s[k] = v; delete s[f]; } }
+  }
   if (s.oldUntil && Date.now() > s.oldUntil) {   /* its hour is up: dropped for good */
     for (const k of ['old', 'oldSealed', 'oldId', 'oldUntil']) delete s[k];
-    q.put.run(sealed(s));
+    plain = true;
   }
+  if (plain) q.put.run(sealed(s));
   return s;
 }
 { const r = q.get.get(), s = r && JSON.parse(r.data); if (s && SLOTS.some(([k]) => s[k])) q.reseal.run(sealed(stored())); }   /* plain from before */
@@ -139,7 +147,10 @@ async function save(body) {
   if (body.secure !== undefined) { if (body.secure === null || body.secure === '') delete s.secure; else s.secure = !!body.secure; }
   if (body.pass !== undefined) {
     const p = passOf(body.pass, s);
-    if (p) { if (p !== s.pass) setActive(s, p); }
+    if (p) {
+      if (p !== s.pass) setActive(s, p);
+      else if (!aged('SMTP', s.passId)) { s.passId = s.passId || creds.newKid(); creds.record('SMTP', s.passId, new Date().toISOString()); }   /* the same password saved again: its age starts now if none was recorded */
+    }
     else { for (const k of ['pass', 'passSealed', 'passId', 'old', 'oldSealed', 'oldId', 'oldUntil']) delete s[k]; creds.forget('SMTP'); }
   }
   q.put.run(sealed(s));
@@ -152,6 +163,8 @@ function passOf(v, s) {
   if (p.length > 500) throw new Error('Password is too long');
   return p && /(^|\.)(gmail|googlemail)\.com$/i.test(s.host || fromEnv().host) ? p.replace(/\s+/g, '') : p;
 }
+/* has this password (id) a recorded age? One moved over from before the ages were kept has none */
+const aged = (name, id) => { const r = creds.recorded(name); return !!(r && r.set_at && r.kid === id); };
 /* the active password changes: the one it replaces stays as old for OVERLAP */
 function setActive(s, pass, id) {
   if (s.pass && s.pass !== pass) Object.assign(s, { old: s.pass, oldId: s.passId, oldUntil: Date.now() + OVERLAP });
@@ -214,6 +227,9 @@ function reason(err) {
   return 'it refused the message';
 }
 
+/* a refusal sending again won't change: the sender or recipient refused, or a 5xx answer to the message (not a sign-in) */
+const permanent = err => !!err && err.code !== 'EAUTH' && (err.code === 'EENVELOPE' || (err.responseCode >= 500 && err.responseCode < 600));
+
 /* One pooled connection set (2 at most) per set of settings, made again when they change. */
 let pool = null;
 function transport(opts) {
@@ -227,25 +243,37 @@ function drop(t) { if (pool && pool.t === t) pool = null; try { t.close(); } cat
 
 /* A mail server that can't be reached (3 sends in a row that couldn't connect, timed out or whose name didn't resolve) is
    left alone for 2 minutes, doubling to 30 while the one test send let through after that fails too: meanwhile sends fail at
-   once (503) – the test email says so straight away, an invite returns its link, notifications wait in the outbox. */
+   once (503) – the test email says so straight away, an invite returns its link, notifications wait in the outbox. A refused
+   username or password (EAUTH) leaves it alone for LIMITS.authWait at once, so a wrong password isn't tried again and again at the
+   provider; saving the email settings gives it a fresh try. */
 const DOWN = ['ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'EDNS', 'ECONNREFUSED', 'ETIMEOUT', 'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH'];
 const breaker = {
   fails: 0, until: 0, wait: 2 * 60 * 1000, probing: false,
+  auth: false,
   open() { return this.until > Date.now() || (this.fails >= 3 && this.probing); },
   /* true for the one send let through to see whether it's back */
   enter() {
-    if (this.open()) throw refuse('The mail server isn’t answering – try again in a few minutes', 503);
+    if (this.open()) {
+      throw refuse(this.auth ? 'The mail server refused the app’s username or password – check them on Super admin › Email'
+        : 'The mail server isn’t answering – try again in a few minutes', 503);
+    }
     if (this.fails >= 3) { this.probing = true; return true; }
     return false;
   },
   result(err, probe) {
     if (probe) this.probing = false;
+    if (err && err.code === 'EAUTH') {
+      Object.assign(this, { fails: 3, auth: true, until: Date.now() + LIMITS.authWait });
+      console.error(`Mail server refused the username or password: leaving it ${Math.round(LIMITS.authWait / 60000)} min – check them on Super admin › Email`);
+      return;
+    }
+    this.auth = false;
     if (!err || !DOWN.includes(err.code)) { if (this.fails >= 3) console.log('Mail server answering again'); this.fails = 0; this.until = 0; this.wait = 2 * 60 * 1000; return; }
     this.fails++;
     if (probe) this.wait = Math.min(this.wait * 2, 30 * 60 * 1000);
     if (this.fails >= 3) { this.until = Date.now() + this.wait; console.error(`Mail server not answering (${err.code}): leaving it ${Math.round(this.wait / 60000)} min`); }
   },
-  reset() { Object.assign(this, { fails: 0, until: 0, wait: 2 * 60 * 1000, probing: false }); },
+  reset() { Object.assign(this, { fails: 0, until: 0, wait: 2 * 60 * 1000, probing: false, auth: false }); },
 };
 
 /* Send one email. Throws with a readable message if email isn't set up or the server refuses it. */
@@ -268,13 +296,14 @@ async function send({ to, subject, text, replyTo }) {
     breaker.result(err, probe);
     if (DOWN.includes(err.code)) drop(t);   /* a pooled connection that broke isn't used again */
     console.error('Email sending failed:', String(err.response || err.message || err).slice(0, 300));
-    throw refuse(`The mail server didn’t accept it: ${reason(err)}.`, 502, err.code);
+    throw Object.assign(refuse(`The mail server didn’t accept it: ${reason(err)}.`, 502, err.code), { permanent: permanent(err) });
   } finally { clearTimeout(timer); }
 }
 
 /* For notifications nobody is waiting on: kept in the outbox table and sent there, 2 at a time, tried again after 1, 5, 15 and
-   then every 60 minutes until sent or `keep` ms old (24 hours: security notices; JOB_KEEP for an AI read being ready). Ones
-   left from before a restart go out after it. */
+   then every 60 minutes until sent or `keep` ms old (24 hours: security notices; JOB_KEEP for an AI read being ready); one the
+   server refuses for good (a bad recipient, a 5xx answer – `permanent`) is dropped at once, logged. Ones left from before a
+   restart go out after it. */
 const MIN = 60 * 1000, KEEP = 24 * 60 * MIN, JOB_KEEP = 6 * 60 * MIN, RETRY = [1, 5, 15, 60].map(m => m * MIN);
 const qo = {
   add: db.prepare('INSERT INTO outbox (msg, next_at, expires_at) VALUES (?, ?, ?)'),
@@ -306,7 +335,7 @@ function drain() {
       let next = true;   /* a write here that fails (a full disk) waits for the timer rather than send the same row again at once */
       Promise.resolve(m ? send(m) : Promise.reject(refuse('unreadable', 400))).then(() => qo.done.run(row.id), e => {
         const when = Date.now();
-        if (e.status === 400 || e.status === 409) { console.error('Email notification dropped:', e.message); return qo.done.run(row.id); }
+        if (e.status === 400 || e.status === 409 || e.permanent) { console.error('Email notification dropped:', e.message); return qo.done.run(row.id); }
         if (e.status === 503) return qo.later.run(row.tries, Math.max(breaker.until, when + MIN), row.id);   /* not tried: the breaker is open */
         const tries = row.tries + 1, next = when + RETRY[Math.min(tries, RETRY.length) - 1];
         if (next >= row.expires_at) { console.error('Email notification dropped after', tries, 'tries:', e.message); return qo.done.run(row.id); }

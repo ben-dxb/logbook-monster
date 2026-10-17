@@ -26,7 +26,16 @@ test('production without BASE_URL warns at start (invite links and emails would 
   const r = run(['-e', `require(${cfgPath})`], { NODE_ENV: 'production', ADMIN_EMAILS: 'a@example.com' });
   assert.strictEqual(r.status, 0);
   assert.match(r.stderr, /BASE_URL isn’t set/);
-  assert.doesNotMatch(run(['-e', `require(${cfgPath})`], { NODE_ENV: 'production', ADMIN_EMAILS: 'a@example.com', BASE_URL: 'https://x.example' }).stderr, /BASE_URL/);
+  assert.doesNotMatch(run(['-e', `require(${cfgPath})`], { NODE_ENV: 'production', ADMIN_EMAILS: 'a@example.com', BASE_URL: 'https://x.example', TRUST_PROXY: '1' }).stderr, /BASE_URL/);
+});
+
+test('production with an https BASE_URL and TRUST_PROXY unset or 0 warns that nobody could sign in behind a proxy', () => {
+  const cfgPath = JSON.stringify(path.join(__dirname, '..', 'server', 'config.js'));
+  for (const tp of ['', '0']) {
+    const r = run(['-e', `require(${cfgPath})`], { NODE_ENV: 'production', ADMIN_EMAILS: 'a@example.com', BASE_URL: 'https://x.example', TRUST_PROXY: tp });
+    assert.match(r.stderr, /TRUST_PROXY isn’t set.*Set TRUST_PROXY=1/, `TRUST_PROXY=${tp}`);
+  }
+  assert.doesNotMatch(run(['-e', `require(${cfgPath})`], { NODE_ENV: 'production', ADMIN_EMAILS: 'a@example.com', BASE_URL: 'http://x.example' }).stderr, /TRUST_PROXY/);
 });
 
 test('a relative DB_PATH and PHOTO_DIR become absolute', () => {

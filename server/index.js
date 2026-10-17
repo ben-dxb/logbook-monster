@@ -73,6 +73,22 @@ if (config.sessionCookie !== OLD_COOKIE) {
     next();
   });
 }
+/* A sign-in whose secure session cookie couldn't be set because the request came in as plain http (a proxy without TRUST_PROXY):
+   it answers ok but nobody stays signed in, so it is logged – once an hour at most. */
+let insecureLogged = 0;
+if (config.cookieSecure) {
+  app.use((req, res, next) => {
+    res.on('finish', () => {
+      const s = req.session;
+      if (!s || !(s.userId || s.half) || Date.now() - insecureLogged < 3600000) return;
+      const set = [].concat(res.getHeader('set-cookie') || []);
+      if (set.some(c => String(c).startsWith(config.sessionCookie + '='))) return;
+      insecureLogged = Date.now();
+      console.error(`Sign-in on ${req.method} ${audit.redact(req.originalUrl)} couldn’t set the session cookie: it is secure (BASE_URL is https) but the request reached the app as plain http${config.trustProxy ? '' : ' and TRUST_PROXY isn’t set'}. Behind a reverse proxy set TRUST_PROXY=1 in .env and make sure the proxy sends X-Forwarded-Proto.`);
+    });
+    next();
+  });
+}
 app.use(session({
   name: config.sessionCookie,
   /* SESSION_SECRETS: signs with the first, still accepts cookies signed with the others (docs/rotation.md) */
@@ -156,10 +172,25 @@ app.use((err, req, res, next) => {
 /* compacts an older database before serving; photo file sweep and permissions, then daily (server/upkeep.js) */
 require('./upkeep').start();
 
-app.listen(config.port, config.host, () => {
+const server = app.listen(config.port, config.host, () => {
   console.log(`Logbook Monster listening on ${config.baseUrl} (bound to ${config.host}:${config.port})`);
   if (!config.google.enabled) console.log('Google sign-in is off - set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to turn it on.');
   /* credential ages (server/credentials.js) and coach links about to run out (server/shares.js): now and daily */
   require('./credentials').schedule();
   shares.schedule();
 });
+
+/* docker compose stop / Ctrl+C: stop taking connections, let the ones in flight finish, close the database, exit – within
+   about 5 s (Docker kills it at 10). */
+let stopping = false;
+function shutdown(sig) {
+  if (stopping) return;
+  stopping = true;
+  console.log(`${sig}: shutting down`);
+  const done = code => { try { db.close(); } catch {} process.exit(code); };
+  setTimeout(() => { console.error('Requests still open after 5 s – stopping anyway'); done(0); }, 5000).unref();
+  server.close(() => done(0));
+  server.closeIdleConnections();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

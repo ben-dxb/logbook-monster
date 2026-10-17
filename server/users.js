@@ -110,7 +110,9 @@ function drop(id) {
    Super admin page would have nobody (or, without ADMIN_EMAILS, whichever account is oldest next). */
 function removeOwn(user, isAdmin) {
   if (isAdmin(user)) {
-    const others = config.adminEmails.length ? q.list.all().filter(u => u.id !== user.id && config.adminEmails.includes(u.email)).length : 0;
+    /* only one who can sign in counts: an invited admin who never set a password, linked Google or signed in doesn't */
+    const others = config.adminEmails.length ? q.list.all().filter(u => u.id !== user.id && config.adminEmails.includes(u.email)
+      && (u.has_password || u.has_google || u.last_login_at)).length : 0;
     if (!others) {
       const e = new Error(config.adminEmails.length
         ? 'You’re the only super admin. Add another person’s address to ADMIN_EMAILS (and let them sign in) before you delete your account.'
