@@ -39,7 +39,7 @@ let srv;
 
 before(async () => {
   await new Promise(r => fakeAi.listen(AI_PORT, '127.0.0.1', r));
-  for (const who of ['admin', 'ann', 'bob', 'cara']) {
+  for (const who of ['admin', 'ann', 'bob', 'cara', 'dan']) {
     execFileSync(process.execPath, ['--disable-warning=ExperimentalWarning', 'scripts/create-user.js', `${who}@example.com`],
       { cwd: root, env: { ...env, NEW_PASSWORD: 'long-password-1' }, stdio: 'ignore' });
   }
@@ -203,6 +203,18 @@ test('a supplement regime read with AI: line items to check, then added to the l
   assert.strictEqual((await cara('GET', '/api/supps')).body.supplements.find(s => s.id === mine).amount, 5000);
 
   assert.strictEqual((await cara('POST', '/api/supps/ai-import', {})).status, 400, 'JSON is not a file');
+});
+
+test('supplement import: the same name twice is one line; an amount too big names the maximum', async () => {
+  const dan = await signIn('dan@example.com');
+  const r = await dan('POST', '/api/supps/import', { items: [{ name: 'Dup Thing', unit: 'g' }, { name: 'dup  thing', amount: 5, unit: 'g', notes: 'later' }], log: '2026-10-01' });
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.deepStrictEqual([r.body.added, r.body.updated, r.body.entries.length], [1, 0, 1]);
+  const lib = r.body.supplements.filter(s => s.mine);
+  assert.deepStrictEqual(lib.map(s => [s.name, s.amount, s.notes]), [['Dup Thing', 5, 'later']]);
+  const big = await dan('POST', '/api/supps', { name: 'Huge', amount: 2e6, unit: 'mg' });
+  assert.strictEqual(big.status, 400);
+  assert.match(big.body.error, /1,000,000 at most/);
 });
 
 test('supplement library: one name per supplement in your own library, whatever the case (PR-FS-042)', async () => {

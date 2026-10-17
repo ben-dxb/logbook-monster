@@ -95,7 +95,7 @@ function sLogPage(){
     <form id="s-form" class="panel sform">
       <label class="f swide"><span class="lbl">Supplement</span><select id="s-pick">${opts}</select></label>
       <label class="f swide"><span class="lbl" id="s-desclbl">${pick?'Note (optional)':'Description'}</span><input id="s-desc" maxlength="200" placeholder="${pick?'e.g. with breakfast':'e.g. Vitamin D3 + K2'}"></label>
-      <label class="f"><span class="lbl">Amount</span><input id="s-amt" type="number" inputmode="decimal" min="0" step="any" value="${pick&&pick.amount!=null?sNum(pick.amount):''}" required></label>
+      <label class="f"><span class="lbl">Amount</span><input id="s-amt" type="number" inputmode="decimal" min="0" max="1000000" step="any" value="${pick&&pick.amount!=null?sNum(pick.amount):''}" required></label>
       <label class="f"><span class="lbl">Unit</span><select id="s-unit">${sUnitOptions(pick?pick.unit:sUnit)}</select></label>
       <label class="tog swide" id="s-savebox"${pick?' hidden':''}><input type="checkbox" id="s-save"> Save to my supplement library</label>
       <p id="s-err" class="aderr swide" role="alert" hidden></p>
@@ -210,7 +210,7 @@ function sAiPreview(){
     ${sAi.items.map((x,i)=>`<div class="sairow${x.on?'':' off'}">
       <label class="sion"><input type="checkbox" data-sai="on" data-i="${i}"${x.on?' checked':''} aria-label="Add ${esc(x.name)}"></label>
       <div class="f sainame"><span class="lbl"><label for="s-ain-${i}">Name<span class="vh"> of line ${i+1}</span></label> <span class="chip ${x.existing?'ok':'info'}" id="s-aist-${i}">${x.existing?'in library':'new'}</span></span><input id="s-ain-${i}" data-sai="name" data-i="${i}" maxlength="80" value="${esc(x.name)}" aria-describedby="s-aist-${i}"></div>
-      <label class="f"><span class="lbl">Amount<span class="vh"> of ${esc(x.name)}</span></span><input data-sai="amount" data-i="${i}" type="number" inputmode="decimal" min="0" step="any" value="${x.amount==null?'':esc(sNum(x.amount))}"></label>
+      <label class="f"><span class="lbl">Amount<span class="vh"> of ${esc(x.name)}</span></span><input data-sai="amount" data-i="${i}" type="number" inputmode="decimal" min="0" max="1000000" step="any" value="${x.amount==null?'':esc(sNum(x.amount))}"></label>
       <label class="f"><span class="lbl">Unit<span class="vh"> of ${esc(x.name)}</span></span><select data-sai="unit" data-i="${i}">${sUnitOptions(x.unit)}</select></label>
       <label class="f sainotes"><span class="lbl">Notes<span class="vh"> for ${esc(x.name)}</span></span><input data-sai="notes" data-i="${i}" maxlength="300" value="${esc(x.notes)}" placeholder="e.g. Morning with food"></label>
     </div>`).join('')}
@@ -249,7 +249,7 @@ async function sAiAdd(btn){
     if(day&&SLOG[day])SLOG[day].push(...r.entries);
     const skipped=day?items.length-r.entries.length:0;
     sMsg=[r.added?`Added ${r.added} to your library`:'',r.updated?`updated ${r.updated} you already had`:''].filter(Boolean).join(', ')+'.'
-      +(day?` Logged ${r.entries.length} on ${fmtLong(day)}${skipped?` (${skipped} without an amount weren’t logged)`:''}.`:'');
+      +(day?` Logged ${r.entries.length} on ${fmtLong(day)}${skipped?` (${skipped} without an amount ${skipped===1?'wasn’t':'weren’t'} logged)`:''}.`:'');
     sMsg=sMsg[0].toUpperCase()+sMsg.slice(1);
     sAi=null;jobSeen('supps');renderSuppAi();renderSuppList();
   }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message;err.hidden=false;}}
@@ -281,7 +281,7 @@ function sEditPage(s){
   return gHead('#supps/lib',s?'Edit supplement':'New supplement')+`
     <form id="s-lform" class="panel fform" data-id="${s?s.id:''}">
       <label class="f fwide"><span class="lbl">Name</span><input id="s-name" maxlength="80" required value="${esc(v.name)}" placeholder="e.g. Creatine monohydrate"></label>
-      <label class="f"><span class="lbl">Usual amount (optional)</span><input id="s-lamt" type="number" inputmode="decimal" min="0" step="any" value="${v.amount==null?'':esc(sNum(v.amount))}"></label>
+      <label class="f"><span class="lbl">Usual amount (optional)</span><input id="s-lamt" type="number" inputmode="decimal" min="0" max="1000000" step="any" value="${v.amount==null?'':esc(sNum(v.amount))}"></label>
       <label class="f"><span class="lbl">Unit</span><select id="s-lunit">${sUnitOptions(v.unit)}</select></label>
       <label class="f fwide"><span class="lbl">Notes (optional)</span><textarea id="s-notes" rows="4" maxlength="2000" placeholder="e.g. Take with food. Brand, strength per capsule…">${esc(v.notes)}</textarea></label>
       <label class="tog fwide"><input type="checkbox" id="s-public"${v.public?' checked':''}> Share with everyone – any account can see it and log it (only you can change it)</label>

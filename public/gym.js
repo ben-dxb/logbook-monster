@@ -188,7 +188,7 @@ function gAiPreview(){
   const n=gAi.workouts.filter(w=>w.on).length;
   return `<section class="panel gai" aria-labelledby="g-aih"><h2 id="g-aih" tabindex="-1">From ${esc(gAi.file)}</h2>
     <p>Check what the AI found. Exercises marked <span class="chip ok">yours</span> already have history and keep it; the rest are added to My exercises. You can change anything afterwards with Edit.</p>
-    ${gAi.workouts.map((w,i)=>`<div class="gaiw"><label class="tog"><input type="checkbox" id="g-aion-${i}" data-g="aion" data-i="${i}"${w.on?' checked':''}> <b>${esc(w.name)}</b> <span class="sub">${w.exercises.length} exercises</span></label>
+    ${gAi.workouts.map((w,i)=>`<div class="gaiw"><label class="tog"><input type="checkbox" id="g-aion-${i}" data-g="aion" data-i="${i}"${w.on?' checked':''}> <b>${esc(w.name)}</b> <span class="sub">${w.exercises.length} exercise${w.exercises.length===1?'':'s'}</span></label>
       ${w.description?`<p>${esc(w.description)}</p>`:''}
       <ol>${w.exercises.map(x=>`<li><b>${esc(x.name)}</b>${x.existing?' <span class="chip ok">yours</span>':' <span class="chip info">new</span>'}${x.parts&&x.parts.length?' '+gPartChips(x.parts):''}${x.target?` <span class="sub">${esc(x.target)}</span>`:''}</li>`).join('')}</ol></div>`).join('')}
     ${gAi.notes.length?`<details class="adnotes" open><summary>Left out, or the AI wasn’t sure (${gAi.notes.length})</summary><ul>${gAi.notes.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></details>`:''}
@@ -437,16 +437,16 @@ function gCsvPanel(){
   const colNames={exercise:'Exercise',date:'Date',time:'Time',reps:'Reps',weight:'Weight',unit:'Unit',note:'Notes',label:'Label',order:'Set order'};
   const fmtAt=a=>`${fmtShort(a.slice(0,10))} ${a.slice(0,4)} ${a.slice(11,16)}`;
   return `<section class="panel gai" aria-labelledby="g-csvh"><h2 id="g-csvh" tabindex="-1">From ${esc(C.file)}</h2>
-    <p><b>${R.sets.length.toLocaleString()} sets</b> of ${R.names.length} exercise${R.names.length===1?'':'s'}${R.from?`, ${esc(fmtShort(R.from))} ${R.from.slice(0,4)} to ${esc(fmtShort(R.to))} ${R.to.slice(0,4)}`:''}.
+    <p><b>${R.sets.length.toLocaleString()} set${R.sets.length===1?'':'s'}</b> of ${R.names.length} exercise${R.names.length===1?'':'s'}${R.from?`, ${esc(fmtShort(R.from))} ${R.from.slice(0,4)} to ${esc(fmtShort(R.to))} ${R.to.slice(0,4)}`:''}.
       ${R.names.length-fresh.length} match${R.names.length-fresh.length===1?'es':''} exercises you have; ${fresh.length} will be added. Sets you already have are skipped, so importing the same file again is safe.</p>
     <p class="sub">Columns used: ${Object.entries(R.columns).map(([k,v])=>`${colNames[k]} ← “${esc(v)}”`).join(' · ')}</p>
     ${R.dateOrderAsk||C.dateOrderAsked?`<label class="f gcsvopt"><span class="lbl">Dates like 03/04/2026 are</span><select id="g-csvorder"><option value="dmy"${C.dateOrder==='dmy'?' selected':''}>day/month (3 April)</option><option value="mdy"${C.dateOrder==='mdy'?' selected':''}>month/day (March 4)</option></select></label>`:''}
     ${R.unitAsk||C.unitAsked?`<label class="f gcsvopt"><span class="lbl">The file doesn’t say – weights are in</span><select id="g-csvunit"><option value="kg"${C.unit==='kg'?' selected':''}>kg</option><option value="lb"${C.unit==='lb'?' selected':''}>lb (converted to kg)</option></select></label>`:''}
     ${R.noTime?'<p class="sub">The file has dates but no times, so sets are placed at midday in file order.</p>':''}
-    ${R.sets.length?`<table class="gcsvtab"><caption class="vh">Latest sets in the file</caption><thead><tr><th scope="col" class="vh">When</th><th scope="col" class="vh">Exercise</th><th scope="col" class="vh">Reps × weight</th></tr></thead><tbody>${R.sets.slice(-6).reverse().map(s=>`<tr><td>${esc(fmtAt(s.at))}</td><td><b>${esc(s.name)}</b></td><td>${s.reps} × ${kgTxt(s.kg)} kg</td></tr>`).join('')}</tbody></table><p class="sub">The latest ${Math.min(6,R.sets.length)} sets, as they will be saved.</p>`:''}
+    ${R.sets.length?`<table class="gcsvtab"><caption class="vh">Latest sets in the file</caption><thead><tr><th scope="col" class="vh">When</th><th scope="col" class="vh">Exercise</th><th scope="col" class="vh">Reps × weight</th></tr></thead><tbody>${R.sets.slice(-6).reverse().map(s=>`<tr><td>${esc(fmtAt(s.at))}</td><td><b>${esc(s.name)}</b></td><td>${s.reps} × ${kgTxt(s.kg)} kg</td></tr>`).join('')}</tbody></table><p class="sub">${R.sets.length===1?'The set':`The latest ${Math.min(6,R.sets.length)} sets`}, as ${R.sets.length===1?'it':'they'} will be saved.</p>`:''}
     ${R.skipped.length?`<details class="adnotes"><summary>${R.skipped.length} row${R.skipped.length===1?'':'s'} left out</summary><ul>${R.skipped.slice(0,30).map(x=>`<li>Line ${x.line}: ${esc(x.why)}</li>`).join('')}${R.skipped.length>30?`<li>…and ${R.skipped.length-30} more</li>`:''}</ul></details>`:''}
     <div class="gactions">${C.busy?`<span class="chip info" role="status">Importing ${C.sent.toLocaleString()} of ${R.sets.length.toLocaleString()}…</span>`
-      :`<button class="btn" type="button" data-g="csvgo"${R.sets.length?'':' disabled'}>Import ${R.sets.length.toLocaleString()} sets</button><button class="ghost" type="button" data-g="csvdrop">Discard</button>`}</div>
+      :`<button class="btn" type="button" data-g="csvgo"${R.sets.length?'':' disabled'}>Import ${R.sets.length.toLocaleString()} set${R.sets.length===1?'':'s'}</button><button class="ghost" type="button" data-g="csvdrop">Discard</button>`}</div>
     ${C.err?`<ul class="aderr" role="alert"><li>${esc(C.err)}</li></ul>`:''}
   </section>`;
 }
@@ -632,6 +632,6 @@ async function gSubmit(f){
     const old=Object.keys(GSETS).find(k=>GSETS[k].sets.some(s=>s.id===id));
     try{const s=await api('PUT','/api/gym/sets/'+id,body,f.dataset.ver||null);   /* changed (or deleted) in another tab since: 409 / 404 */
       gDropSet(id);gPut(s);gChanged();await Promise.all([...new Set([+old||s.e,s.e])].map(gRestat));gKeep='e/'+s.e;go('gym/e/'+s.e);}
-    catch(err){if(err.signedOut)return;if(!errToField(err,[[/^reps/i,reps],[/^weight/i,kg],[/date and time/i,$('#g-sd')],[/exercise/i,$('#g-se')]]))$('#g-smsg').textContent=err.message;
+    catch(err){if(err.signedOut)return;if(!errToField(err,[[/^reps/i,reps],[/^weight/i,kg],[/date and time/i,$('#g-sd')],[/exercise/i,$('#g-se')]]))$('#g-smsg').textContent=err.status===404&&/No such set/.test(err.message)?'This set was deleted in another tab or device.':err.message;
       if(err.conflict||/No such/.test(err.message)){if(old)delete GSETS[old];gChanged();gLoad().catch(()=>{});}}}   /* the next look loads it as it is now */
 }
