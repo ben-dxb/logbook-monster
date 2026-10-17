@@ -2087,10 +2087,10 @@ async function formKit(browser) {
         expect(await pg.isVisible('#ad-keybanner') && /unknown age/.test(await pg.textContent('#ad-keybanner')), 'a credential of unknown age should show the banner');
         const kyScroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         expect(kyScroll <= 1, `horizontal overflow of ${kyScroll}px on the Keys tab at ${w}px wide`);
-        /* the old key's steps are said once while it's kept, and not at all once Test old proved it dead */
-        const kn = await pg.evaluate(() => { const keep = KY.slots, d = kyDead.ai, c = { name: 'OPENROUTER', next: 'To rotate: make a new one at the provider, Save as next, Test next, Promote, revoke the old one, Test old. Revoke the old one at the provider, then Test old – it must fail.' };
-          KY.slots = { ...keep, ai: { old: true, oldUntil: 123 } }; const live = kyNext(c); kyDead.ai = 123; const dead = kyNext(c); KY.slots = keep; kyDead.ai = d; return { live, dead }; });
-        expect(kn.live === 'To rotate: make a new one at the provider, Save as next, Test next, Promote. Revoke the old one at the provider, then Test old – it must fail.' && kn.dead === 'To rotate: make a new one at the provider, Save as next, Test next, Promote.', 'Keys next steps: ' + JSON.stringify(kn));
+        /* the old key's steps are said once while it's kept (the server drops them once Test old proved it dead) */
+        const kn = await pg.evaluate(() => { const keep = KY.slots, c = { name: 'OPENROUTER', next: 'To rotate: make a new one at the provider, Save as next, Test next, Promote, revoke the old one, Test old. Revoke the old one at the provider, then Test old – it must fail.' };
+          KY.slots = { ...keep, ai: { old: true, oldUntil: 123 } }; const live = kyNext(c); KY.slots = { ...keep, ai: {} }; const none = kyNext(c); KY.slots = keep; return { live, none }; });
+        expect(kn.live === 'To rotate: make a new one at the provider, Save as next, Test next, Promote. Revoke the old one at the provider, then Test old – it must fail.' && kn.none === kn.live.replace('Promote. Revoke', 'Promote, revoke the old one, Test old. Revoke'), 'Keys next steps: ' + JSON.stringify(kn));
         expect(/allows only one password: change it there, then straight away Save as next → Test next → Promote/.test(await pg.evaluate(() => { kyRot('mail'); return document.querySelector('#ad-rot-mail').textContent; })), 'the Email rotation box should cover a one-password provider');
         await pg.click('#ad-tabs [data-adt=ai]'); await pg.waitForSelector('[data-adtab=ai]:not([hidden]) [data-ky-form=ai]');
         expect(await pg.isDisabled('[data-ky=promote][data-k=ai]'), 'Promote is off until a next key is saved');

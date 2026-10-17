@@ -7,15 +7,12 @@ let KY=null, kyBusy=false;
 const KY_ROT={ai:{path:'ai',field:'key',what:'key',where:'OpenRouter'},mail:{path:'email',field:'pass',what:'password',where:'your email provider'}};
 const KY_TIER={ok:['ok','OK'],due:['info','Due soon'],stale:['bad','Over 30 days'],overdue:['bad','Overdue'],unknown:['bad','Age unknown'],info:['','No schedule']};
 const kyMsg={ai:'',mail:''};
-/* the old slot "Test old" proved dead, per key (by when that slot runs out): the steps for it aren't repeated */
-const kyDead={ai:null,mail:null};
 const KY_NAME={OPENROUTER:'ai',SMTP:'mail'};
-/* the server's next step without saying the old key's steps twice (once in the rotate how-to, once for the old slot), or at all once it tested dead */
+/* the server's next step without the old key's steps said twice while an old key is kept (the rotate how-to ends at Promote);
+   once Test old proved it dead the server leaves them out itself (credentials.js) */
 function kyNext(c){
-  const k=KY_NAME[c.name], s=k&&KY&&KY.slots&&KY.slots[k];if(!s||!s.old)return c.next;
-  let t=c.next.replace(', Promote, revoke the old one, Test old.',', Promote.');
-  if(kyDead[k]===s.oldUntil)t=t.replace(' Revoke the old one at the provider, then Test old – it must fail.','').replace('Revoke the old one at the provider, then Test old – it must fail.','');
-  return t.trim();
+  const k=KY_NAME[c.name], s=k&&KY&&KY.slots&&KY.slots[k];
+  return s&&s.old?c.next.replace(', Promote, revoke the old one, Test old.',', Promote.'):c.next;
 }
 async function kyLoad(){
   if(kyBusy)return;kyBusy=true;
@@ -74,7 +71,6 @@ document.addEventListener('click',async e=>{
       if(a==='promote'){await api('POST',`/api/admin/${R.path}/promote`);kyMsg[k]='';await kyAfter(k);kySay(k,`Promoted. Now revoke the old ${R.what} at ${R.where} and press Test old.`);return;}
       const slot=b.dataset.slot;kySay(k,`Testing the ${slot} ${R.what}…`);
       const r=await api('POST',`/api/admin/${R.path}/verify`,{slot});
-      if(slot==='old'&&r.dead)kyDead[k]=(KY&&KY.slots&&KY.slots[k]||{}).oldUntil||null;
       kySay(k,slot==='old'?(r.dead?`The old ${R.what} is refused – it’s dead. Recorded in the security log.`:r.ok?`The old ${R.what} still works – revoke it at ${R.where}, then test again.`:`Couldn’t tell: ${r.error||`${R.where} answered with error ${r.status}`}. Try again.`)
         :r.ok?`The ${slot} ${R.what} works.`:`The ${slot} ${R.what} didn’t work: ${r.error||(r.dead?'it was refused':`${R.where} answered with error ${r.status}`)}.`);
       kyLoad();
