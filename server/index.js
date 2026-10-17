@@ -36,6 +36,10 @@ app.use(helmet({
   strictTransportSecurity: config.cookieSecure ? { maxAge: 63072000, includeSubDomains: true } : false,
   crossOriginOpenerPolicy: { policy: 'same-origin' },
 }));
+/* No ETag on res.send/res.json answers – the API, auth and coach JSON, all no-store and never revalidated (hashing bodies of up
+   to 1 MB was wasted work, p6-04). A function, not false: files (sendFile – pages, photos – and express.static) still get theirs,
+   since send's etag option only asks whether the setting is on. */
+app.set('etag', () => undefined);
 /* No powerful browser features the app doesn't use (it does use Web Share, clipboard and notifications).
    API and auth answers carry health data and the CSRF token: never cached (photos set their own). */
 app.use((req, res, next) => {
