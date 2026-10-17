@@ -40,8 +40,8 @@ const q = {
   daySize: db.prepare('SELECT length(data) AS n FROM days WHERE user_id = ? AND date = ?'),
   daysAfter: db.prepare('SELECT date, data FROM days WHERE user_id = ? AND date > ? ORDER BY date LIMIT ?'),
   getOptions: db.prepare("SELECT data FROM app_config WHERE key = 'options'"),
-  putOptions: db.prepare(`INSERT INTO app_config (key, data, updated_by) VALUES ('options', ?, ?)
-    ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_by = excluded.updated_by, updated_at = datetime('now')`),
+  putOptions: db.prepare(`INSERT INTO app_config (key, data) VALUES ('options', ?)
+    ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = datetime('now')`),
 };
 /* App-wide switches the super admin sets. planFiles: the CSV / JSON plan upload and download buttons. aiPrivate: ask
    OpenRouter for providers that don't store or train on what they're sent. aiDailyUser / aiDailyAll: AI calls a day per
@@ -177,7 +177,7 @@ router.get('/admin/ai', adminOnly, (req, res) => res.json(ai.status()));
 router.put('/admin/ai', adminOnly, (req, res, next) => (isObj(req.body) && Object.hasOwn(req.body, 'key') ? fresh(req, res, next) : next()), (req, res) => {
   if (!isObj(req.body)) return bad(res, 'Settings must be an object');
   try {
-    const out = ai.save(req.body, req.user), b = req.body;
+    const out = ai.save(req.body), b = req.body;
     audit.log(req, 'ai.settings', { apiKey: b.key === undefined ? undefined : String(b.key || '').trim() ? 'set' : 'cleared',
       model: b.model === undefined ? undefined : true, tasks: isObj(b.models) ? Object.keys(b.models) : undefined });
     res.json(out);
@@ -222,7 +222,7 @@ router.put('/admin/options', adminOnly, (req, res) => {
     if (k === 'adminTotp' && v && !o.adminTotp && !twostep.isOn(req.user.id)) return bad(res, 'Set up your own second sign-in step (account menu) before requiring it.');
     o[k] = v;
   }
-  q.putOptions.run(JSON.stringify(o), req.user.email);
+  q.putOptions.run(JSON.stringify(o));
   audit.log(req, 'options.changed', req.body);
   res.json(o);
 });
@@ -233,7 +233,7 @@ router.get('/admin/email', adminOnly, (req, res) => res.json(mail.status()));
 router.put('/admin/email', adminOnly, fresh, async (req, res) => {
   if (!isObj(req.body)) return bad(res, 'Settings must be an object');
   try {
-    const out = await mail.save(req.body, req.user);
+    const out = await mail.save(req.body);
     audit.log(req, 'email.settings', { fields: Object.keys(req.body).filter(k => MAIL_FIELDS.includes(k)) });
     res.json(out);
   } catch (e) { res.status(e.status || 400).json({ error: e.message }); }

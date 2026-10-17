@@ -8,7 +8,7 @@
    each dated from its own data (ExifDate, exifdate.js) unless the person turns that off; the date picked is used for
    any without one. Uses helpers from app.js and gym.js (gHead, gEmpty). */
 
-let PHOTOS=null, PPOSES=['front','left','right','back','other'], PSTYLES=[];
+let PHOTOS=null, PPOSES=[], PSTYLES=[];
 let pPose='all', pDate=todayStr(), pUpPose='other', pMsg='', pTok=0, pBusy=false;
 let pUpSay='', pUpErr='';   /* an upload's progress line and its error: kept here so leaving Photos and coming back still shows them */
 let pSel=false, pPick=[];                          /* picking photos to compare, and the ones picked (up to 2) */

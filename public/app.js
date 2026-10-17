@@ -397,7 +397,7 @@ function libHash(food){let h=5381;for(const ch of [food.unit,food.k,food.p,food.
 const libFid=food=>`L:${food.id}:${libHash(food)}`;
 /* An AI-estimated food keeps its ⚑ in meals, and the day's copy remembers its type and which values were estimates. */
 function libFoodRec(food){const m=food.unit==='each'?100:1;
-  const F={n:food.name+(food.ai?' ⚑':''),kind:food.kind,ai:food.ai?food.ai.fields:undefined,k:food.k*m,p:food.p*m,c:food.c*m,f:food.f*m,d:0,step:food.unit==='each'?1:food.unit==='ml'?10:5,cat:'c'};
+  const F={n:food.name+(food.ai?' ⚑':''),kind:food.kind,ai:food.ai?food.ai.fields:undefined,k:food.k*m,p:food.p*m,c:food.c*m,f:food.f*m,d:0,step:food.unit==='each'?1:food.unit==='ml'?10:5};
   if(food.free)F.free=food.free;
   if(food.unit!=='g')F.unit=food.unit==='each'?'×':'ml';return F;}
 function libLoad(D){for(const [fid,F] of Object.entries(D.lib||{}))if(isLib(fid)&&!FOODS[fid])FOODS[fid]={...F};planFill(D);}
@@ -409,7 +409,7 @@ function planFill(D){
   allItems(D).forEach(({f})=>{if(FOODS[f])return;
     const v=!isLib(f)&&[...vs].reverse().find(x=>x.foods&&x.foods[f]&&typeof x.foods[f]==='object');
     const own_=!isLib(f)&&D.lib&&own(D.lib,f);
-    FOODS[f]={...(own_&&typeof own_==='object'?own_:v?planFoodRec(f,v.foods[f]):{cat:'c',n:`Unknown food (${f})`,k:0,p:0,c:0,f:0,d:0,step:1}),gone:true};});
+    FOODS[f]={...(own_&&typeof own_==='object'?own_:v?planFoodRec(f,v.foods[f]):{n:`Unknown food (${f})`,k:0,p:0,c:0,f:0,d:0,step:1}),gone:true};});
 }
 /* After the library changes or the admin defaults are applied (which drop foods the calculator didn't ship with). */
 function libRegister(){LIB.forEach(f=>{FOODS[libFid(f)]=libFoodRec(f);});Object.values(S.days).forEach(libLoad);LIBV++;}

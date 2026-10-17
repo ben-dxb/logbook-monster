@@ -78,7 +78,7 @@ const send = fn => (req, res) => {
 /* updated: the list's version (null while it is the default list), sent back as x-version with a change (server/version.js) */
 router.get('/', send(req => {
   const r = q.get.get(req.user.id);
-  return { items: r ? JSON.parse(r.items) : DEFAULTS, custom: !!r, defaults: DEFAULTS, updated: r ? r.updated_at : null };
+  return { items: r ? JSON.parse(r.items) : DEFAULTS, custom: !!r, updated: r ? r.updated_at : null };
 }));
 const versionOf = user => { const r = q.get.get(user.id); return r ? r.updated_at : null; };
 /* Account admin: the list itself. Sending the default list back (or DELETE) goes back to following the defaults. */
@@ -86,15 +86,15 @@ router.put('/', send(req => {
   const items = clean(isObj(req.body) ? req.body.items : null);
   version.check(req, versionOf(req.user));
   /* the default list sent back goes back to following the defaults */
-  if (JSON.stringify(items) === JSON.stringify(DEFAULTS)) { q.del.run(req.user.id); return { items: DEFAULTS, custom: false, defaults: DEFAULTS, updated: null }; }
+  if (JSON.stringify(items) === JSON.stringify(DEFAULTS)) { q.del.run(req.user.id); return { items: DEFAULTS, custom: false, updated: null }; }
   const updated = version.stamp();
   q.put.run(req.user.id, JSON.stringify(items), updated);
-  return { items, custom: true, defaults: DEFAULTS, updated };
+  return { items, custom: true, updated };
 }));
 router.delete('/', send(req => {
   version.check(req, versionOf(req.user));
   if (q.del.run(req.user.id).changes) audit.log(req, 'checklist.reset');
-  return { items: DEFAULTS, custom: false, defaults: DEFAULTS, updated: null };
+  return { items: DEFAULTS, custom: false, updated: null };
 }));
 
 /* GET /days?from=…&to=… (at most a year) → { days: { date: [ids] } } */
@@ -119,4 +119,4 @@ router.put('/days/:date', send(req => {
 
 const exportFor = user => ({ items: itemsOf(user), ticks: q.all.all(user.id) });
 
-module.exports = { router, exportFor, DEFAULTS };
+module.exports = { router, exportFor };

@@ -293,4 +293,4 @@ const exportFor = user => ({
   trends: trendsOf(user),
 });
 
-module.exports = { router, exportFor, trendsOf, UNITS, aiUnit };
+module.exports = { router, exportFor, trendsOf, aiUnit };

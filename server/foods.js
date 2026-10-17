@@ -30,7 +30,7 @@ const q = {
 const MAX_FOODS = 500;
 const UNITS = ['g', 'ml', 'each'];
 const KINDS = ['meal', 'ingredient'];
-const FREE = ['sauce', 'veg'];   /* free foods: sauce or green veg, see engine.js */
+const { FREE_KINDS: FREE } = require('../public/engine.js');   /* free foods: sauce or green veg */
 const MACROS = ['k', 'p', 'c', 'f'];
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 const fail = (msg, status = 400) => Object.assign(new Error(msg), { status });
@@ -227,4 +227,4 @@ router.delete('/:id', (req, res) => {
 
 const exportFor = user => q.mine.all(user.id).map(r => ({ ...r, public: !!r.public, ai: aiOf(r) }));
 
-module.exports = { router, exportFor, clean };
+module.exports = { router, exportFor };

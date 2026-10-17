@@ -5,14 +5,10 @@
   --font:"Archivo",system-ui,-apple-system,"Segoe UI",sans-serif;
   color-scheme:light;
 }
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+@media (prefers-color-scheme:dark){:root{
   --bg:#0F1422; --surface:#182033; --ink:#E7EBF4; --muted:#9AA4BA; --line:#2B3550;
   --accent:#9DB3E6; --accent-ink:#0F1422; --soft:#222C44;
   --good:#5CC48E; --bad:#F08A80; --info:#8FB0F2; --warnbg:#3A2E12; --warnink:#F2D08A; color-scheme:dark}}
-:root[data-theme="dark"]{
-  --bg:#0F1422; --surface:#182033; --ink:#E7EBF4; --muted:#9AA4BA; --line:#2B3550;
-  --accent:#9DB3E6; --accent-ink:#0F1422; --soft:#222C44;
-  --good:#5CC48E; --bad:#F08A80; --info:#8FB0F2; --warnbg:#3A2E12; --warnink:#F2D08A; color-scheme:dark}
 *{box-sizing:border-box}
 html{scroll-padding-top:env(safe-area-inset-top,0px)}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.4;font-variant-numeric:tabular-nums;

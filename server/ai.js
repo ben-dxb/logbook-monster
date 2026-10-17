@@ -34,8 +34,8 @@ const MODEL_RE = /^[\w.\-/:]{3,100}$/;
 
 const q = {
   get: db.prepare("SELECT data FROM app_config WHERE key = 'openrouter'"),
-  put: db.prepare(`INSERT INTO app_config (key, data, updated_by) VALUES ('openrouter', ?, ?)
-    ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_by = excluded.updated_by, updated_at = datetime('now')`),
+  put: db.prepare(`INSERT INTO app_config (key, data) VALUES ('openrouter', ?)
+    ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = datetime('now')`),
   reseal: db.prepare("UPDATE app_config SET data = ? WHERE key = 'openrouter'"),
   used: db.prepare('SELECT calls FROM ai_usage WHERE user_id = ? AND day = ?'),
   usedAll: db.prepare('SELECT COALESCE(SUM(calls), 0) AS n FROM ai_usage WHERE day = ?'),
@@ -95,7 +95,7 @@ function status() {
   return { configured: !!c.key, source: c.source, hint: c.key ? '…' + c.key.slice(-4) : '', model: c.model, defaultModel: DEFAULT_MODEL,
     tasks: Object.entries(TASKS).map(([id, t]) => ({ id, name: t.name, hint: t.hint, model: own[id] || '', uses: own[id] || c.model })) };
 }
-function save(body, user) {
+function save(body) {
   const s = stored();
   if (body.key !== undefined) {
     const key = String(body.key || '').trim();
@@ -118,7 +118,7 @@ function save(body, user) {
     }
     if (Object.keys(models).length) s.models = models; else delete s.models;
   }
-  q.put.run(sealed(s), user.email);
+  q.put.run(sealed(s));
   return status();
 }
 
@@ -296,4 +296,4 @@ async function importPlan(buf, type, user, date) {
   return { ...tidy(reply, foods), model };
 }
 
-module.exports = { status, save, importPlan, ask, askText, check, scope, limiter, TYPES_IN, TASKS };
+module.exports = { status, save, importPlan, ask, askText, check, scope, limiter, TYPES_IN };
