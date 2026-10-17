@@ -80,9 +80,9 @@ function dChecklist(){
     ${items.length?`<ul class="dlist">${items.map(it=>{
       const auto=dAutoDone(it,dDate), done=auto||(dTicks[dDate]||[]).includes(it.id);
       return `<li><label class="dtick${done?' done':''}"><input type="checkbox" data-dk="${esc(it.id)}"${done?' checked':''}${auto?' disabled':''}> <span>${esc(it.label)}</span>${auto?`<span class="sub">${it.auto==='weight'?'weight logged':it.auto==='supps'?'logged':'sets logged'}</span>`:''}</label></li>`;}).join('')}</ul>`
-      :'<p>Nothing on your checklist for this day. Set it up on <a href="#account">Account admin</a>.</p>'}
+      :'<p>Nothing on your checklist for this day. Set it up on <a href="#account/checklist">Account admin</a>.</p>'}
     ${dErr.auto?`<p class="sub">Your ${esc(dErr.auto)} couldn’t load, so their automatic ticks may be missing.</p>`:''}
-    <p class="dchange"><a class="ghost" href="#account">Change the checklist</a></p>`;
+    <p class="dchange"><a class="ghost" href="#account/checklist">Change the checklist</a></p>`;
 }
 /* A tick shows at once. Per day one request is in flight; ticks made meanwhile wait in q.local (item -> wanted) and go when it
    returns, so a slow reply never undoes a later tick. srv is the day's ticks as the server last said. */
