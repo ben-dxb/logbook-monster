@@ -102,7 +102,8 @@
       });
       const j = await r.json().catch(() => ({}));
       if (r.ok) {
-        if (j.recovery) alert('You used a recovery code – it won’t work again. If you’ve lost your authenticator app, switch the second step off and set it up again from the account menu.');
+        /* the app opens Two-step sign-in on the account menu and says so there (app.js, lm-recovered) – no alert() */
+        if (j.recovery) try { sessionStorage.setItem('lm-recovered', '1'); } catch {}
         location.replace(home()); return;
       }
       if (j.restart || (r.status === 403 && /session/i.test(j.error || ''))) { location.reload(); return; }
