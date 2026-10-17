@@ -154,15 +154,31 @@ test('AI fills in only the blank values, and saved foods keep the flag and sourc
   const asked = aiSeen.at(-1).messages[1].content;
   assert.match(asked, /Protein 30 g/); assert.match(asked, /Missing: Calories, Carbs, Fat/); assert.match(asked, /raw, skinless/);
 
-  r = await ann('POST', '/api/foods', { name: 'Chicken breast', unit: 'g', kind: 'ingredient', p: 30, ...r.body.values, public: true,
-    ai: { ...r.body.ai, fields: ['k', 'c', 'f', 'nope'], url: 'https://fdc.nal.usda.gov/food-details/171077' } });
+  const filled = r.body;
+  /* provenance only as the server gave it (library-code-002): a changed link, an added field, a hand-made record or one
+     signed for someone else is dropped */
+  const food = { name: 'Chicken breast', unit: 'g', kind: 'ingredient', p: 30, ...filled.values, public: true };
+  for (const forged of [{ ...filled.ai, url: 'https://evil.example/usda' }, { ...filled.ai, of: ['k', 'p', 'c', 'f'], fields: ['k', 'p', 'c', 'f'] },
+    { fields: ['k'], source: 'USDA', confidence: 'high', url: 'https://evil.example' }, { ...filled.ai, sig: 'x'.repeat(43) }]) {
+    r = await ann('POST', '/api/foods', { ...food, ai: forged });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.body.ai, null, JSON.stringify(forged));
+    await ann('DELETE', `/api/foods/${r.body.id}`);
+  }
+  r = await bob('POST', '/api/foods', { ...food, ai: filled.ai });
+  assert.strictEqual(r.body.ai, null, 'signed for ann, not bob');
+  await bob('DELETE', `/api/foods/${r.body.id}`);
+  r = await ann('POST', '/api/foods', { ...food, ai: { ...filled.ai, fields: ['k', 'c', 'f', 'nope'] } });
   assert.strictEqual(r.status, 200);
   assert.deepStrictEqual(r.body.ai.fields, ['k', 'c', 'f']);
-  assert.strictEqual(r.body.ai.url, 'https://fdc.nal.usda.gov/food-details/171077');
+  assert.strictEqual(r.body.ai.source, 'USDA FoodData Central – Chicken breast, raw');
   const id = r.body.id;
   /* other people see the flag too */
   const seen = (await bob('GET', '/api/foods')).body.foods.find(f => f.id === id);
   assert.deepStrictEqual(seen.ai.fields, ['k', 'c', 'f']);
+  /* saving again keeps it; typing over one estimate drops just that field */
+  r = await ann('PUT', `/api/foods/${id}`, { ...food, ai: { ...r.body.ai, fields: ['k', 'f'] } });
+  assert.deepStrictEqual(r.body.ai.fields, ['k', 'f']);
   /* typing over every estimate drops the flag */
   r = await ann('PUT', `/api/foods/${id}`, { name: 'Chicken breast', unit: 'g', k: 160, p: 30, c: 0, f: 3, ai: { fields: [] } });
   assert.strictEqual(r.body.ai, null);

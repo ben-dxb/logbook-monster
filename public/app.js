@@ -245,16 +245,16 @@ function deltaTag(D,mi,box,i){
   const b=baseAmount(D,mi,box,i.f);const u=FOODS[i.f].unit||'g';
   if(b==null) return '<span class="delta new">new</span>';
   const d=Math.round(i.g-b); if(!d) return '<span class="delta"></span>';
-  return `<span class="delta ${d>0?'up':'down'}">${d>0?'+':'−'}${Math.abs(d)}${u}</span>`;
+  return `<span class="delta ${d>0?'up':'down'}">${d>0?'+':'−'}${Math.abs(d)}${esc(u)}</span>`;
 }
 function itemRow(D,mi,box,ii,i){
   const F=FOODS[i.f], id=`${S.cur}-${mi}-${box}-${ii}`, u=F.unit||'g', ro=D.meals[mi].eaten?' disabled':'';
   const list=box==='p'?PROTEIN_SWAPS:box==='x'?FAT_SWAPS:CARB_SWAPS;
-  const opts=(list.includes(i.f)?list:[i.f,...list]).map(f=>`<option value="${f}"${f===i.f?' selected':''}>${esc(FOODS[f].n)}</option>`).join('');
+  const opts=(list.includes(i.f)?list:[i.f,...list]).map(f=>`<option value="${esc(f)}"${f===i.f?' selected':''}>${esc(FOODS[f].n)}</option>`).join('');
   return `<div class="row${i.lock?' locked':''}${i.g===0?' zero':''}">
     <label class="lock" title="Lock this amount"><input type="checkbox" id="l-${id}" data-act="lock" data-m="${mi}" data-b="${box}" data-i="${ii}"${i.lock?' checked':''}${ro}><span>${i.lock?'Locked':'Lock'}</span></label>
     <select id="s-${id}" data-act="swap" data-m="${mi}" data-b="${box}" data-i="${ii}" aria-label="Food"${ro}>${opts}</select>
-    <span class="amt"><input id="g-${id}" type="number" inputmode="decimal" min="0" step="${F.step}" value="${r0(i.g)}" data-act="amt" data-m="${mi}" data-b="${box}" data-i="${ii}" aria-label="Amount"${ro}><em>${u}</em></span>
+    <span class="amt"><input id="g-${id}" type="number" inputmode="decimal" min="0" step="${esc(F.step)}" value="${r0(i.g)}" data-act="amt" data-m="${mi}" data-b="${box}" data-i="${ii}" aria-label="Amount"${ro}><em>${esc(u)}</em></span>
     ${deltaTag(D,mi,box,i)}
     ${ro?'<span class="x"></span>':`<button class="x" data-act="del" data-m="${mi}" data-b="${box}" data-i="${ii}" aria-label="Remove">×</button>`}
   </div>`;
@@ -263,11 +263,11 @@ function itemRow(D,mi,box,ii,i){
 function packOut(i,pk,F){const m=pk.m!=null?pk.m:F.order, g=packPortion(i.g,+pk.w,+m);
   return g==null?'Weigh the pack to get your portion':`Weigh out <b>${r0(g)}g</b> of the pack${i.g>m?' – more than one pack':''}`;}
 function packHtml(D,mi,i){
-  const F=FOODS[i.f], pk=(D.packs||{})[i.f]||{}, id=`pk-${S.cur}-${mi}-${i.f}`, ro=D.meals[mi].eaten?' disabled':'';
+  const F=FOODS[i.f], pk=(D.packs||{})[i.f]||{}, id=esc(`pk-${S.cur}-${mi}-${i.f}`), fa=esc(i.f), ro=D.meals[mi].eaten?' disabled':'';
   const name=esc(F.n.replace(/^Health Road /,''));
-  return `<div class="pack"><label class="pf"><span class="lbl">Pack with sauce</span><span class="amt"><input id="${id}-w" type="number" inputmode="decimal" min="0" step="1" value="${pk.w!=null?pk.w:''}" placeholder="weigh" data-act="pack" data-f="${i.f}" data-k="w"${ro}><em>g</em></span></label>
-    <label class="pf"><span class="lbl">${name} in it</span><span class="amt"><input id="${id}-m" type="number" inputmode="decimal" min="0" step="1" value="${pk.m!=null?pk.m:F.order}" data-act="pack" data-f="${i.f}" data-k="m"${ro}><em>g</em></span></label>
-    <span class="pout" data-packout="${i.f}" data-g="${i.g}" aria-live="polite">${packOut(i,pk,F)}</span></div>`;
+  return `<div class="pack"><label class="pf"><span class="lbl">Pack with sauce</span><span class="amt"><input id="${id}-w" type="number" inputmode="decimal" min="0" step="1" value="${pk.w!=null?esc(pk.w):''}" placeholder="weigh" data-act="pack" data-f="${fa}" data-k="w"${ro}><em>g</em></span></label>
+    <label class="pf"><span class="lbl">${name} in it</span><span class="amt"><input id="${id}-m" type="number" inputmode="decimal" min="0" step="1" value="${esc(pk.m!=null?pk.m:F.order)}" data-act="pack" data-f="${fa}" data-k="m"${ro}><em>g</em></span></label>
+    <span class="pout" data-packout="${fa}" data-g="${esc(i.g)}" aria-live="polite">${packOut(i,pk,F)}</span></div>`;
 }
 function macLine(t){return `<span class="ml"><b>${r0(t.k)}</b> kcal · P ${r1(t.p)} · C ${r1(t.c)} · F ${r1(t.f)}</span>`;}
 function boxHtml(D,mi,box,label){
@@ -275,7 +275,7 @@ function boxHtml(D,mi,box,label){
   return `<div class="box"><div class="bh"><span class="lbl">${label}</span>${items.length?macLine(t):''}</div>
     ${items.map((i,ii)=>itemRow(D,mi,box,ii,i)).join('')||'<p class="empty">Nothing here</p>'}
     ${box==='p'?items.filter(i=>i.g>0&&FOODS[i.f].order!=null).map(i=>packHtml(D,mi,i)).join(''):''}
-    ${D.meals[mi].eaten?'':`<div class="add"><select id="a-${S.cur}-${mi}-${box}" data-add="${box}" data-m="${mi}" aria-label="Add a food"><option value="">+ Add a food…</option>${(box==='x'?FAT_SWAPS:Object.keys(FOODS).filter(f=>!FAT_SWAPS.includes(f)&&planFood(f))).map(f=>`<option value="${f}">${esc(FOODS[f].n)}</option>`).join('')}${libOptions()}</select></div>`}
+    ${D.meals[mi].eaten?'':`<div class="add"><select id="a-${S.cur}-${mi}-${box}" data-add="${box}" data-m="${mi}" aria-label="Add a food"><option value="">+ Add a food…</option>${(box==='x'?FAT_SWAPS:Object.keys(FOODS).filter(f=>!FAT_SWAPS.includes(f)&&planFood(f))).map(f=>`<option value="${esc(f)}">${esc(FOODS[f].n)}</option>`).join('')}${libOptions()}</select></div>`}
   </div>`;
 }
 function chip(m,val,tgt){
@@ -353,7 +353,7 @@ function render(){
       <div class="boxes">${BOXES.map(([b,l])=>boxHtml(D,mi,b,l)).join('')}</div></section>`;
   }).join('');
   const ot=sum(D.off.map(o=>({k:+o.k||0,p:+o.p||0,c:+o.c||0,f:+o.f||0})));
-  $('#offlist').innerHTML=D.off.map((o,oi)=>`<div class="orow"><span>${esc(o.n||'Off-plan food')}</span>${o.snack||o.lib?`<label class="qty"><input id="oq-${S.cur}-${oi}" type="number" inputmode="decimal" min="0" step="${o.lib&&o.u==='each'?'0.5':'1'}" value="${+o.qty||0}" data-act="oqty" data-i="${oi}">${o.lib?libUnit(o.u):snackVal(o.snack).u==='g'?'g':'×'}</label>`:''}<span class="ml">${r0(+o.k||0)} kcal · P ${r1(+o.p||0)} · C ${r1(+o.c||0)} · F ${r1(+o.f||0)}</span><button class="x" data-act="odel" data-i="${oi}" aria-label="Remove">×</button></div>`).join('')
+  $('#offlist').innerHTML=D.off.map((o,oi)=>`<div class="orow"><span>${esc(o.n||'Off-plan food')}</span>${o.snack||o.lib?`<label class="qty"><input id="oq-${S.cur}-${oi}" type="number" inputmode="decimal" min="0" step="${o.lib&&o.u==='each'?'0.5':'1'}" value="${+o.qty||0}" data-act="oqty" data-i="${oi}">${o.lib?esc(libUnit(o.u)):snackVal(o.snack).u==='g'?'g':'×'}</label>`:''}<span class="ml">${r0(+o.k||0)} kcal · P ${r1(+o.p||0)} · C ${r1(+o.c||0)} · F ${r1(+o.f||0)}</span><button class="x" data-act="odel" data-i="${oi}" aria-label="Remove">×</button></div>`).join('')
     +(D.off.length>1?`<div class="orow tot"><span>Total off plan</span>${macLine(ot)}</div>`:'');
   ['k','p','c','f'].forEach(m=>{$('#t-'+m).value=r0(+tg[m]);});
   {const {b,t}=pudBatch();const P=FOODS.pudding,sv=pudServe();
@@ -366,7 +366,7 @@ function render(){
   $('#su').textContent=snackVal($('#sn').value).u==='g'?'Grams':'How many';
   $('#snackvals').innerHTML='<div class="sv"><span class="lbl">Per item / 100g</span><span class="lbl">kcal</span><span class="lbl">P</span><span class="lbl">C</span><span class="lbl">F</span>'+
     SNACKS.filter(x=>x.id!=='pudding').map(x=>{const v=snackVal(x.id);return `<span>${esc(x.n)}${x.u==='g'?' (per 100g)':''}${x.est&&!(S.snackOv||{})[x.id]?' <span class="est">estimate</span>':''}</span>`+
-    ['k','p','c','f'].map(m=>`<input id="sv-${x.id}-${m}" type="number" inputmode="decimal" min="0" step="0.1" value="${v[m]}" data-act="sv" data-s="${x.id}" data-m="${m}" aria-label="${esc(x.n)} ${m}">`).join('');}).join('')+'</div>';
+    ['k','p','c','f'].map(m=>`<input id="sv-${x.id}-${m}" type="number" inputmode="decimal" min="0" step="0.1" value="${esc(v[m])}" data-act="sv" data-s="${x.id}" data-m="${m}" aria-label="${esc(x.n)} ${m}">`).join('');}).join('')+'</div>';
   persist();
 }
 
@@ -410,7 +410,7 @@ function libSync(D){let lib=null;
   if(lib)D.lib=lib;else delete D.lib;}
 const libOptions=()=>[['meal','Library meals'],['ingredient','Library ingredients']].map(([k,l])=>{
   const list=LIB.filter(f=>(f.kind==='meal')===(k==='meal'));
-  return list.length?`<optgroup label="${l}">${list.map(f=>`<option value="${libFid(f)}">${esc(f.name)}${f.ai?' ⚑':''}</option>`).join('')}</optgroup>`:'';}).join('');
+  return list.length?`<optgroup label="${l}">${list.map(f=>`<option value="${esc(libFid(f))}">${esc(f.name)}${f.ai?' ⚑':''}</option>`).join('')}</optgroup>`:'';}).join('');
 /* which box a library food goes in when added to a meal from the Foods page: where most of its calories come from */
 function libBox(f){const p=f.p*4,c=f.c*4,x=f.f*9;return p>=c&&p>=x?'p':x>c?'x':'c';}
 /* Add a library food to any day (from the Foods page): off plan, or into a meal (saved, so the rest of the day rebalances). */
@@ -432,7 +432,7 @@ function renderLibForm(){
   const sel=$('#ln');$('#libform').hidden=!LIB.length;$('#libnone').hidden=!!LIB.length;
   if(sel.dataset.v===String(LIBV))return;
   const keep=sel.value;sel.dataset.v=String(LIBV);
-  const opt=f=>`<option value="${f.id}">${esc(f.name)} (${libPer(f.unit)})${f.ai?' ⚑':''}</option>`;
+  const opt=f=>`<option value="${esc(f.id)}">${esc(f.name)} (${esc(libPer(f.unit))})${f.ai?' ⚑':''}</option>`;
   const mine=LIB.filter(f=>f.mine), shared=LIB.filter(f=>!f.mine);
   sel.innerHTML=(mine.length?`<optgroup label="Your foods">${mine.map(opt).join('')}</optgroup>`:'')+
     (shared.length?`<optgroup label="Shared by others">${shared.map(opt).join('')}</optgroup>`:'');
@@ -597,7 +597,7 @@ function setPack(el){const D=day(),f=el.dataset.f;D.packs=D.packs||{};const p=D.
 const onTracker=el=>!!el.closest('#v-day')&&dayReady();
 document.addEventListener('input',e=>{const el=e.target;if(el.dataset.act!=='pack'||!onTracker(el))return;
   const {f,pk}=setPack(el);
-  document.querySelectorAll(`[data-packout="${f}"]`).forEach(o=>{o.innerHTML=packOut({g:+o.dataset.g},pk,FOODS[f]);});
+  document.querySelectorAll(`[data-packout="${CSS.escape(f)}"]`).forEach(o=>{o.innerHTML=packOut({g:+o.dataset.g},pk,FOODS[f]);});
   persist();});
 document.addEventListener('change',e=>{
   const el=e.target, a=el.dataset.act;

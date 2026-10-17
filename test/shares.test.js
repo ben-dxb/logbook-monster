@@ -112,6 +112,11 @@ test('a coach link shows the account’s data read only, with no sign-in', async
   assert.strictEqual((await open(api + '/timeline/summary', 'POST', { metrics: ['k'] })).status, 405);
   assert.strictEqual((await open(`${api}/photos/${photo.id}`, 'DELETE')).status, 405);
   assert.strictEqual((await open(api + '/weights/2026-09-11', 'PUT', { kg: 90 })).status, 405);
+  /* the account loaded for a link carries no password hash (coach-code-005) */
+  for (const p of ['/info', '/defaults', '/days', '/weights', '/timeline/day/2026-09-10', '/timeline/trends']) {
+    assert.ok(!JSON.stringify((await open(api + p)).body).includes('$scrypt'), p);
+  }
+  assert.doesNotMatch(require('fs').readFileSync(require('path').join(__dirname, '..', 'server', 'shares.js'), 'utf8'), /auth\.q\.byId/);
   for (const p of ['/me', '/export', '/settings', '/shares', '/gym', '/supps', '/foods', '/admin/users']) {
     assert.strictEqual((await open(api + p)).status, 404, p);
   }

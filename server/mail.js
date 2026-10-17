@@ -11,6 +11,7 @@ const q = {
   get: db.prepare("SELECT data FROM app_config WHERE key = 'email'"),
   put: db.prepare(`INSERT INTO app_config (key, data, updated_by) VALUES ('email', ?, ?)
     ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_by = excluded.updated_by, updated_at = datetime('now')`),
+  reseal: db.prepare("UPDATE app_config SET data = ? WHERE key = 'email'"),
 };
 
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
@@ -45,7 +46,15 @@ async function resolve(host, soft) {
   const addr = addrs.find(a => net.isIP(a) === 4) || addrs[0];
   return { addr, loopback: ok && LOOPBACK.check(addr, net.isIP(addr) === 6 ? 'ipv6' : 'ipv4') };
 }
-function stored() { const r = q.get.get(); return r ? JSON.parse(r.data) : {}; }
+/* The password is kept sealed (passSealed, server/seal.js); stored() hands it back opened as pass. One kept from before is sealed on start. */
+const box = require('./seal')('smtp-pass-v1');
+function stored() {
+  const r = q.get.get(), s = r ? JSON.parse(r.data) : {};
+  if (s.passSealed) { const p = box.unsealText(s.passSealed); if (p) { s.pass = p; delete s.passSealed; } }
+  return s;
+}
+const sealed = ({ pass, ...s }) => JSON.stringify(pass ? { ...s, passSealed: box.sealText(pass) } : s);
+{ const r = q.get.get(), s = r && JSON.parse(r.data); if (s && s.pass) q.reseal.run(sealed(s)); }
 function fromEnv() {
   const e = process.env;
   return { host: e.SMTP_HOST || '', port: +e.SMTP_PORT || 0, secure: e.SMTP_SECURE == null ? null : bool(e.SMTP_SECURE),
@@ -90,11 +99,11 @@ async function save(body, user) {
   if (body.pass !== undefined) {
     const p = String(body.pass || '');
     if (p.length > 500) throw new Error('Password is too long');
-    if (p) s.pass = p; else delete s.pass;
+    if (p) s.pass = p; else { delete s.pass; delete s.passSealed; }
   }
   /* Google shows app passwords in groups of four ("abcd efgh ijkl mnop"); the spaces aren't part of it. */
   if (s.pass && /(^|\.)(gmail|googlemail)\.com$/i.test(s.host || fromEnv().host)) s.pass = s.pass.replace(/\s+/g, '');
-  q.put.run(JSON.stringify(s), user.email);
+  q.put.run(sealed(s), user.email);
   return status();
 }
 
@@ -138,4 +147,4 @@ function notify(msg) {
   send(msg).catch(e => console.error('Email notification failed:', e.message));
 }
 
-module.exports = { status, save, send, notify, configured, EMAIL_RE, internal, transportOptions };
+module.exports = { status, save, send, notify, configured, current, EMAIL_RE, internal, transportOptions };

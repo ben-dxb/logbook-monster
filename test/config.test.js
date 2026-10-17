@@ -30,3 +30,16 @@ test('trust proxy stays off in production unless TRUST_PROXY is set', () => {
   assert.strictEqual(cfg({ NODE_ENV: 'production', ADMIN_EMAILS: 'a@example.com' }).trustProxy, '');
   assert.strictEqual(cfg({ NODE_ENV: 'production', ADMIN_EMAILS: 'a@example.com', TRUST_PROXY: '1' }).trustProxy, '1');
 });
+
+test('behind https: HSTS for two years with subdomains (not preloaded)', async () => {
+  const { spawn } = require('node:child_process');
+  const [PORT] = require('./_ports').freePorts(1);
+  const srv = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', path.join(__dirname, '..', 'server', 'index.js')],
+    { cwd: dir, env: { ...base, DB_PATH: 'data/h.db', PORT: String(PORT), HOST: '127.0.0.1', BASE_URL: 'https://logbook.example' }, stdio: 'ignore' });
+  try {
+    let r;
+    for (let i = 0; i < 50 && !r; i++) { try { r = await fetch(`http://127.0.0.1:${PORT}/login`); } catch { await new Promise(x => setTimeout(x, 100)); } }
+    assert.strictEqual(r.headers.get('strict-transport-security'), 'max-age=63072000; includeSubDomains');
+    assert.strictEqual(r.headers.get('cross-origin-opener-policy'), 'same-origin');
+  } finally { srv.kill(); }
+});

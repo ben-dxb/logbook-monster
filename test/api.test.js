@@ -122,6 +122,8 @@ test('security headers: no caching of API answers, Permissions-Policy, base-uri 
   const r = await fetch(BASE + '/login');
   assert.match(r.headers.get('permissions-policy'), /camera=\(\), microphone=\(\), geolocation=\(\)/);
   assert.match(r.headers.get('content-security-policy'), /base-uri 'none'/);
+  assert.strictEqual(r.headers.get('cross-origin-opener-policy'), 'same-origin');
+  assert.strictEqual(r.headers.get('strict-transport-security'), null);   /* http (laptop) setup: no HSTS */
 });
 
 test('pages and API need a session', async () => {
@@ -602,13 +604,19 @@ test('invites: admin invites someone not in ALLOWED_EMAILS, they set a password 
   const chk = await guest.req('POST', '/auth/invite/check', { token });
   assert.deepStrictEqual([chk.status, chk.body.email, chk.body.name], [200, 'new.person@example.com', 'Newbie']);
   assert.strictEqual((await guest.req('POST', '/auth/invite/accept', { token, password: 'short' })).status, 400);
-  assert.strictEqual((await guest.req('POST', '/auth/invite/accept', { token, password: 'invited-pass-1' })).status, 200);
+  assert.strictEqual((await guest.req('POST', '/auth/invite/accept', { token, password: 'invited-pass-1',
+    name: 'Real Name\r\n\r\nURGENT: re-enter your password at https://evil.example/x or www.evil.example or evil.example <b>now</b>' })).status, 200);
   assert.strictEqual((await guest.req('GET', '/api/me')).body.email, 'new.person@example.com');
   assert.strictEqual((await guest.req('GET', '/api/admin/users')).status, 403);
   assert.strictEqual((await guest.req('POST', '/auth/invite/check', { token })).status, 404);   /* used up */
 
   for (let i = 0; i < 20 && !mails.slice(before).some(x => /joined Logbook Monster/.test(x.data)); i++) await new Promise(r => setTimeout(r, 50));
   assert.ok(mails.slice(before).some(x => /me@example\.com/.test(x.to) && /joined Logbook Monster/.test(x.data)), 'inviter is notified');
+  /* the name the invitee typed is one short line with no links or markup in the admin's email (auth-code-014) */
+  const joined = mails.slice(before).find(x => /joined Logbook Monster/.test(x.data)).data.replace(/=\n/g, '');
+  assert.ok(/^Real Name URGENT re-enter your password \(new/m.test(joined), joined);
+  assert.ok(!/evil|<b>|https:\/\/evil/.test(joined), joined);
+  assert.ok(/\(new\.person@example\.com\) accepted your invite/.test(joined), joined);
 
   list = (await admin.req('GET', '/api/admin/users')).body;
   const np = list.users.find(u => u.email === 'new.person@example.com');
@@ -775,4 +783,19 @@ test('Google sign-in is refused when not configured', async () => {
 test('every call to the AI asks for a capped reply', () => {
   assert.ok(aiSeen.length > 10);
   for (const b of aiSeen) assert.ok(Number.isInteger(b.body.max_tokens) && b.body.max_tokens > 0 && b.body.max_tokens <= 12000, JSON.stringify(b.body.max_tokens));
+});
+
+test('static copies of the HTML pages go to their routes (all-config-013, auth-code-013)', async () => {
+  const get = async p => { const r = await fetch(BASE + p, { redirect: 'manual' }); return [r.status, r.headers.get('location')]; };
+  assert.deepStrictEqual(await get('/%69ndex.html'), [302, '/']);
+  assert.deepStrictEqual(await get('/index.html'), [302, '/login']);
+  assert.deepStrictEqual(await get('/login.html'), [302, '/login']);
+  assert.deepStrictEqual(await get('/%6Cogin.html'), [302, '/login']);
+  assert.deepStrictEqual(await get('/invite.html'), [302, '/invite']);
+  assert.strictEqual((await get('/coach.html'))[0], 404);
+  assert.strictEqual((await get('/INDEX.HTM'))[0], 404);
+  assert.strictEqual((await get('/%E0%A4%A.html'))[0], 400);
+  assert.strictEqual((await get('/app.js'))[0], 200);
+  const login = await fetch(BASE + '/login');
+  assert.strictEqual(login.headers.get('cache-control'), 'no-store');
 });

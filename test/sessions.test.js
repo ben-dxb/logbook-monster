@@ -51,7 +51,8 @@ function browser() {
     if (j && j.csrf) csrf = j.csrf;
     return { status: r.status, body: j, headers: r.headers };
   };
-  c.sid = () => decodeURIComponent(cookie.split('=')[1] || '').replace(/^s:/, '').split('.')[0];
+  c.raw = () => decodeURIComponent(cookie.split('=')[1] || '').replace(/^s:/, '').split('.')[0];
+  c.sid = () => require('node:crypto').createHash('sha256').update(c.raw()).digest('hex');   /* the store keeps sha256(sid) */
   return c;
 }
 async function signIn(email, password = PASSWORD) {

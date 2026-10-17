@@ -16,7 +16,7 @@ const { isDate, writeError } = require('./dates');
 const version = require('./version');
 const audit = require('./audit');
 
-fs.mkdirSync(config.photoDir, { recursive: true });
+fs.mkdirSync(config.photoDir, { recursive: true, mode: 0o700 });
 
 /* updated: the version a change is checked against (server/version.js) – when it was last changed, or uploaded */
 const COLS = 'id, date, pose, style, pose_ai, note, size, created_at AS created, COALESCE(updated_at, created_at) AS updated, file, thumb';
@@ -145,17 +145,19 @@ router.get('/', (req, res) => {
   res.json({ photos: q.list.all(req.user.id, from, to).map(view), poses: PICK, styles: STYLES, ai: ai.status().configured });
 });
 
-/* POST /api/photos?date=…&pose=…&style=…&note=… with the image itself as the body; ai=1 when the AI is to pick the pose
-   (the pose sent is a stand-in until it does, and counts as not set by hand) */
+/* POST /api/photos?date=…&pose=…&style=… with the image itself as the body; ai=1 when the AI is to pick the pose
+   (the pose sent is a stand-in until it does, and counts as not set by hand). The note comes URI-encoded in x-photo-note,
+   so it never lands in an access log (?note= still works for older pages). */
+const noteOf = req => { const h = req.get('x-photo-note'); if (h == null) return req.query.note; try { return decodeURIComponent(h); } catch { throw fail('Bad note'); } };
 router.post('/', uploadLimit, rawImage(MAX_BYTES), async (req, res) => {
   try {
-    const m = meta(req.query);
+    const m = meta({ ...req.query, note: noteOf(req) });
     const type = sniff(req.body);
     if (!type) throw fail('That isn’t a JPEG, PNG or WebP picture');
     if (q.count.get(req.user.id).n >= MAX_PHOTOS) throw fail(`You have the most photos an account can keep (${MAX_PHOTOS})`);
     const file = newName(EXT[type]), bytes = clean(req.body, type);
     if (q.bytes.get(req.user.id).n + bytes.length > MAX_TOTAL) throw full();
-    await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx' });
+    await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 });
     try {
       const { lastInsertRowid } = q.add.run(req.user.id, m.date, m.pose, m.style, req.query.ai === '1' ? 1 : 0, m.note, file, type, bytes.length);
       res.json(view(q.get.get(req.user.id, Number(lastInsertRowid))));
@@ -171,7 +173,7 @@ router.put('/:id/thumb', uploadLimit, rawImage(MAX_THUMB), async (req, res) => {
     if (sniff(req.body) !== 'image/jpeg') throw fail('The thumbnail must be a JPEG');
     const file = newName('.jpg'), bytes = cleanJpeg(req.body);
     if (q.bytes.get(req.user.id).n - row.thumb_size + bytes.length > MAX_TOTAL) throw full();
-    await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx' });
+    await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 });
     if (!q.thumb.run(file, bytes.length, req.user.id, id).changes) { unlink(file); throw fail('No such photo', 404); }   /* deleted meanwhile */
     unlink(row.thumb);
     res.json(view(q.get.get(req.user.id, id)));

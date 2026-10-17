@@ -56,7 +56,7 @@ async function gTagAi(ids){
   }catch(e){if(e.signedOut)return;gTagMsg='AI tagging stopped: '+e.message;}
   gTagBusy='';renderGym();
 }
-function gHead(back,title,extra){return `<div class="gbar"><a class="nav" href="${back}" aria-label="Back">‹</a><h2>${esc(title)}</h2>${extra||''}</div>`;}
+function gHead(back,title,extra){return `<div class="gbar"><a class="nav" href="${esc(back)}" aria-label="Back">‹</a><h2>${esc(title)}</h2>${extra||''}</div>`;}
 
 async function gLoad(){const ai=GY?GY.ai:false;GY=await api('GET','/api/gym');if(GY.ai==null)GY.ai=ai;}
 async function gSetsOf(id){if(!GSETS[id])GSETS[id]=(await api('GET','/api/gym/sets?exercise='+id))||[];return GSETS[id];}

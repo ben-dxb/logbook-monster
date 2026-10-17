@@ -80,23 +80,41 @@ function cleanSummary(s) {
   return out;
 }
 
-/* Settings and a day's targets hold numbers: a typo the browser couldn't read is refused, not stored as 0. */
-function settingsError(b) {
+/* Settings and a day's targets hold numbers: a typo the browser couldn't read is refused, not stored as 0. Only the keys the
+   app uses are kept (the rice pudding batch, snack values, the protein basis); anything else in the body is dropped. */
+const PUD_KEYS = ['rice', 'almond', 'oat', 'custard', 'casein', 'weight'];
+const SNACK_ID = /^[a-z][a-z0-9_]{0,31}$/;
+function cleanSettings(b) {
+  const out = {};
   if (b.pud != null) {
-    if (!isObj(b.pud)) return 'The rice pudding batch must be an object';
+    if (!isObj(b.pud)) throw new Error('The rice pudding batch must be an object');
+    out.pud = {};
     for (const [k, v] of Object.entries(b.pud)) {
-      if (!isNum(v) || +v < 0) return `Rice pudding ${k} must be a number of 0 or more`;
-      if (k === 'weight' && +v < 1) return 'The finished weight of the rice pudding must be 1 g or more';
+      if (!PUD_KEYS.includes(k)) throw new Error(`Unknown rice pudding value "${k.slice(0, 40)}"`);
+      if (!isNum(v) || +v < 0) throw new Error(`Rice pudding ${k} must be a number of 0 or more`);
+      if (k === 'weight' && +v < 1) throw new Error('The finished weight of the rice pudding must be 1 g or more');
+      out.pud[k] = +v;
     }
   }
   if (b.snackOv != null) {
-    if (!isObj(b.snackOv)) return 'Snack values must be an object';
+    if (!isObj(b.snackOv)) throw new Error('Snack values must be an object');
+    out.snackOv = {};
     for (const [id, o] of Object.entries(b.snackOv)) {
-      if (!isObj(o)) return `Snack values for ${id.slice(0, 40)} must be an object`;
-      for (const [k, v] of Object.entries(o)) if (!isNum(v) || +v < 0) return `Snack value ${k} for ${id.slice(0, 40)} must be a number of 0 or more`;
+      if (!SNACK_ID.test(id) || id in Object.prototype) throw new Error(`Unknown snack "${id.slice(0, 40)}"`);
+      if (!isObj(o)) throw new Error(`Snack values for ${id} must be an object`);
+      out.snackOv[id] = {};
+      for (const [k, v] of Object.entries(o)) {
+        if (!['k', 'p', 'c', 'f'].includes(k)) throw new Error(`Unknown snack value "${k.slice(0, 40)}" for ${id}`);
+        if (!isNum(v) || +v < 0) throw new Error(`Snack value ${k} for ${id} must be a number of 0 or more`);
+        out.snackOv[id][k] = +v;
+      }
     }
   }
-  return '';
+  if (b.pBasis != null) {
+    if (b.pBasis !== 'total' && b.pBasis !== 'direct') throw new Error('Protein basis must be "total" or "direct"');
+    out.pBasis = b.pBasis;
+  }
+  return out;
 }
 const targetsError = t => (t == null ? '' : !isObj(t) ? 'Day targets must be an object'
   : ['k', 'p', 'c', 'f'].some(k => t[k] !== undefined && !isNum(t[k])) ? 'Day targets must be numbers' : '');
@@ -235,10 +253,9 @@ router.get('/settings', (req, res) => {
 });
 router.put('/settings', (req, res) => {
   if (!isObj(req.body)) return bad(res, 'Settings must be an object');
-  const json = JSON.stringify(req.body);
+  let json;
+  try { json = JSON.stringify(cleanSettings(req.body)); } catch (e) { return bad(res, e.message); }
   if (json.length > MAX_JSON) return bad(res, 'Settings too large');
-  const err = settingsError(req.body);
-  if (err) return bad(res, err);
   q.putSettings.run(req.user.id, json);
   res.json({ ok: true });
 });

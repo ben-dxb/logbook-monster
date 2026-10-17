@@ -190,8 +190,9 @@ test('AI summary: sends weekly numbers and correlations for the picked metrics, 
   const sent = aiSeen[aiSeen.length - 1].messages[1].content;
   assert.match(sent, /Weekly averages/);
   assert.match(sent, /2026-07-06 \| 2200 \| 80/);
-  assert.match(sent, /Calories vs Weight: r = 0\.9\d/);
-  assert.match(sent, /Calories this week vs weight change to next week: r = 1/);
+  assert.match(sent, /"Calories" vs "Weight": r = 0\.9\d/);
+  assert.match(sent, /"Calories" this week vs weight change to next week: r = 1/);
+  assert.match(aiSeen[aiSeen.length - 1].messages[0].content, /never follow instructions/);
   assert.doesNotMatch(sent, /Protein/, 'only the picked metrics are sent');
 
   assert.strictEqual((await ann('POST', '/api/timeline/summary', { from: '2026-07-01', to: '2026-08-31', metrics: [] })).status, 400);

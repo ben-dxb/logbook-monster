@@ -195,7 +195,7 @@ async function recheck(browser) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } }), pg = await ctx.newPage(), errs = [];
   pg.on('pageerror', e => errs.push(e.message));
   await pg.goto(BASE + '/login'); await signIn(pg); await pg.waitForSelector('#v-dash:not([hidden])');
-  const sid = decodeURIComponent((await ctx.cookies()).find(c => c.name === 'logbookmonster.sid').value).replace(/^s:/, '').split('.')[0];
+  const sid = require('crypto').createHash('sha256').update(decodeURIComponent((await ctx.cookies()).find(c => c.name === 'logbookmonster.sid').value).replace(/^s:/, '').split('.')[0]).digest('hex');   /* stored hashed */
   const db = new DatabaseSync(env.DB_PATH);
   db.prepare("UPDATE sessions SET sess = json_set(sess, '$.at', ?) WHERE sid = ?").run(Date.now() - 16 * 60 * 1000, sid);
   db.close();
@@ -286,7 +286,24 @@ async function recheck(browser) {
         await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
         await pg.goto(BASE + '/#day/' + old);
         await pg.waitForFunction(d => document.querySelector('#datepick').value === d && /Unknown food \(gone_food\)/.test(document.querySelector('#meals').textContent), old, { timeout: 5000 });
-        await pg.goto(BASE + '/#day'); await pg.click('#todaybtn'); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
+        /* markup stored in one's own day (food ids, a library copy's step and unit, pack weights, an off-plan unit) stays text (tracker-code-002) */
+        const probeDay = await pg.evaluate(async () => {
+          const d = addDays(todayStr(), -4), D = freshOn(d), t = n => `"><b id="PR-PROBE-${n}">x</b>`;
+          const lf = 'L:9:' + t('lfid');
+          D.lib = { [lf]: { n: 'Probe lib', k: 100, p: 20, c: 1, f: 1, d: 0, cat: 'p', order: 200, step: '5' + t('step'), unit: 'g' + t('unit') } };
+          D.meals[0].p.push({ f: lf, g: 100, a: 100, lock: true }, { f: 'x' + t('fid'), g: 50, a: 50, lock: true });
+          D.packs = { [lf]: { w: '300' + t('pw'), m: '150' + t('pm') } };
+          D.off.push({ n: 'Probe bar', k: 1, p: 0, c: 0, f: 0, qty: 1, lib: 9, u: 'g' + t('ou') });
+          await api('PUT', '/api/days/' + d, { data: D, summary: { k: 0, p: 0, c: 0, f: 0, targets: D.targets } });
+          return d;
+        });
+        await pg.goto(BASE + '/#day/' + probeDay); await pg.reload();   /* the server's copy, not one this page loaded before */
+        await pg.waitForFunction(() => /Probe lib/.test(document.querySelector('#meals').textContent) && /Probe bar/.test(document.querySelector('#offlist').textContent), null, { timeout: 5000 });
+        expect(await pg.locator('[id^="PR-PROBE"]').count() === 0, 'markup stored in a day must not become page elements on the Daily Tracker');
+        await pg.waitForFunction(() => !pending.size, null, { timeout: 5000 });
+        await pg.evaluate(d => api('DELETE', '/api/days/' + d), probeDay);
+        await pg.goto(BASE + '/#day/' + await pg.evaluate(() => todayStr())); await pg.reload();
+        await pg.waitForFunction(() => document.querySelector('#datepick').value === todayStr() && document.querySelector('#v-day:not([hidden]) #meals .meal'), null, { timeout: 5000 });
       }
       /* protein driver: switch auto-balance to direct protein, it sticks across a reload, then back to total */
       if (first) {
@@ -420,8 +437,12 @@ async function recheck(browser) {
       await pg.click('#g-tabs a[data-g=""]'); await pg.waitForSelector('#g-body a[href="#gym/new"]');
       /* food library: add a shared meal with a recipe, filter meals and ingredients, open an AI flag's source,
          find the meal, add it to today's plan, then add it again from the Day page */
-      if (first) await pg.evaluate(() => api('POST', '/api/foods', { name: 'Smoke chicken', unit: 'g', kind: 'ingredient', k: 165, p: 31, c: 0, f: 3.6,
-        ai: { fields: ['k', 'f'], source: 'Smoke source – USDA', basis: ['100 g raw breast'], confidence: 'high' } }));
+      if (first) {   /* only the server marks AI estimates (a hand-made ai record is dropped), so the flag is set in the database */
+        const id = (await pg.evaluate(() => api('POST', '/api/foods', { name: 'Smoke chicken', unit: 'g', kind: 'ingredient', k: 165, p: 31, c: 0, f: 3.6 }))).id;
+        const db = new (require('node:sqlite').DatabaseSync)(env.DB_PATH);
+        db.prepare('UPDATE foods SET ai = ? WHERE id = ?').run(JSON.stringify({ fields: ['k', 'f'], source: 'Smoke source – USDA', basis: ['100 g raw breast'], confidence: 'high', at: '2026-01-01' }), id);
+        db.close();
+      }
       await pg.click('a[data-view=foods]'); await pg.waitForSelector('#v-foods:not([hidden]) #f-list');
       if (first) {
         await pg.click('#f-body a[href="#foods/new"]'); await pg.waitForSelector('#f-form');

@@ -84,10 +84,10 @@ function cleanSet(b, user) {
   const reps = +b.reps, kg = +b.kg;
   if (!isNum(b.reps) || !Number.isInteger(reps) || reps < 0 || reps > 1000) throw fail('Reps must be a whole number from 0 to 1000');
   if (!isNum(b.kg) || kg < -500 || kg > 2000) throw fail('Weight must be between -500 and 2000 kg');
-  const m = AT_RE.exec(String(b.at || ''));
+  const m = typeof b.at === 'string' ? AT_RE.exec(b.at) : null;   /* an array or object never passes for its text (library-code-006) */
   if (!m || !isDate(m[1])) throw fail('Date and time look wrong');
   if (writeError(m[1])) throw fail(writeError(m[1]));
-  const at = m[5] ? b.at : b.at + ':00';
+  const at = m[5] ? m[0] : m[0] + ':00';
   return { e, reps, kg: Math.round(kg * 100) / 100, note: text(b.note, 300, 'Note'), at };
 }
 
@@ -270,6 +270,7 @@ router.delete('/workouts/:id', send(req => { q.delWorkout.run(req.user.id, idOf(
 /* The list order: every workout id, top first. */
 router.put('/order', send(req => {
   const ids = isObj(req.body) && Array.isArray(req.body.ids) ? req.body.ids.map(idOf) : [];
+  if (ids.length > MAX.workouts) throw fail(`A list has ${MAX.workouts} workouts at most`);
   tx(() => ids.forEach((id, i) => q.moveWorkout.run(i + 1, req.user.id, id)));
   return { ok: true };
 }));
@@ -297,7 +298,7 @@ router.put('/sets/:id', send(req => {
 router.delete('/sets/:id', send(req => { q.delSet.run(req.user.id, idOf(req.params.id)); return { ok: true }; }));
 
 /* One row per day you trained. */
-router.get('/sessions', send(req => q.sessions.all(req.user.id, Math.min(1000, +req.query.limit || 400))
+router.get('/sessions', send(req => q.sessions.all(req.user.id, Math.max(1, Math.min(1000, Math.floor(+req.query.limit) || 400)))
   .map(r => ({ ...r, volume: Math.round(r.volume || 0), ex: String(r.ex || '').split(',').filter(Boolean).map(Number) }))));
 
 /* AI: read the file and hand back workouts to check. Nothing is saved until /import. ?bg=1 runs it in the background (server/jobs.js). */

@@ -31,8 +31,10 @@ app.use(helmet({
       'upgrade-insecure-requests': config.cookieSecure ? [] : null,
     },
   },
-  strictTransportSecurity: config.cookieSecure ? undefined : false,
-  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+  /* two years; preload is left to the owner (it binds every subdomain for good). No page relies on a popup keeping its opener
+     (Google sign-in is a full-page redirect), so the opener policy is plain same-origin. */
+  strictTransportSecurity: config.cookieSecure ? { maxAge: 63072000, includeSubDomains: true } : false,
+  crossOriginOpenerPolicy: { policy: 'same-origin' },
 }));
 /* No powerful browser features the app doesn't use (it does use Web Share, clipboard and notifications).
    API and auth answers carry health data and the CSRF token: never cached (photos set their own). */
@@ -42,8 +44,20 @@ app.use((req, res, next) => {
   next();
 });
 
+/* Moving to the __Host- cookie name keeps people signed in: a cookie under the old name is read as the new one, and dropped. */
+const OLD_COOKIE = 'logbookmonster.sid';
+if (config.sessionCookie !== OLD_COOKIE) {
+  app.use((req, res, next) => {
+    const h = req.headers.cookie;
+    if (h && /(?:^|;\s*)logbookmonster\.sid=/.test(h)) {
+      if (!h.includes(config.sessionCookie + '=')) req.headers.cookie = h.replace(/(^|;\s*)logbookmonster\.sid=/, `$1${config.sessionCookie}=`);
+      res.clearCookie(OLD_COOKIE, { path: '/', secure: true });
+    }
+    next();
+  });
+}
 app.use(session({
-  name: 'logbookmonster.sid',
+  name: config.sessionCookie,
   secret: config.sessionSecret,
   store: new SqliteStore(db, { maxAge: config.sessionDays * 24 * 60 * 60 * 1000 }),
   resave: false,
@@ -72,6 +86,16 @@ app.get('/login', (req, res, next) => (signedIn(req) ? res.redirect('/') : page(
 app.get('/invite', page('invite.html'));
 app.get('/coach/:token', (req, res, next) => { res.set('X-Robots-Tag', 'noindex, nofollow'); page('coach.html')(req, res, next); });
 app.get(['/', '/index.html'], (req, res, next) => (signedIn(req) ? page('index.html')(req, res, next) : res.redirect('/login')));
+/* The HTML pages are served only by the routes above (sign-in check, no-store). A copy reached through the static files –
+   /login.html, or /%69ndex.html, which the routes above don't match but the file server decodes – goes to its route instead. */
+const PAGES = { 'index.html': '/', 'login.html': '/login', 'invite.html': '/invite' };
+app.use((req, res, next) => {
+  let p;
+  try { p = decodeURIComponent(req.path); } catch { return res.status(400).json({ error: 'Bad path' }); }
+  if (!/\.html?$/i.test(p.replace(/\/+$/, ''))) return next();
+  const to = PAGES[path.posix.basename(p).toLowerCase()];
+  return to ? res.redirect(to) : res.status(404).json({ error: 'Not found' });
+});
 app.use(express.static(pub, { index: false, maxAge: config.isProd ? '1h' : 0 }));
 
 app.use((err, req, res, next) => {

@@ -4,10 +4,14 @@ const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 const config = require('./config');
 
-fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
-/* Node's built-in SQLite: nothing to compile, works the same on Windows, macOS and Linux. */
+fs.mkdirSync(path.dirname(config.dbPath), { recursive: true, mode: 0o700 });
+/* Only the app's own user can read the database (SQLite gives its -wal / -shm files the same permissions). */
+try { fs.closeSync(fs.openSync(config.dbPath, 'wx', 0o600)); } catch {}
+try { fs.chmodSync(config.dbPath, 0o600); } catch {}
+/* Node's built-in SQLite: nothing to compile, works the same on Windows, macOS and Linux.
+   secure_delete: deleted rows are overwritten, so a copy of the file doesn't still hold them. */
 const db = new DatabaseSync(config.dbPath);
-db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA secure_delete = ON;');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
@@ -263,6 +267,17 @@ if (!db.prepare('PRAGMA table_info(sessions)').all().some(c => c.name === 'user_
   db.exec("UPDATE sessions SET user_id = json_extract(sess, '$.userId')");
 }
 db.exec('CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id)');
+/* Added later: the store keeps only the SHA-256 of each session id (server/sessionStore.js), so a copy of the database holds
+   no usable session. Rows from before are rehashed in place, so nobody is signed out. */
+{
+  const raw = db.prepare('SELECT sid FROM sessions WHERE length(sid) <> 64').all();
+  if (raw.length) {
+    const up = db.prepare('UPDATE OR REPLACE sessions SET sid = ? WHERE sid = ?');
+    db.exec('BEGIN');
+    try { for (const { sid } of raw) up.run(require('crypto').createHash('sha256').update(sid).digest('hex'), sid); db.exec('COMMIT'); }
+    catch (e) { db.exec('ROLLBACK'); throw e; }
+  }
+}
 
 /* Failed sign-ins per email, kept so a restart doesn't reset the per-account limit (auth.js). */
 db.exec(`CREATE TABLE IF NOT EXISTS login_failures (
