@@ -213,6 +213,7 @@ reverse proxy with HTTPS in front – for example Caddy:
 
 ```
 meals.example.com {
+    encode zstd gzip
     reverse_proxy 127.0.0.1:3000
 }
 ```
@@ -226,7 +227,13 @@ location / {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
+gzip on;
+gzip_types application/json text/css application/javascript image/svg+xml;
+gzip_min_length 512;
 ```
+
+Compression belongs at the proxy, as above – the app itself doesn't compress (no Express `compression`). If a server-sent
+events or long-poll endpoint is ever added, exclude it from the proxy's compression so its messages aren't held back in a buffer.
 
 ### Without Docker
 

@@ -15,6 +15,11 @@ const db = new DatabaseSync(config.dbPath);
    here, before any table; an older one switches at its next VACUUM (upkeep.atStart). */
 db.exec('PRAGMA auto_vacuum = INCREMENTAL');
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA secure_delete = ON;');
+/* synchronous = NORMAL, chosen on purpose: in WAL mode a commit then writes the WAL without waiting on an fsync (it syncs at
+   each checkpoint instead), so a save no longer pays for one or two flushes to disk. The database can't be corrupted this way
+   (sqlite.org/pragma.html#pragma_synchronous) and a crash of the app loses nothing; only a power cut or an OS crash can lose
+   the last commits before it, which for a logbook is a fair price for not stalling every write. */
+db.exec('PRAGMA synchronous = NORMAL');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
@@ -370,11 +375,21 @@ function seqTables() {
 }
 seqTables();
 
+/* Added later: an index on every foreign key column no other index starts with, so removing an account, an exercise or a
+   supplement finds the rows that point at it (ON DELETE CASCADE / SET NULL) without reading the whole table. The rest are
+   covered: each other child column is the first column of its table's primary key or of an index above. */
+db.exec(`CREATE INDEX IF NOT EXISTS sets_exercise_id ON sets(exercise_id);
+CREATE INDEX IF NOT EXISTS supplement_log_supp ON supplement_log(supplement_id);
+CREATE INDEX IF NOT EXISTS workouts_user ON workouts(user_id, position);
+CREATE INDEX IF NOT EXISTS invites_user ON invites(user_id);`);
+
 /* Before dates were checked (#69) a few rows were stored under dates that don't exist (2026-02-30), which nothing can open now.
    Each moves to the real date it stood for – the one a browser turned it into (2026-03-02) – unless that would land on a row
    already there: a day or weight is then kept where it is, and stays deletable (DELETE takes a stored key as it is). Every move
-   and every row kept is written to the server log, so nothing changes silently. Runs at each start (a quick scan once nothing is left). */
+   and every row kept is written to the server log, so nothing changes silently. Runs once: a clean run records 'dates_fixed' in
+   app_config, in the same transaction as its moves (nothing can store such a date any more), so later starts don't scan the tables. */
 function fixImpossibleDates() {
+  if (db.prepare("SELECT 1 FROM app_config WHERE key = 'dates_fixed'").get()) return;
   const { isDate } = require('./dates');
   /* SQLite's date() rolls 2026-02-31 over (or gives NULL for month 13), so only impossible dates differ from it */
   const SHAPE = c => `${c} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' AND date(substr(${c}, 1, 10)) IS NOT substr(${c}, 1, 10)`;
@@ -389,16 +404,19 @@ function fixImpossibleDates() {
     for (const [t, col, key] of TABLES) {
       const cols = ['user_id', ...(key || []).filter(k => k !== 'user_id')];
       const rows = db.prepare(`SELECT rowid AS rid, ${col} AS d, ${cols.join(', ')} FROM ${t} WHERE ${SHAPE(col)}`).all().filter(r => bad(r.d));
+      if (!rows.length) continue;
+      const taken = key && db.prepare(`SELECT 1 FROM ${t} WHERE ${key.map(k => k + ' = ?').join(' AND ')} AND ${col} = ?`);
+      const drop = db.prepare(`DELETE FROM ${t} WHERE rowid = ?`), move = db.prepare(`UPDATE ${t} SET ${col} = ? WHERE rowid = ?`);
       for (const r of rows) {
         const to = rolled(r.d) + r.d.slice(10);
-        const taken = key && db.prepare(`SELECT 1 FROM ${t} WHERE ${key.map(k => k + ' = ?').join(' AND ')} AND ${col} = ?`)
-          .get(...key.map(k => r[k]), to);
-        if (taken && t === 'checklist_log') { db.prepare(`DELETE FROM ${t} WHERE rowid = ?`).run(r.rid); said.push(`${t} user ${r.user_id} ${r.d}: the same tick is already on ${to.slice(0, 10)} – dropped`); continue; }
-        if (taken) { said.push(`${t} user ${r.user_id} ${r.d}: kept – ${to.slice(0, 10)} already has one; delete it from History`); continue; }
-        db.prepare(`UPDATE ${t} SET ${col} = ? WHERE rowid = ?`).run(to, r.rid);
+        const there = taken && taken.get(...key.map(k => r[k]), to);
+        if (there && t === 'checklist_log') { drop.run(r.rid); said.push(`${t} user ${r.user_id} ${r.d}: the same tick is already on ${to.slice(0, 10)} – dropped`); continue; }
+        if (there) { said.push(`${t} user ${r.user_id} ${r.d}: kept – ${to.slice(0, 10)} already has one; delete it from History`); continue; }
+        move.run(to, r.rid);
         said.push(`${t} user ${r.user_id} ${r.d.slice(0, 10)} → ${to.slice(0, 10)}`);
       }
     }
+    db.prepare("INSERT OR IGNORE INTO app_config (key, data) VALUES ('dates_fixed', '{}')").run();
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
   if (said.length) console.log(`Rows stored under dates that don't exist (saved before dates were checked):\n  ${said.join('\n  ')}`);

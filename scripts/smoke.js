@@ -1,6 +1,6 @@
 'use strict';
 /* Browser smoke test: starts a throwaway server, signs in, weighs a meal-prep pack, edits and saves a day, logs a weight,
-   opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, shares a read-only coach link and opens it signed out, sets up two-step sign-in and signs in with a code and a recovery code, confirms a sensitive admin change on an old sign-in, uploads a plan and adds a day template on Account admin, sets up AI models and invites someone on the Super admin tabs, builds a plan from nothing as the new account, switches a day to another template, edits one day in two tabs, at desktop and phone widths. Fails on any page error.
+   opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, checks that pages load only versioned scripts and styles and that the Dashboard and Timeline keep what they read until a write, shares a read-only coach link and opens it signed out, sets up two-step sign-in and signs in with a code and a recovery code, confirms a sensitive admin change on an old sign-in, uploads a plan and adds a day template on Account admin, sets up AI models and invites someone on the Super admin tabs, builds a plan from nothing as the new account, switches a day to another template, edits one day in two tabs, at desktop and phone widths. Fails on any page error.
    Needs Playwright and its Chromium (README, Run it locally); without them it fails, so `npm run check` never passes untested. */
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -52,6 +52,8 @@ const fail = msg => { console.error('smoke FAILED:', msg); cleanup(); process.ex
 function cleanup() { srv.kill(); fakeAi.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
 const signIn = async p => { await p.fill('#email', 'smoke@example.com'); await p.fill('#password', 'smoke-password-1'); await p.click('#submit'); };
+/* the photo list as the Dashboard asks for it (?latest=1…) or as the photos page does – not a photo's own file or thumb */
+const PHOTO_LIST = /\/api\/photos(\?[^/]*)?$/;
 const until = async (fn, ms = 5000) => { for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 100))) if (await fn()) return true; return !!(await fn()); };
 
 /* Logged food is never lost: Timeline controls and the protein buttons on Account admin leave an unloaded day alone, changes kept
@@ -216,10 +218,10 @@ async function phase1c(browser) {
   await pg.goto(BASE + '/login'); await signIn(pg); await pg.waitForSelector('#v-dash:not([hidden])');
   expect(/\/#dash$/.test(pg.url()), 'after sign-in the address should be /#dash, not ' + pg.url());
   /* the photo feed fails: the checklist and the other cards still show, the photo card says why */
-  await pg.route('**/api/photos', r => r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"boom"}' }));
+  await pg.route(PHOTO_LIST, r => r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"boom"}' }));
   await pg.reload(); await pg.waitForSelector('#v-dash:not([hidden]) .dcheck .dlist', { timeout: 5000 });
   expect(/Couldn’t load your photos: boom/.test(await pg.textContent('#d-body')) && await pg.locator('#d-body .dcard').count() === 5, 'only the photo card should show the failure');
-  await pg.unroute('**/api/photos');
+  await pg.unroute(PHOTO_LIST);
   /* super admin: a failed accounts load says so, and loads again when the tab is opened again */
   await pg.route('**/api/admin/users', r => r.abort());
   await pg.evaluate(() => { location.hash = '#admin/people'; });
@@ -376,11 +378,11 @@ async function phase2cLibrary(browser) {
   const back = () => pg.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));   /* the tab shown again */
   await pg.goto(BASE + '/login'); await signIn(pg); await pg.waitForSelector('#v-dash:not([hidden])');
   /* the Dashboard's photo card: "…still running? Reload…", not "running?. Reload" */
-  await pg.route('**/api/photos', r => r.abort());
+  await pg.route(PHOTO_LIST, r => r.abort());
   await pg.reload(); await pg.waitForFunction(() => /Couldn’t load your photos/.test(document.querySelector('#d-body').textContent), null, { timeout: 5000 });
   const dt = await pg.textContent('#d-body');
   expect(/still running\? Reload/.test(dt) && !/\?\./.test(dt), 'the photo card error should end one sentence once: ' + dt.slice(0, 200));
-  await pg.unroute('**/api/photos');
+  await pg.unroute(PHOTO_LIST);
 
   /* gym: assisted sets, less assistance is a 🏆; Records loads */
   const ex = await pg.evaluate(async () => {
@@ -538,6 +540,50 @@ async function phase2cLast(browser) {
   await later();
   await hash('#photos'); await pg.waitForSelector(`#p-list [data-pid="${ph.id}"]`, { timeout: 5000 });
   expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
+  await ctx.close();
+}
+
+/* Phase 10: the pages point only at versioned scripts and styles, cached for good, and are themselves checked on every load;
+   the Dashboard asks only for the newest photo of each pose and keeps its feeds and the Timeline its trends until a write or the
+   tab is shown again. */
+async function versionedAssets(browser) {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } }), pg = await ctx.newPage(), errs = [];
+  pg.on('pageerror', e => errs.push(e.message));
+  const asked = [];
+  pg.on('request', r => { if (r.url().startsWith(BASE + '/api/')) asked.push(r.url().slice(BASE.length)); });
+  await pg.goto(BASE + '/login'); await signIn(pg); await pg.waitForSelector('#v-dash:not([hidden]) #d-body .dcard');
+  for (const p of ['/', '/login', '/invite', '/coach/' + 'A'.repeat(43)]) {
+    const r = await pg.evaluate(async p => { const r = await fetch(p, { redirect: 'manual' }); return { cc: r.headers.get('cache-control'), etag: r.headers.get('etag'), html: await r.text() }; }, p);
+    if (p === '/login') continue;   /* signed in: a redirect to / */
+    expect(r.cc === 'no-cache' && /^"[0-9a-f]+"$/.test(r.etag || ''), `${p} should be no-cache with a strong ETag: ${r.cc} ${r.etag}`);
+    const refs = [...r.html.matchAll(/\b(?:src|href)="(\/[^"#]*)"/g)].map(m => m[1]).filter(u => /^\/[^/]+\.[a-z]+(\?|$)/.test(u));
+    expect(refs.length >= 3, `${p} should load scripts and styles`);
+    for (const u of refs) {
+      expect(/\?v=[0-9a-f]{10}$/.test(u), `${p} points at an unversioned ${u}`);
+      const cc = await pg.evaluate(async u => (await fetch(u)).headers.get('cache-control'), u);
+      expect(cc === 'public, max-age=31536000, immutable', `${u} should be immutable, not ${cc}`);
+    }
+  }
+  const loaded = await pg.evaluate(() => performance.getEntriesByType('resource').map(e => e.name).filter(n => /\.(js|css)(\?|$)/.test(n) && n.startsWith(location.origin)));
+  expect(loaded.length >= 10 && loaded.every(n => /\?v=[0-9a-f]{10}$/.test(n)), 'the app loaded only versioned files: ' + loaded.filter(n => !/\?v=/.test(n)).join());
+  expect(asked.some(u => /^\/api\/photos\?latest=1&to=/.test(u)) && !asked.includes('/api/photos'), 'the Dashboard asks only for the latest photos: ' + asked.join());
+  /* back to the Dashboard and the Timeline: nothing read again until a write or the tab is shown again */
+  const hash = async (h, sel) => { await pg.evaluate(h => { location.hash = h; }, h); await pg.waitForSelector(sel, { timeout: 5000 }); };
+  await hash('#history/timeline', '#v-timeline:not([hidden]) #t-chart svg, #v-timeline:not([hidden]) #t-chart .emptyc:not(:empty)');
+  await until(() => asked.some(u => u.startsWith('/api/timeline/trends')));
+  await hash('#dash', '#v-dash:not([hidden]) #d-body .dcard');
+  asked.length = 0;
+  await hash('#history/timeline', '#v-timeline:not([hidden])'); await hash('#dash', '#v-dash:not([hidden]) #d-body .dcard');
+  await new Promise(r => setTimeout(r, 300));
+  expect(!asked.some(u => /^\/api\/(timeline\/trends|photos|checklist\/days|supps\/log|gym\/sessions)/.test(u)), 'nothing changed, so nothing read again: ' + asked.join());
+  await pg.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await hash('#history/timeline', '#v-timeline:not([hidden])');
+  expect(await until(() => asked.some(u => u.startsWith('/api/timeline/trends'))), 'the tab shown again reads the trends again');
+  asked.length = 0;
+  await pg.evaluate(() => api('PUT', '/api/weights/' + todayStr(), { kg: 80.4 }));
+  await hash('#dash', '#v-dash:not([hidden]) #d-body .dcard');
+  expect(await until(() => asked.some(u => u.startsWith('/api/photos?latest=1'))), 'a write reads the Dashboard again');
+  expect(!errs.length, 'page errors: ' + errs.join(' | '));
   await ctx.close();
 }
 
@@ -1513,6 +1559,7 @@ async function recheck(browser) {
       await ctx.close();
       await twoStep(browser, w, h);
     }
+    await versionedAssets(browser);
     await recheck(browser);
     await phase1c(browser);
     await phase2c(browser);

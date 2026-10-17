@@ -142,6 +142,7 @@ const inviteLimiter = rateLimit({
 const router = express.Router();
 router.use(express.json({ limit: '10kb' }));
 
+/* Carries the CSRF token: never echo request text into this answer (with proxy compression that would open it to BREACH). */
 router.get('/config', (req, res) => {
   res.json({
     google: config.google.enabled,

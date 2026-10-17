@@ -13,6 +13,7 @@ const { isDate } = require('./dates');
 const ai = require('./ai');
 const photos = require('./photos');
 const supps = require('./supps');
+const trendCache = require('./trendcache');
 
 const q = {
   day: db.prepare('SELECT data, summary FROM days WHERE user_id = ? AND date = ?'),
@@ -89,11 +90,13 @@ function dayCard(user, date) {
 }
 
 /* ---------- trends ---------- */
+const setsUpTo = (user, to) => q.setsTo.all(user.id, addDays(to, 1));
 const MACROS = [['k', 'Calories', 'kcal'], ['p', 'Protein', 'g'], ['c', 'Carbs', 'g'], ['f', 'Fat', 'g']];
 
 /* Every series the chart can show over [from, to]: { key, name, unit, group, zero, points: [[date, value]] }.
-   zero: a missing day means none (supplements), so averages count it as 0; otherwise it means no data. */
-function series(user, from, to) {
+   zero: a missing day means none (supplements), so averages count it as 0; otherwise it means no data.
+   sets: every gym set up to `to` (setsTo), when the caller has them already. */
+function series(user, from, to, sets = setsUpTo(user, to)) {
   const out = [];
   const sums = q.sums.all(user.id, from, to).map(r => ({ date: r.date, ...JSON.parse(r.summary) }));
   for (const [k, name, unit] of MACROS) {
@@ -103,7 +106,7 @@ function series(user, from, to) {
 
   /* gym: all sets up to `to`, so every exercise's first best (its baseline) counts even when it is before the range */
   const days = new Map();
-  for (const s of q.setsTo.all(user.id, addDays(to, 1))) {
+  for (const s of sets) {
     const o = days.get(s.d) || { vol: 0, ex: new Map() };
     if (s.kg > 0) o.vol += s.reps * s.kg;
     if (countsForStrength(s)) o.ex.set(s.e, Math.max(o.ex.get(s.e) || 0, e1rm(s.kg, s.reps)));
@@ -152,9 +155,9 @@ function series(user, from, to) {
 }
 
 /* The Timeline's exercise picker: every exercise with a strength set, how many days of them fall in the range, and whether it is followed. */
-function exerciseList(user, from, to) {
+function exerciseList(user, from, to, sets = setsUpTo(user, to)) {
   const days = new Map(), seen = new Set();
-  for (const s of q.setsTo.all(user.id, addDays(to, 1))) {
+  for (const s of sets) {
     if (!countsForStrength(s)) continue;
     seen.add(s.e);
     if (s.d >= from) (days.get(s.e) || days.set(s.e, new Set()).get(s.e)).add(s.d);
@@ -296,10 +299,14 @@ const trendsLimit = rateLimit({
   keyGenerator: req => (req.share ? 's' + req.share.id : 'u' + req.user.id),
   message: { error: 'That’s a lot of trend reads in a short time – wait a few minutes and try again.' },
 });
+/* The answer is kept (server/trendcache.js) until the account writes anything; a coach link is checked before it gets here. */
 router.get('/trends', trendsLimit, (req, res) => {
   try {
     const [from, to] = rangeOf(req.query, req.today);
-    res.json({ from, to, series: series(req.user, from, to), exercises: exerciseList(req.user, from, to), ai: ai.status().configured });
+    res.type('json').send(trendCache.get(req.user.id, `${from}|${to}`, () => {
+      const sets = setsUpTo(req.user, to);   /* read once for both */
+      return JSON.stringify({ from, to, series: series(req.user, from, to, sets), exercises: exerciseList(req.user, from, to, sets), ai: ai.status().configured });
+    }));
   } catch (e) { send(res, e); }
 });
 

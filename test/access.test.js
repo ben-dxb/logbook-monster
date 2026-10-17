@@ -319,7 +319,9 @@ const ROUTES = [
   { key: 'PUT /api/checklist/days/:date', body: () => ({ item: 'annmark', done: false }),
     own: [{ expect: [200, 400] }, { body: () => ({ item: 'annmark', done: true }), expect: [400] }] },
   /* server/photos.js */
-  { key: 'GET /api/photos', own: [{ check: r => { noAnn(r); assert.deepStrictEqual(r.body.photos.map(p => p.id), [c.bobPhoto]); } }] },
+  { key: 'GET /api/photos', own: [{ check: r => { noAnn(r); assert.deepStrictEqual(r.body.photos.map(p => p.id), [c.bobPhoto]); } },
+    /* the Dashboard's ask: the newest of each pose, and the count – of the caller's own only */
+    { u: () => '/api/photos?latest=1&to=2100-01-01', check: r => { noAnn(r); assert.deepStrictEqual([r.body.photos.map(p => p.id), r.body.count], [[c.bobPhoto], 1]); } }] },
   { key: 'POST /api/photos', u: () => `/api/photos?date=${DATE}&pose=back`, body: () => jpeg('hijack'), own: SELF },
   { key: 'PUT /api/photos/:id/thumb', u: () => `/api/photos/${c.p2}/thumb`, body: () => jpeg('hijackthumb'), own: [{ expect: [404] }] },
   { key: 'PUT /api/photos/:id', u: () => `/api/photos/${c.p1}`, body: () => ({ date: DATE, pose: 'back', note: 'hijack' }), own: [{ expect: [404] }] },
@@ -365,7 +367,8 @@ const ROUTES = [
   { key: 'GET /coach/:token/api/timeline/trends', scope: 'coach', u: () => `/coach/${c.token}/api/timeline/trends?from=2026-09-01&to=2026-09-30`,
     check: r => assert.ok(r.text.includes('81.37')) },
   { key: 'POST /coach/:token/api/timeline/summary', scope: 'coach', body: () => ({ metrics: ['k'] }) },
-  { key: 'GET /coach/:token/api/photos', scope: 'coach', expect: 404 },
+  { key: 'GET /coach/:token/api/photos', scope: 'coach', expect: 404,
+    extra: [{ name: 'the latest of each pose', u: () => `/coach/${c.token}/api/photos?latest=1`, expect: 404 }] },
   { key: 'POST /coach/:token/api/photos', scope: 'coach', u: () => `/coach/${c.token}/api/photos?date=${DATE}&pose=back`, body: () => jpeg('coach') },
   { key: 'PUT /coach/:token/api/photos/:id/thumb', scope: 'coach', u: () => `/coach/${c.token}/api/photos/${c.p2}/thumb`, body: () => jpeg('coachthumb') },
   { key: 'PUT /coach/:token/api/photos/:id', scope: 'coach', u: () => `/coach/${c.token}/api/photos/${c.p1}`, body: () => ({ date: DATE, pose: 'back', note: 'coach' }) },

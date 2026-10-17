@@ -14,6 +14,8 @@ const parse=s=>{const [y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d);
 const addDays=(s,n)=>{const d=parse(s);d.setDate(d.getDate()+n);return ymd(d);};
 const wdOf=s=>(parse(s).getDay()+6)%7;
 const todayStr=()=>ymd(new Date());
+/* as app.js's: the Timeline keeps its trends read while this stays the same – read only here, so only the tab shown again moves it */
+let WGEN=0;document.addEventListener('visibilitychange',()=>{if(!document.hidden)WGEN++;});
 /* a real date (not 2026-02-31) from 2000 to a year from today – what the server stores (server/dates.js) */
 const lastDate=()=>{const d=new Date();d.setFullYear(d.getFullYear()+1);return ymd(d);};
 const isDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||'')&&ymd(parse(s))===s&&s>='2000-01-01'&&s<=lastDate();

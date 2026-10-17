@@ -83,10 +83,11 @@ const longText = (v, max, what) => {
 };
 const idOf = v => (/^\d{1,12}$/.test(String(v)) ? +v : NaN);
 
-function cleanSet(b, user) {
+/* known: the exercise is one the caller has just found or made for this account (the CSV import), so it isn't looked up again */
+function cleanSet(b, user, known) {
   if (!isObj(b)) throw fail('Set must be an object');
   const e = idOf(b.exercise);
-  if (!q.exercise.get(user.id, e)) throw fail('Pick an exercise');
+  if (!known && !q.exercise.get(user.id, e)) throw fail('Pick an exercise');
   const reps = +b.reps, kg = +b.kg;
   if (!isNum(b.reps) || !Number.isInteger(reps) || reps < 0 || reps > 1000) throw fail('Reps must be a whole number from 0 to 1000');
   if (!isNum(b.kg) || kg < -500 || kg > 2000) throw fail('Weight must be between -500 and 2000 kg');
@@ -420,7 +421,7 @@ router.post('/import-sets', send(req => {
       if (!isObj(b)) throw fail(`Set ${i + 1} isn’t an object`);
       const key = text(b.name, 80, 'Exercise name', true).toLowerCase();
       if (!ids.has(key)) ids.set(key, exerciseCreate(req.user, b.name));
-      try { clean.push(cleanSet({ ...b, exercise: ids.get(key) }, req.user)); }
+      try { clean.push(cleanSet({ ...b, exercise: ids.get(key) }, req.user, true)); }
       catch (e) { throw fail(`${String(b.name).slice(0, 40)} on ${String(b.at).slice(0, 19)}: ${e.message}`); }
     });
     if (q.countSets.get(req.user.id).n + clean.length > MAX.sets) throw fail('That would be more sets than this app keeps');

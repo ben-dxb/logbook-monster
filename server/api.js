@@ -15,6 +15,7 @@ const supps = require('./supps');
 const checklist = require('./checklist');
 const photos = require('./photos');
 const timeline = require('./timeline');
+const trendCache = require('./trendcache');
 const shares = require('./shares');
 const jobs = require('./jobs');
 const { isDate, writeError, todayIn } = require('./dates');
@@ -125,6 +126,15 @@ router.use(requireAuth);
 router.use(express.json({ limit: '300kb' }));
 router.use(csrfProtect);
 router.use(ai.scope);
+/* Any write may change what the Timeline's trends show: the account's kept answers (server/trendcache.js) go stale as the
+   answer is sent – before the browser can read it and ask again – whatever the status (a failed write may have done part). */
+router.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    const end = res.end, uid = req.user.id;
+    res.end = function (...a) { trendCache.bump(uid); return end.apply(this, a); };
+  }
+  next();
+});
 /* the person's date today, from the time zone the app sends (server/dates.js) */
 router.use((req, res, next) => { req.today = todayIn(req.get('x-time-zone') || (typeof req.query.tz === 'string' ? req.query.tz : '')); next(); });   /* ?tz= for the export link */
 /* Every account's saves, whatever the route: the tracker saves a changed day 0.6 s after the last edit, so even nonstop
@@ -137,6 +147,7 @@ router.use(rateLimit({
   message: { error: 'That’s a lot of saving in a short time – wait a few minutes and try again.' },
 }));
 
+/* Carries the CSRF token: never echo request text into this answer (with proxy compression that would open it to BREACH). */
 router.get('/me', (req, res) => {
   res.json({ id: req.user.id, email: req.user.email, name: req.user.name, hasPassword: !!req.user.password_hash,
     google: !!req.user.google_sub, totp: twostep.isOn(req.user.id), admin: defaults.isAdmin(req.user), ai: ai.status().configured, ...options(), csrf: csrfToken(req, res) });
@@ -186,6 +197,7 @@ router.put('/admin/ai', adminOnly, (req, res, next) => (isObj(req.body) && Objec
   if (!isObj(req.body)) return bad(res, 'Settings must be an object');
   try {
     const out = ai.save(req.body), b = req.body;
+    trendCache.bumpAll();   /* the trends say whether AI is set up */
     audit.log(req, 'ai.settings', { apiKey: b.key === undefined ? undefined : String(b.key || '').trim() ? 'set' : 'cleared',
       model: b.model === undefined ? undefined : true, tasks: isObj(b.models) ? Object.keys(b.models) : undefined });
     res.json(out);
@@ -234,6 +246,7 @@ router.put('/admin/options', adminOnly, (req, res, next) => (loosens(options(), 
     o[k] = v;
   }
   q.putOptions.run(JSON.stringify(o));
+  trendCache.bumpAll();
   audit.log(req, 'options.changed', req.body);
   res.json(o);
 });
@@ -349,7 +362,14 @@ const EXPORT_DAYS = 200;
 const breathe = () => new Promise(r => setImmediate(r));
 router.get('/export', exportLimit, async (req, res) => {
   const user = req.user;
-  const write = str => (res.write(str) ? null : new Promise(r => {
+  /* The first 512+ bytes go out as one write: a proxy compressing a chunked answer (Caddy's encode, minimum_length 512)
+     decides from the first chunk, and a short one ('{"exported":…') left the whole file uncompressed (p6-01). */
+  let head = '';
+  const write = str => {
+    if (head !== null) { head += str; if (head.length < 512) return null; str = head; head = null; }
+    return send(str);
+  };
+  const send = str => (res.write(str) ? null : new Promise(r => {
     const go = () => { res.off('drain', go); res.off('close', go); r(); };
     res.on('drain', go); res.on('close', go);
   }));
@@ -386,7 +406,7 @@ router.get('/export', exportLimit, async (req, res) => {
       }
       await write(']');
     }
-    res.end('}');
+    res.end(head === null ? '}' : head + '}');
   } catch (e) {
     console.error(e);
     if (!res.headersSent) res.status(500).json({ error: 'Something went wrong' }); else res.destroy();
