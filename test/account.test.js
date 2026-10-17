@@ -126,6 +126,8 @@ test('deleting your own account: everything goes, the session ends, it is logged
   assert.strictEqual(r.status, 200, r.text);
   assert.strictEqual(r.headers.get('clear-site-data'), '"cache", "storage"');
   assert.deepStrictEqual(rowsOf(A), { users: 0 }, 'no row of the account is left');
+  /* the files go just after the answer is sent: under load that can be a moment later */
+  for (let i = 0; i < 40 && files.some(f => fs.existsSync(path.join(PHOTO_DIR, f))); i++) await new Promise(r => setTimeout(r, 50));
   for (const f of files) assert.ok(!fs.existsSync(path.join(PHOTO_DIR, f)), 'photo file gone: ' + f);
   assert.strictEqual((await ann('GET', '/api/me')).status, 401, 'this session is dead');
   assert.strictEqual((await other('GET', '/api/me')).status, 401, 'and every other one');
