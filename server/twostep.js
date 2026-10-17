@@ -30,7 +30,13 @@ const q = {
 const { seal, unseal, stale } = require('./seal')('totp-secret-v1');   /* null from unseal when the key is lost (seal.js): only recovery codes work then */
 {
   const put = db.prepare('UPDATE totp SET secret = ? WHERE user_id = ? AND secret = ?');
-  for (const r of db.prepare('SELECT user_id, secret FROM totp').all()) if (stale(r.secret)) put.run(seal(unseal(r.secret)), r.user_id, r.secret);
+  /* one transaction for them all, not a commit per account; each still only replaces the secret it read */
+  const old = db.prepare('SELECT user_id, secret FROM totp').all().filter(r => stale(r.secret));
+  if (old.length) {
+    db.exec('BEGIN IMMEDIATE');
+    try { for (const r of old) put.run(seal(unseal(r.secret)), r.user_id, r.secret); db.exec('COMMIT'); }
+    catch (e) { db.exec('ROLLBACK'); throw e; }
+  }
 }
 
 const row = id => q.get.get(id);
