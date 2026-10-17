@@ -214,7 +214,7 @@ async function pShrink(file,max,quality){
 /* api() sends JSON; the pictures go as they are */
 async function pSend(method,url,blob,more={}){
   let r;
-  try{r=await fetch(url,{method,credentials:'same-origin',headers:{'content-type':'image/jpeg','x-csrf-token':csrf,...more},body:blob});}
+  try{r=await fetch(url,{method,credentials:'same-origin',headers:{'content-type':'image/jpeg','x-csrf-token':csrf,...TZH,...more},body:blob});}
   catch{throw new Error('Can’t reach the server – is it still running?');}
   if(r.status===401){setTimeout(toLogin,0);const e=new Error('You were signed out');e.signedOut=true;throw e;}
   const j=await r.json().catch(()=>({}));

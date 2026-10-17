@@ -267,8 +267,9 @@ test('account admin: day templates, foods and week of your own, only for yoursel
   await friend.req('PUT', '/api/my/defaults', mine);
   assert.strictEqual((await friend.req('PUT', '/api/my/defaults', {})).body.mine, null);   /* nothing at all = no plan */
   /* free foods: only the kinds set are kept, as true/false */
-  const fr = await friend.req('PUT', '/api/my/defaults', { free: { sauce: 1, veg: false, pizza: true } });
+  const fr = await friend.req('PUT', '/api/my/defaults', { ...mine, free: { sauce: 1, veg: false, pizza: true } });
   assert.deepStrictEqual(fr.body.mine.free, { sauce: true, veg: false });
+  assert.strictEqual((await friend.req('PUT', '/api/my/defaults', { free: { sauce: true } })).body.mine, null, 'free foods alone are no plan (PR-PL-029)');
   assert.strictEqual((await friend.req('PUT', '/api/my/defaults', { free: 'yes' })).status, 400);
   await friend.req('DELETE', '/api/my/defaults');
 });

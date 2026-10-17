@@ -256,8 +256,8 @@ const aiLimit = ai.limiter(20, 'That’s a lot of AI summaries – wait a while 
 /* ---------- routes ---------- */
 const router = express.Router();
 const send = (res, e) => { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); };
-function rangeOf(o) {
-  const to = isDate(o.to) ? o.to : new Date().toISOString().slice(0, 10);
+function rangeOf(o, today) {
+  const to = isDate(o.to) ? o.to : today || new Date().toISOString().slice(0, 10);
   const from = isDate(o.from) ? o.from : '0000-01-01';
   if (from > to) throw fail('The range starts after it ends');
   return [from, to];
@@ -298,7 +298,7 @@ const trendsLimit = rateLimit({
 });
 router.get('/trends', trendsLimit, (req, res) => {
   try {
-    const [from, to] = rangeOf(req.query);
+    const [from, to] = rangeOf(req.query, req.today);
     res.json({ from, to, series: series(req.user, from, to), exercises: exerciseList(req.user, from, to), ai: ai.status().configured });
   } catch (e) { send(res, e); }
 });
@@ -307,7 +307,7 @@ router.get('/trends', trendsLimit, (req, res) => {
 router.post('/summary', aiLimit, async (req, res) => {
   try {
     const b = isObj(req.body) ? req.body : {};
-    const [from, to] = rangeOf(b);
+    const [from, to] = rangeOf(b, req.today);
     const keys = Array.isArray(b.metrics) ? b.metrics.filter(k => typeof k === 'string').slice(0, 40) : [];
     if (!keys.length) throw fail('Pick at least one metric');
     const text = summaryText(series(req.user, from, to), keys, from, to);
