@@ -15,9 +15,10 @@ const TYPES_IN = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
 /* Each kind of AI task can use its own OpenRouter model; one left blank uses the default model.
    max: the output cap (tokens) sent when the caller gives none; wait: how long to wait for the reply (ms). */
 const MIN = 60000;
-/* A file read (file: true) waits 2 minutes for its answer, or 2½ when it runs in the background (jobs.js); every other task has
-   to get its answer's first byte within FIRST_BYTE as well as the whole of it within wait. */
-const FILE_WAIT = 2 * MIN, BG_WAIT = 2.5 * MIN, FIRST_BYTE = 45000;
+/* A file read (file: true) waits 3 minutes for its answer, or 5 when it runs in the background (jobs.js): a long plan reply
+   (12,000 tokens at 40–60 a second) can take 200–300 s, and the request isn't streamed, so nothing arrives before the end.
+   Every other task has to get its answer's first byte within FIRST_BYTE as well as the whole of it within wait. */
+const FILE_WAIT = 3 * MIN, BG_WAIT = 5 * MIN, FIRST_BYTE = 45000;
 const TASKS = {
   plan: { name: 'Meal plan import', hint: 'Reads a coach’s PDF or photo – needs a model that reads PDFs', max: 12000, wait: FILE_WAIT, file: true },
   workout: { name: 'Workout plan import', hint: 'Reads a PDF or photo of a training plan – needs a model that reads PDFs', max: 8000, wait: FILE_WAIT, file: true },
@@ -425,7 +426,7 @@ async function send(c, t, o, system, content, maxTokens, wait, task) {
     const timedOut = signal.aborted && (signal.reason || {}).name === 'TimeoutError';
     if (timedOut) console.error(`AI request timed out (${c.model}, ${task || 'no task'})`);
     if (e.big) { console.error(`AI reply over ${LIMITS.maxReply} bytes (${c.model}, ${task || 'no task'})`); throw fail('other', 'The AI reply was too large', 502); }
-    if (timedOut) throw fail('fail', slow, 502);
+    if (timedOut) throw fail(t.file ? 'other' : 'fail', slow, 502);   /* a long file read running out of time isn't an outage */
     throw fail('fail', r ? 'The AI reply was cut off – try again' : 'Couldn’t reach OpenRouter', 502, { detail: `${r ? 'reply cut off' : 'no connection'}: ${e.message}` });
   }
   let j;

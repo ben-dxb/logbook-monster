@@ -207,8 +207,21 @@ test('a 429 opens it at once for its Retry-After (2 minutes at most); a refused 
   assert.deepStrictEqual((await text()).reply, { ok: true });
 });
 
-test('a background read gets 150 s, a waited-for one 120 s', () => {
+test('a waited-for file read gets 3 minutes, one in the background 5', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'server', 'ai.js'), 'utf8');
-  assert.match(src, /FILE_WAIT = 2 \* MIN, BG_WAIT = 2\.5 \* MIN/);
+  assert.match(src, /FILE_WAIT = 3 \* MIN, BG_WAIT = 5 \* MIN/);
   assert.match(src, /s && s\.bg \? BG_WAIT : FILE_WAIT/);
+});
+
+test('file reads running out of time never open the breaker for the other tasks; text-task timeouts do', async () => {
+  mode = 'hang';
+  for (let i = 0; i < 8; i++) {
+    await assert.rejects(ai.ask('system', Buffer.from('%PDF-1.4 x'), 'application/pdf', 'plan', { task: 'plan', timeout: 100 }), e => e.status === 502);
+  }
+  assert.strictEqual(ai.breaker.state, 'closed', 'eight slow file reads: still closed');
+  mode = 'ok';
+  assert.deepStrictEqual((await text()).reply, { ok: true }, 'a food fill still goes through');
+  mode = 'hang';
+  for (let i = 0; i < 5; i++) await assert.rejects(text({ timeout: 100 }), e => e.status === 502);
+  assert.strictEqual(ai.breaker.state, 'open', 'five text-task timeouts open it');
 });
