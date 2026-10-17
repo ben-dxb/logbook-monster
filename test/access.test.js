@@ -272,7 +272,7 @@ const ROUTES = [
   { key: 'PUT /api/gym/workouts/:id', u: () => `/api/gym/workouts/${c.w1}`, body: () => ({ name: 'hijack', items: [] }), own: [{ expect: [404, 403] }] },
   { key: 'DELETE /api/gym/workouts/:id', u: () => `/api/gym/workouts/${c.w1}`, own: NOOP },
   { key: 'PUT /api/gym/order', body: () => ({ ids: [c.w2, c.w1] }), made: () => ({ ids: [999998, 999999] }), own: NOOP },
-  { key: 'GET /api/gym/sets', u: () => `/api/gym/sets?exercise=${c.ex1}`, own: [{ check: r => assert.deepStrictEqual(r.body, []) },
+  { key: 'GET /api/gym/sets', u: () => `/api/gym/sets?exercise=${c.ex1}`, own: [{ check: r => assert.deepStrictEqual([r.body.sets, r.body.stats.n], [[], 0]) },
     { u: () => `/api/gym/sets?date=${DATE}`, check: r => assert.deepStrictEqual(r.body, []) }] },
   { key: 'GET /api/gym/sets/:id', u: () => `/api/gym/sets/${c.set}`, own: [{ expect: [404] }] },
   { key: 'POST /api/gym/sets', body: () => ({ exercise: c.ex1, reps: 1, kg: 1, at: `${DATE}T09:00` }), own: [{ expect: [400, 404] }] },
@@ -360,7 +360,7 @@ const ROUTES = [
   { key: 'POST /api/jobs/away', own: SELF },
   /* server/shares.js – the coach's side, and the timeline and photo routers mounted under it */
   { key: 'GET /coach/:token/api/info', scope: 'coach', check: r => assert.strictEqual(r.body.name, 'ann') },
-  { key: 'GET /coach/:token/api/defaults', scope: 'coach', check: r => assert.strictEqual(r.body.mine.plan.R[0].name, 'annmark later bowl') },
+  { key: 'GET /coach/:token/api/defaults', scope: 'coach', check: r => assert.deepStrictEqual(r.body.myVersions.map(v => [v.from, v.plan.R[0].name]), [[null, 'annmark bowl'], [FROM, 'annmark later bowl']]) },
   { key: 'GET /coach/:token/api/days', scope: 'coach', check: r => assert.deepStrictEqual(r.body.map(d => d.tname), ['annmark day']) },
   { key: 'GET /coach/:token/api/weights', scope: 'coach', check: r => assert.deepStrictEqual(r.body, [{ date: DATE, kg: 81.37 }]) },
   { key: 'GET /coach/:token/api/timeline/day/:date', scope: 'coach', check: r => {

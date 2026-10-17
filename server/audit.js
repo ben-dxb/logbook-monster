@@ -20,11 +20,11 @@ const inList = l => l.map(e => `'${e}'`).join(', ');
 /* the events a person sees for their own account on Account admin */
 const OWN = ['signin.ok', 'signin.failed', 'signin.locked', 'second.asked', 'second.failed', 'second.locked', 'recovery.used',
   'twostep.on', 'twostep.off', 'recheck.failed', 'signout', 'password.changed', 'google.linked', 'invite.accepted',
-  'export', 'photos.deleted', 'coach.created', 'coach.off', 'coach.used'];
+  'export', 'photos.deleted', 'photo.deleted', 'coach.created', 'coach.off', 'coach.used'];
 const EVENTS = ['signin.ok', 'signin.failed', 'signin.locked', 'signin.alert', 'second.asked', 'second.failed', 'second.locked',
   'recovery.used', 'twostep.on', 'twostep.off', 'recheck.ok', 'recheck.failed', 'signout', 'password.changed', 'google.linked',
   'invite.created', 'invite.accepted', 'account.removed', 'account.deleted', 'ai.settings', 'email.settings', 'options.changed', 'export',
-  'day.deleted', 'checklist.reset', 'photos.deleted', 'food.removed', 'supp.removed', 'coach.created', 'coach.off', 'coach.used', 'ai.cap'];
+  'day.deleted', 'checklist.reset', 'photos.deleted', 'photo.deleted', 'food.removed', 'supp.removed', 'coach.created', 'coach.off', 'coach.used', 'ai.cap'];
 
 const q = {
   add: db.prepare('INSERT INTO audit (at, user_id, actor_id, event, ip, detail) VALUES (?, ?, ?, ?, ?, ?)'),

@@ -37,7 +37,8 @@ const q = {
   put: db.prepare('UPDATE photos SET date = ?, pose = ?, style = ?, pose_ai = ?, note = ?, updated_at = ? WHERE user_id = ? AND id = ?'),
   /* the AI's pose: only while the pose is still the one the request was asked about, or still the AI's – never over a hand edit made meanwhile */
   aiPose: db.prepare('UPDATE photos SET pose = ?, style = ?, pose_ai = 2, updated_at = ? WHERE user_id = ? AND id = ? AND (pose_ai > 0 OR (pose = ? AND style = ?))'),
-  thumb: db.prepare('UPDATE photos SET thumb = ?, thumb_size = ? WHERE user_id = ? AND id = ?'),
+  /* only while the thumbnail is still the one read: of replacements made at the same time one wins, the others delete their own file */
+  thumb: db.prepare('UPDATE photos SET thumb = ?, thumb_size = ? WHERE user_id = ? AND id = ? AND thumb IS ?'),
   del: db.prepare('DELETE FROM photos WHERE user_id = ? AND id = ?'),
   delRange: db.prepare('DELETE FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? RETURNING file, thumb'),
   all: db.prepare('SELECT id, date, pose, style, pose_ai, note, size, created_at AS created FROM photos WHERE user_id = ? ORDER BY date, id'),
@@ -201,13 +202,17 @@ router.put('/:id/thumb', uploadLimit, rawImage(MAX_THUMB), async (req, res) => {
     if (!row) throw fail('No such photo', 404);
     if (sniff(req.body) !== 'image/jpeg') throw fail('The thumbnail must be a JPEG');
     const file = newName('.jpg'), bytes = cleanJpeg(req.body);
-    const release = reserve(req.user.id, 0, bytes.length - row.thumb_size);
+    /* the old file stays on disk until the swap, so the new one counts in full while it is written */
+    const release = reserve(req.user.id, 0, bytes.length);
+    let swapped = false;
     try {
       await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 });
-      if (!q.thumb.run(file, bytes.length, req.user.id, id).changes) { unlink(file); throw fail('No such photo', 404); }   /* deleted meanwhile */
-    } finally { release(); }
-    unlink(row.thumb);
-    res.json(view(q.get.get(req.user.id, id)));
+      swapped = q.thumb.run(file, bytes.length, req.user.id, id, row.thumb).changes > 0;
+    } catch (e) { unlink(file); throw e; } finally { release(); }
+    unlink(swapped ? row.thumb : file);      /* whichever lost */
+    const now = q.get.get(req.user.id, id);
+    if (!now) throw fail('No such photo', 404);   /* deleted meanwhile */
+    res.json(view(now));                        /* not swapped: another replacement got there first, and its thumbnail stands */
   } catch (e) { send(res, e); }
 });
 
@@ -244,7 +249,10 @@ router.delete('/', (req, res) => {
 
 router.delete('/:id', (req, res) => {
   const id = idOf(req.params.id), row = q.files.get(req.user.id, id);
-  if (row) { q.del.run(req.user.id, id); unlink(row.file); unlink(row.thumb); }
+  if (row && q.del.run(req.user.id, id).changes) {
+    unlink(row.file); unlink(row.thumb);
+    audit.log(req, 'photo.deleted', { id });
+  }
   res.json({ ok: true });
 });
 
