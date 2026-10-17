@@ -137,6 +137,7 @@ router.use(rateLimit({
   message: { error: 'That’s a lot of saving in a short time – wait a few minutes and try again.' },
 }));
 
+/* Carries the CSRF token: never echo request text into this answer (with proxy compression that would open it to BREACH). */
 router.get('/me', (req, res) => {
   res.json({ id: req.user.id, email: req.user.email, name: req.user.name, hasPassword: !!req.user.password_hash,
     google: !!req.user.google_sub, totp: twostep.isOn(req.user.id), admin: defaults.isAdmin(req.user), ai: ai.status().configured, ...options(), csrf: csrfToken(req, res) });
@@ -349,7 +350,14 @@ const EXPORT_DAYS = 200;
 const breathe = () => new Promise(r => setImmediate(r));
 router.get('/export', exportLimit, async (req, res) => {
   const user = req.user;
-  const write = str => (res.write(str) ? null : new Promise(r => {
+  /* The first 512+ bytes go out as one write: a proxy compressing a chunked answer (Caddy's encode, minimum_length 512)
+     decides from the first chunk, and a short one ('{"exported":…') left the whole file uncompressed (p6-01). */
+  let head = '';
+  const write = str => {
+    if (head !== null) { head += str; if (head.length < 512) return null; str = head; head = null; }
+    return send(str);
+  };
+  const send = str => (res.write(str) ? null : new Promise(r => {
     const go = () => { res.off('drain', go); res.off('close', go); r(); };
     res.on('drain', go); res.on('close', go);
   }));
@@ -386,7 +394,7 @@ router.get('/export', exportLimit, async (req, res) => {
       }
       await write(']');
     }
-    res.end('}');
+    res.end(head === null ? '}' : head + '}');
   } catch (e) {
     console.error(e);
     if (!res.headersSent) res.status(500).json({ error: 'Something went wrong' }); else res.destroy();
