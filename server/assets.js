@@ -17,7 +17,8 @@ const IMMUTABLE = 'public, max-age=31536000, immutable';
 const ASSET = /\.(js|css|svg)$/;
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 
-function create(dir, { live = false } = {}) {
+/* fill: { 'page.html': html => html } – a page's own last step (the privacy page puts in who runs the app) */
+function create(dir, { live = false, fill = {} } = {}) {
   let files = new Map();   /* name → { hash, size, mtime } */
   const pages = new Map();   /* name → { html, etag, from } */
   function scan() {
@@ -44,8 +45,9 @@ function create(dir, { live = false } = {}) {
     const st = live ? fs.statSync(path.join(dir, name)).mtimeMs : 0;
     let p = pages.get(name);
     if (!p || stale || p.from !== st) {
-      const html = fs.readFileSync(path.join(dir, name), 'utf8')
+      let html = fs.readFileSync(path.join(dir, name), 'utf8')
         .replace(/\b(src|href)="\/([A-Za-z0-9._-]+)"/g, (m, attr, file) => (files.has(file) ? `${attr}="${url(file)}"` : m));
+      if (fill[name]) html = fill[name](html);
       p = { html, etag: `"${sha(html).slice(0, 27)}"`, from: st };
       pages.set(name, p);
     }

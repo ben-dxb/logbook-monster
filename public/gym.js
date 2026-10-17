@@ -10,6 +10,7 @@ let gSessions=null, gArgs=[], gTok=0, gTimer=null, gBackE='#gym', gStale=false, 
 let gCsv=null;                    /* a history CSV being checked: {file, text, res, dateOrder, unit, busy, done, total} */
 let gDraft=null, gAi=null, gMsg='', gReorder=false, gTab='sets', gShow=30, gQuick=null;
 let gPick={q:'',part:''}, gTagBusy='', gTagMsg='', gExOpen=false;   /* the exercise picker's search and body-part filter; AI tagging */
+let gKeep=null;                   /* 'e/5', 'w/3': the next page shows a change just made here from what's loaded, without reading it all again first */
 
 /* ---------- helpers ---------- */
 const exById=id=>GY&&GY.exercises.find(e=>e.id===id);
@@ -60,10 +61,19 @@ async function gTagAi(ids){
 function gHead(back,title,extra){return `<div class="gbar"><a class="nav" href="${esc(back)}" aria-label="Back">‹</a><h2>${esc(title)}</h2>${extra||''}</div>`;}
 
 async function gLoad(){const ai=GY?GY.ai:false;GY=await api('GET','/api/gym');gReadAt=Date.now();if(GY.ai==null)GY.ai=ai;}
-async function gSetsOf(id){if(!GSETS[id]||isStale(GREAD['e'+id])){GSETS[id]=(await api('GET','/api/gym/sets?exercise='+id))||[];GREAD['e'+id]=Date.now();}return GSETS[id];}
+async function gSetsOf(id,kept){if(!GSETS[id]||!kept&&isStale(GREAD['e'+id])){GSETS[id]=(await api('GET','/api/gym/sets?exercise='+id))||[];GREAD['e'+id]=Date.now();}return GSETS[id];}
 async function gSetsOn(d){if(!GDAY[d]||isStale(GREAD['d'+d])){GDAY[d]=(await api('GET','/api/gym/sets?date='+d))||[];GREAD['d'+d]=Date.now();}return GDAY[d];}
 /* after a set changes: counts on the list pages and the per-day caches are out of date */
 function gChanged(){gSessions=null;Object.keys(GDAY).forEach(k=>delete GDAY[k]);}
+/* a set saved, moved or deleted: put it in (or take it out of) the exercise's loaded sets and its count, from the server's reply */
+const gOrder=(a,b)=>a.at<b.at?-1:a.at>b.at?1:a.id-b.id;
+function gCount(id){const e=exById(id),l=GSETS[id];if(e&&l){e.sets=l.length;e.last=l.length?l[l.length-1].at:null;}}
+function gPut(s){const l=GSETS[s.e];
+  if(l){l.push(s);l.sort(gOrder);gCount(s.e);}
+  else{const e=exById(s.e);if(e){e.sets++;if(!e.last||s.at>e.last)e.last=s.at;}}}
+function gDropSet(id){let found=false;
+  for(const k in GSETS){const i=GSETS[k].findIndex(s=>s.id===id);if(i>=0){GSETS[k].splice(i,1);gCount(+k);found=true;}}
+  if(!found)gReadAt=0;}   /* its exercise's count is read again on the next page */
 
 /* A set's strength score for 🏆: the estimated 1RM of a weighted set; an assisted (negative kg) or bodyweight set of 1–20 reps
    scores its weight the other way round (kg ÷ (1 + reps/30), never above 0), so less assistance – or more reps on the same – is progress,
@@ -80,9 +90,10 @@ function gAnalyse(sets){
 
 /* ---------- routing ---------- */
 async function renderGym(args){
-  if(args){gArgs=args;if(!gTagBusy)gTagMsg='';if(args[0]==='e')delete GSETS[+args[1]];}   /* opening an exercise reads its sets again: another tab may have logged some */
+  const keep=gKeep;gKeep=null;
+  if(args){gArgs=args;if(!gTagBusy)gTagMsg='';if(args[0]==='e'&&keep!==args.slice(0,2).join('/'))delete GSETS[+args[1]];}   /* opening an exercise reads its sets again: another tab may have logged some */
   if(view!=='gym')return;
-  const tok=++gTok, box=$('#g-body'), [p,a,b]=gArgs;
+  const tok=++gTok, box=$('#g-body'), [p,a,b]=gArgs, kept=!!GY&&keep===gArgs.slice(0,2).join('/');
   clearInterval(gTimer);gTimer=null;
   document.querySelectorAll('#g-tabs a').forEach(x=>{const on=x.dataset.g===(p==='sessions'||p==='d'?'sessions':p==='x'?'x':'');
     if(on)x.setAttribute('aria-current','page');else x.removeAttribute('aria-current');});
@@ -91,12 +102,12 @@ async function renderGym(args){
   if(p!=='new'&&!(p==='w'&&b==='edit'))gDraft=null;
   try{
     if(!GY){box.innerHTML='<p class="note">Loading…</p>';await gLoad();}
-    else if(gStale||isStale(gReadAt)&&p!=='new'&&!(p==='w'&&b==='edit')||(p==='w'||p==='e')&&a&&!(p==='w'?GY.workouts.some(w=>w.id===+a):exById(+a)))await gLoad();   /* made in another tab? */
-    gStale=false;
+    else if(!kept&&(gStale||isStale(gReadAt))&&p!=='new'&&!(p==='w'&&b==='edit')||(p==='w'||p==='e')&&a&&!(p==='w'?GY.workouts.some(w=>w.id===+a):exById(+a)))await gLoad();   /* made in another tab? */
+    if(!kept)gStale=false;
     let html;
     if(p==='new'||(p==='w'&&b==='edit'))html=gEditPage(p==='new'?null:+a);
     else if(p==='w')html=await gWorkoutPage(+a);
-    else if(p==='e')html=await gExercisePage(+a);
+    else if(p==='e')html=await gExercisePage(+a,kept);
     else if(p==='s')html=await gSetPage(+a);
     else if(p==='sessions'){if(!gSessions||isStale(GREAD.s)){gSessions=await api('GET','/api/gym/sessions');GREAD.s=Date.now();}html=gSessionsPage();}
     else if(p==='d')html=await gDayPage(a);
@@ -214,15 +225,18 @@ async function gSaveDraft(){
   try{   /* new exercises go by name: the server makes them only if it takes the whole workout */
     const body={name:D.name,description:D.description,items:D.items.map(i=>i.e?{e:i.e,target:i.target}:{name:i.name,target:i.target})};
     const r=D.id==null?await api('POST','/api/gym/workouts',body):await api('PUT','/api/gym/workouts/'+D.id,body,D.ver);
-    gDraft=null;await gLoad();go('gym/w/'+r.id);
-  }catch(e){if(!e.signedOut){await gLoad().catch(()=>{});msg.textContent=e.message;}}
+    gDraft=null;
+    if(!r.workout||body.items.some(i=>i.e==null))await gLoad();   /* new exercises: their ids come with the list */
+    else{const ws=GY.workouts,ix=ws.findIndex(w=>w.id===r.id);if(ix<0)ws.push(r.workout);else ws[ix]=r.workout;gKeep='w/'+r.id;}
+    go('gym/w/'+r.id);
+  }catch(e){if(!e.signedOut){msg.textContent=e.message;gLoad().catch(()=>{});}}
 }
 
 /* ---------- one exercise: sets, chart, records, and the bar to log a set ---------- */
-async function gExercisePage(id){
+async function gExercisePage(id,kept){
   const e=exById(id);
   if(!e)return gHead(gBackE,'Exercise')+gEmpty('This exercise doesn’t exist any more.');
-  const sets=await gSetsOf(id), A=gAnalyse(sets), last=sets[sets.length-1];
+  const sets=await gSetsOf(id,kept), A=gAnalyse(sets), last=sets[sets.length-1];
   if(!gQuick||gQuick.e!==id)gQuick={e:id,reps:last?last.reps:8,kg:last?last.kg:20,note:''};
   const tabs=[['sets','Sets'],['chart','Chart'],['records','Records']].map(([t,n])=>`<button type="button" data-g="tab" data-t="${t}" aria-pressed="${gTab===t}">${n}</button>`).join('');
   let body;
@@ -233,10 +247,10 @@ async function gExercisePage(id){
     body=days.length?`<div class="gdays">${days.slice(0,gShow).map((d,di)=>{const ss=A.days.get(d), prev=A.days.get(days[di+1]);
       const cmp=(v,ix,k)=>{const p=prev&&prev[ix];return !p||v===p[k]?'':v>p[k]?' up':' down';};
       return `<section class="gday"><h3><a href="#gym/d/${d}">${esc(dayLabel(d))} ›</a>${A.volPr.has(d)?'<span class="chip gvol">🏆 Volume</span>':''}</h3>
-        ${ss.map((s,ix)=>{const isPr=A.pr.has(s.id);return `<a class="gset" href="#gym/s/${s.id}"><span class="gi">${ix+1}</span>
+        ${ss.map((s,ix)=>{const isPr=A.pr.has(s.id);return `${s.tmp?'<div class="gset" aria-busy="true" title="Saving…">':`<a class="gset" href="#gym/s/${s.id}">`}<span class="gi">${ix+1}</span>
           <span class="gtm">${ix?`<span class="grest">+${fmtDur(atMs(s.at)-atMs(ss[ix-1].at))}</span>`:esc(s.at.slice(11,16))}${isPr?` <span class="gtro" title="${s.kg>0?'Best estimated 1RM so far':'Least assistance so far'}">🏆</span>`:''}</span>
           <span class="gnum${isPr?' pr':cmp(s.reps,ix,'reps')}">${s.reps}<small>rep</small></span><span class="gnum${isPr?' pr':cmp(s.kg,ix,'kg')}">${kgTxt(s.kg)}<small>kg</small></span><i class="gch">›</i>
-          ${s.note?`<span class="gnote">${esc(s.note)}</span>`:''}</a>`;}).join('')}</section>`;}).join('')}
+          ${s.note?`<span class="gnote">${esc(s.note)}</span>`:''}${s.tmp?'</div>':'</a>'}`;}).join('')}</section>`;}).join('')}
       ${days.length>gShow?`<button class="ghost" type="button" data-g="more">Show older sets</button>`:''}</div>`
       :gEmpty('No sets yet – log your first one below.');
   }
@@ -412,15 +426,29 @@ async function gLogSet(){
   const Q=gQuick, reps=+$('#g-reps').value, kg=+$('#g-kg').value, note=$('#g-note').value.trim();
   if(!fieldErrors($('#g-quick'),[[(!Number.isInteger(reps)||reps<0||reps>1000||$('#g-reps').value==='')&&$('#g-reps'),'Reps must be a whole number from 0 to 1000'],
     [(!Number.isFinite(kg)||$('#g-kg').value==='')&&$('#g-kg'),'Enter a weight (0 for bodyweight)']]))return;
-  const btn=$('#g-quick .gok'),undo=busyOn(btn,'Logging…');
-  try{
-    const s=await api('POST','/api/gym/sets',{exercise:Q.e,reps,kg,note,at:nowAt()});
-    (GSETS[Q.e]=GSETS[Q.e]||[]).push(s);
-    const e=exById(Q.e);if(e){e.sets++;e.last=s.at;}
-    Object.assign(Q,{reps,kg,note:''});gChanged();
-    if(gTab!=='sets')gTab='sets';
-    await renderGym();
-  }catch(err){undo();if(!err.signedOut&&!errToField(err,[[/^reps/i,$('#g-reps')],[/^weight/i,$('#g-kg')],[/note/i,$('#g-note')]]))alert('Couldn’t log the set: '+err.message);}
+  /* shown at once as "Saving…", swapped for the server's set (and its 🏆) when it lands; a double tap on the same set adds it once,
+     the next set goes straight away */
+  const key=[Q.e,reps,kg,note].join('|');if(gSending.has(key))return;gSending.add(key);
+  const t={id:1e15+(++gTmp),e:Q.e,reps,kg,note,at:nowAt(),updated:null,tmp:true};
+  gPut(t);Object.assign(Q,{reps,kg,note:''});gChanged();
+  if(gTab!=='sets')gTab='sets';
+  gShowSets(t.e);
+  let failed=null;
+  try{const s=await api('POST','/api/gym/sets',{exercise:t.e,reps,kg,note,at:t.at});
+    gDropSet(t.id);if(!(GSETS[s.e]||[]).some(x=>x.id===s.id))gPut(s);gChanged();}
+  catch(err){gDropSet(t.id);if(!err.signedOut)failed=err;}
+  gSending.delete(key);
+  await gShowSets(t.e);
+  if(failed)noteBy(view==='gym'&&gArgs[0]==='e'&&+gArgs[1]===t.e?$('#g-quick .gok'):null,`Couldn’t log ${reps} × ${kgTxt(kg)} kg: ${endStop(failed.message)}`,()=>{
+    if(!exById(t.e))return;if(gArgs[0]!=='e'||+gArgs[1]!==t.e){go('gym/e/'+t.e);return;}
+    $('#g-reps').value=reps;$('#g-kg').value=kgTxt(kg);$('#g-note').value=note;Object.assign(gQuick,{reps,kg,note});gLogSet();});
+}
+const gSending=new Set();let gTmp=0;
+/* the exercise's page again from what's loaded, keeping the box you're in */
+function gShowSets(id){
+  if(view!=='gym'||gArgs[0]!=='e'||+gArgs[1]!==id)return Promise.resolve();
+  const f=document.activeElement&&document.activeElement.id;gKeep='e/'+id;
+  return renderGym().then(()=>{if(f&&f.startsWith('g-')&&$('#'+f)&&document.activeElement===document.body)$('#'+f).focus();});
 }
 async function gAiRead(file){
   if(file.size>10*1024*1024){gMsg='That file is over 10 MB.';renderGym();return;}
@@ -450,15 +478,15 @@ document.addEventListener('click',async e=>{
   else if(g==='adj'){const el=$(b.dataset.f==='reps'?'#g-reps':'#g-kg');const v=Math.max(b.dataset.f==='reps'?0:-500,(+el.value||0)+ +b.dataset.d);
     el.value=b.dataset.f==='reps'?Math.round(v):kgTxt(v);gQuick[b.dataset.f]=+el.value;}
   else if(g==='reorder'){gReorder=!gReorder;renderGym();}
-  else if(g==='wup'||g==='wdown'){const ws=GY.workouts.slice(),j=g==='wup'?i-1:i+1;if(j<0||j>=ws.length)return;[ws[i],ws[j]]=[ws[j],ws[i]];
-    try{await api('PUT','/api/gym/order',{ids:ws.map(w=>w.id)});GY.workouts=ws;renderGym();}catch(err){if(!err.signedOut)alert(err.message);}}
+  else if(g==='wup'||g==='wdown')gMove(i,g==='wup'?i-1:i+1,g);
   else if(g==='iup'||g==='idown'){const it=gDraft.items,j=g==='iup'?i-1:i+1;if(j<0||j>=it.length)return;[it[i],it[j]]=[it[j],it[i]];renderGym();}
   else if(g==='idel'){gDraft.items.splice(i,1);renderGym();}
   else if(g==='wsave'){once(b,gSaveDraft);}
   else if(g==='wdel'){const D=gDraft;if(!await ask(`Delete the workout “${D.name}”? Your exercises and sets stay.`,{yes:'Delete workout',no:'Keep it',danger:true})||gDraft!==D)return;
     try{await api('DELETE','/api/gym/workouts/'+D.id);gDraft=null;await gLoad();go('gym');}catch(err){if(!err.signedOut)alert(err.message);}}
   else if(g==='sdel'){if(!await ask('Delete this set?',{yes:'Delete set',no:'Keep it',danger:true}))return;const id=+b.dataset.id,ex=+b.dataset.e;
-    try{await api('DELETE','/api/gym/sets/'+id);delete GSETS[ex];gChanged();await gLoad();go('gym/e/'+ex);}catch(err){if(!err.signedOut)alert(err.message);}}
+    once(b,async()=>{try{await api('DELETE','/api/gym/sets/'+id);gDropSet(id);gChanged();gKeep='e/'+ex;go('gym/e/'+ex);}
+      catch(err){if(!err.signedOut)$('#g-smsg').textContent='Couldn’t delete the set: '+err.message;}});}
   else if(g==='exdel'){const id=+gArgs[1],ex=exById(id);if(!ex||!await ask(`Delete ${ex.name} and all ${ex.sets} of its sets? This can’t be undone.`,{yes:'Delete exercise and sets',no:'Keep it',danger:true})||!exById(id))return;
     try{await api('DELETE','/api/gym/exercises/'+id);delete GSETS[id];gChanged();await gLoad();go('gym/x');}catch(err){if(!err.signedOut)alert(err.message);}}
   else if(g==='aiadd'){once(b,gAiAdd);}
@@ -492,14 +520,36 @@ document.addEventListener('change',e=>{
   else if(el.dataset.g==='aion'&&gAi){gAi.workouts[+el.dataset.i].on=el.checked;renderGym();}
   else if(el.dataset.g==='trend')gTrend(el);
 });
-/* "Trend": follow the exercise's e1RM on the Timeline's chart (switched on there too, so it shows straight away) */
-async function gTrend(el){
-  const id=+el.dataset.id, on=el.checked;el.disabled=true;
-  try{
-    const x=await api('PUT',`/api/gym/exercises/${id}/trend`,{on});const e=exById(id);if(e)e.trend=x.trend;
-    if(typeof tOn!=='undefined'){const k='ex:'+id;if(x.trend)tOn.add(k);else tOn.delete(k);tKeep();TL=null;}
-  }catch(err){el.checked=!on;if(!err.signedOut)alert(err.message);}
-  el.disabled=false;
+/* "Trend": follow the exercise's e1RM on the Timeline's chart (switched on there too, so it shows straight away). The box here and
+   the Timeline's exercise picker both go through gTrendSet: shown at once, saved one request at a time per exercise. */
+const gTrendBox=id=>document.querySelector(`#g-body input[data-g="trend"][data-id="${id}"]`)||document.querySelector(`#t-exlist input[data-tx="${id}"]`);
+const gTrendSet=optToggle({
+  send:async(id,on)=>{const x=await api('PUT',`/api/gym/exercises/${id}/trend`,{on});if(typeof tExSaved==='function')tExSaved(id,!!x.trend);},
+  show:(id,on)=>{const e=GY&&exById(id);if(e)e.trend=on?1:0;
+    document.querySelectorAll(`input[data-g="trend"][data-id="${id}"]`).forEach(x=>{x.checked=on;});
+    if(typeof tExShown==='function')tExShown(id,on);},
+  fail:(id,err)=>noteBy(gTrendBox(id),'Couldn’t change Trend: '+endStop(err.message),()=>{const b=gTrendBox(id);gTrendSet(id,b?!b.checked:true);}),
+});
+function gTrend(el){gTrendSet(+el.dataset.id,el.checked);}
+/* Moving a workout shows at once. The whole order goes, one request at a time – moves made meanwhile go when it returns – and a
+   failure puts back the order the server has. */
+const gOrd={srv:null,busy:false};
+async function gMove(i,j,g){
+  const ws=GY.workouts;if(j<0||j>=ws.length)return;
+  if(!gOrd.srv)gOrd.srv=ws.map(w=>w.id);
+  [ws[i],ws[j]]=[ws[j],ws[i]];gHomeAgain(`[data-g="${g}"][data-i="${j}"]`);
+  if(gOrd.busy)return;gOrd.busy=true;
+  const ids=()=>GY.workouts.map(w=>w.id);
+  try{while(ids().join()!==gOrd.srv.join()){const now=ids();await api('PUT','/api/gym/order',{ids:now});gOrd.srv=now;}}
+  catch(err){const pos=new Map(gOrd.srv.map((id,k)=>[id,k]));GY.workouts.sort((a,b)=>(pos.get(a.id)??1e9)-(pos.get(b.id)??1e9));
+    gHomeAgain();if(!err.signedOut)noteBy($('#g-body .glist')||null,'Couldn’t save the new order – it’s back as it was: '+endStop(err.message));}
+  gOrd.srv=null;gOrd.busy=false;
+}
+/* My workouts again from what's loaded (no reading it again), focus kept on the arrow you used */
+function gHomeAgain(sel){
+  if(view!=='gym'||gArgs[0])return;
+  $('#g-body').innerHTML=gHomePage();
+  let b=sel&&$('#g-body '+sel);if(b&&b.disabled)b=b.parentNode.querySelector('button:not([disabled])');if(b)b.focus();
 }
 document.addEventListener('submit',async e=>{
   const f=e.target;if(view!=='gym'||!f.id||!f.id.startsWith('g-'))return;
@@ -526,7 +576,7 @@ async function gSubmit(f){
     const body={exercise:+$('#g-se').value,reps:+$('#g-sr').value,kg:+$('#g-sk').value,note:$('#g-sn').value,at:`${$('#g-sd').value}T${t.length===5?t+':00':t}`};
     const old=Object.keys(GSETS).find(k=>GSETS[k].some(s=>s.id===id));
     try{const s=await api('PUT','/api/gym/sets/'+id,body,f.dataset.ver||null);   /* changed (or deleted) in another tab since: 409 / 404 */
-      if(old)delete GSETS[old];delete GSETS[s.e];gChanged();await gLoad();go('gym/e/'+s.e);}
+      gDropSet(id);gPut(s);gChanged();gKeep='e/'+s.e;go('gym/e/'+s.e);}
     catch(err){if(err.signedOut)return;if(!errToField(err,[[/^reps/i,reps],[/^weight/i,kg],[/date and time/i,$('#g-sd')],[/exercise/i,$('#g-se')]]))$('#g-smsg').textContent=err.message;
       if(err.conflict||/No such/.test(err.message)){if(old)delete GSETS[old];gChanged();gLoad().catch(()=>{});}}}   /* the next look loads it as it is now */
 }

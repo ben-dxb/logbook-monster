@@ -19,6 +19,11 @@
 
   const code = new URLSearchParams(location.search).get('error');
   if (code) { showErr(ERRORS[code] || 'Sign-in failed.'); history.replaceState(null, '', '/login' + location.hash); }
+  /* after Account admin › Delete my account */
+  if (new URLSearchParams(location.search).has('bye')) {
+    $('intro').textContent = 'Your account and everything in it have been deleted. Goodbye – thanks for using Logbook Monster.';
+    history.replaceState(null, '', '/login');
+  }
   if (new URLSearchParams(location.search).has('second')) history.replaceState(null, '', '/login' + location.hash);
 
   /* the password (or Google) was right and the account has a second step on: ask for a code */
@@ -34,6 +39,7 @@
     csrf = c.csrf;
     $('google').hidden = $('or').hidden = !c.google;
     $('switch').hidden = !c.registration;
+    if (c.contact) { $('contact').href = 'mailto:' + c.contact; $('contact').hidden = false; }
     if (c.second) askCode();
   }).catch(() => showErr('Can’t reach the server.'));
 

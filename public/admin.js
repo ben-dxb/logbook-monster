@@ -730,6 +730,20 @@ $('#ad-pdel').addEventListener('submit',async e=>{
   catch(err){if(!err.signedOut)$('#ad-pdmsg').textContent=err.message;btn.disabled=!pdN;}
 });
 
+/* ---------- Delete my account: the email typed to confirm, password or code again (the recheck dialog), then signed out ---------- */
+$('#ad-del').addEventListener('submit',e=>{
+  e.preventDefault();const email=$('#ad-del-email').value.trim(),msg=$('#ad-delmsg');
+  msg.textContent='';
+  const same=x=>x.value.trim().toLowerCase()===String(ME).toLowerCase()?'':`Type your email (${ME}) exactly to confirm`;
+  if(same($('#ad-del-email')))return fieldError($('#ad-del-email'),same($('#ad-del-email')),{check:same});
+  once(e.target,async()=>{
+    try{await api('DELETE','/api/my/account',{email});}
+    catch(err){if(!err.signedOut&&!errToField(err,[[/email/i,$('#ad-del-email')]]))msg.textContent=err.message;return;}
+    pending.clear();try{localStorage.removeItem(stashKey());}catch{}
+    location.href='/login?bye=1';
+  },'Deleting…');
+});
+
 /* ---------- Daily checklist: the Dashboard's list (server/checklist.js) ---------- */
 let clDraft=null, clDirty=false;
 const CL_AUTO=[['','No'],['weight','When I log a weight'],['supps','When I log a supplement'],['gym','When I log a gym set']];
@@ -943,7 +957,7 @@ const LG_EV={'signin.ok':'Signed in','signin.failed':'Failed sign-in','signin.lo
   'second.asked':'Password right, code asked for','second.failed':'Wrong sign-in code','second.locked':'Sign-in code refused (locked)',
   'recovery.used':'Recovery code used','twostep.on':'Two-step sign-in on','twostep.off':'Two-step sign-in off','recheck.ok':'Confirmed it’s you',
   'recheck.failed':'Failed to confirm it’s you',signout:'Signed out','password.changed':'Password changed','google.linked':'Google linked','invite.created':'Invite made','invite.accepted':'Invite accepted',
-  'account.removed':'Account removed','ai.settings':'AI settings changed','email.settings':'Email settings changed','options.changed':'Options changed',
+  'account.removed':'Account removed','account.deleted':'Deleted their own account','ai.settings':'AI settings changed','email.settings':'Email settings changed','options.changed':'Options changed',
   export:'Data downloaded','day.deleted':'Day deleted','checklist.reset':'Checklist reset','photos.deleted':'Photos deleted','food.removed':'Shared food removed',
   'supp.removed':'Shared supplement removed','coach.created':'Coach link made','coach.off':'Coach link switched off','coach.used':'Coach link opened','ai.cap':'AI daily limit reached'};
 let LG=null, ML=null;

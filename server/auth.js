@@ -150,6 +150,7 @@ router.get('/config', (req, res) => {
     csrf: csrfToken(req, res),
     signedIn: !!req.session.userId && !refused(req),
     second: !req.session.userId && !!halfOf(req),
+    contact: config.contact,
   });
 });
 
@@ -201,7 +202,7 @@ router.post('/register', limiter, csrfProtect, needBody, async (req, res) => {
   const password = String(req.body.password || '');
   const name = String(req.body.name || '').trim().slice(0, 100) || null;
   if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
-  const problem = passwordProblem(password);
+  const problem = passwordProblem(password, email);
   if (problem) return res.status(400).json({ error: problem });
   if (!config.mayCreateAccount(email)) return res.status(403).json({ error: 'New accounts aren’t open for this email.' });
   const exists = () => {
@@ -242,7 +243,7 @@ router.post('/invite/accept', inviteLimiter, csrfProtect, needBody, async (req, 
   const inv = liveInvite(req.body.token);
   if (!inv) return res.status(404).json({ error: 'This invite link has expired or was already used. Ask for a new one.' });
   const password = String(req.body.password || '');
-  const problem = passwordProblem(password);
+  const problem = passwordProblem(password, inv.email);
   if (problem) return res.status(400).json({ error: problem });
   const name = String(req.body.name || '').replace(/\s+/g, ' ').trim().slice(0, 100);
   if (!users.claimInvite(String(req.body.token || ''), inv.user_id)) {
@@ -269,8 +270,8 @@ router.post('/logout', csrfProtect, (req, res) => {
   });
 });
 
-/* Changing the password signs the account out everywhere else and, unless endLinks is false, switches off
-   its live coach links. A Google-only account adding a first password must have signed in in the last 10 minutes. */
+/* Changing the password signs the account out everywhere else and, only when endLinks is true (the form's box, unticked by
+   default), switches off its live coach links. A Google-only account adding a first password must have signed in in the last 10 minutes. */
 const FRESH = 10 * 60 * 1000;
 router.post('/password', csrfProtect, requireAuth, limiter, async (req, res) => {
   const { current, next, endLinks } = req.body || {};
@@ -282,11 +283,11 @@ router.post('/password', csrfProtect, requireAuth, limiter, async (req, res) => 
   } else if (!(Date.now() - (req.session.at || 0) < FRESH)) {
     return res.status(403).json({ error: 'To add a password, sign out, sign in with Google again and add it within 10 minutes.' });
   }
-  const problem = passwordProblem(next);
+  const problem = passwordProblem(next, req.user.email);
   if (problem) return res.status(400).json({ error: problem });
   q.setPassword.run(await hashPassword(next), req.user.id);
   const signedOut = users.endSessions(req.user.id, req.sessionID);
-  const linksOff = endLinks === false ? 0 : q.endShares.run(req.user.id, new Date().toISOString()).changes;
+  const linksOff = endLinks !== true ? 0 : q.endShares.run(req.user.id, new Date().toISOString()).changes;
   await renew(req);
   audit.log(req, 'password.changed', { signedOut, linksOff });
   res.json({ ok: true, signedOut, linksOff });
