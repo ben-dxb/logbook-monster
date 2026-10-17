@@ -3,7 +3,6 @@
    "2 × 8–15"), and the sets you log against each exercise. Everything belongs to one account.
    Workout plans can be read from a PDF or photo with AI, checked in the browser, then imported. */
 const express = require('express');
-const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const ai = require('./ai');
 const jobs = require('./jobs');
@@ -184,16 +183,8 @@ function tidyWorkouts(raw, user) {
 }
 
 /* The OpenRouter key is the admin's, so each account gets a handful of reads an hour. */
-const partsLimit = rateLimit({
-  windowMs: 60 * 60 * 1000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false,
-  keyGenerator: req => 'u' + req.user.id,
-  message: { error: 'That’s a lot of AI tagging – wait a while and try again.' },
-});
-const aiLimit = rateLimit({
-  windowMs: 60 * 60 * 1000, limit: 12, standardHeaders: 'draft-7', legacyHeaders: false,
-  keyGenerator: req => 'u' + req.user.id,
-  message: { error: 'That’s a lot of AI reads – wait a while and try again.' },
-});
+const partsLimit = ai.limiter(30, 'That’s a lot of AI tagging – wait a while and try again.');
+const aiLimit = ai.limiter(12, 'That’s a lot of AI reads – wait a while and try again.');
 
 /* ---------- routes ---------- */
 const router = express.Router();
@@ -303,7 +294,7 @@ router.get('/sessions', send(req => q.sessions.all(req.user.id, Math.min(1000, +
   .map(r => ({ ...r, volume: Math.round(r.volume || 0), ex: String(r.ex || '').split(',').filter(Boolean).map(Number) }))));
 
 /* AI: read the file and hand back workouts to check. Nothing is saved until /import. ?bg=1 runs it in the background (server/jobs.js). */
-router.post('/ai-import', aiLimit, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), (req, res) => {
+router.post('/ai-import', aiLimit, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), ai.scope, (req, res) => {
   const buf = Buffer.isBuffer(req.body) ? req.body : null, type = String(req.get('content-type') || '').split(';')[0].trim();
   return jobs.respond(req, res, 'workout', () => ai.check(buf, type), async () => {
     const names = q.exercises.all(req.user.id).map(e => e.name);

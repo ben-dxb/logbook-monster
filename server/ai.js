@@ -2,6 +2,8 @@
 /* Reads a meal plan PDF (or photo) with a model on OpenRouter and turns it into an account's plan
    format: day templates with their meals, new foods, targets and the week. Nothing is saved here – the
    Account admin page loads the result into its draft so it can be checked before saving. */
+const { AsyncLocalStorage } = require('node:async_hooks');
+const rateLimit = require('express-rate-limit');
 const config = require('./config');
 const db = require('./db');
 const defaults = require('./defaults');
@@ -9,15 +11,23 @@ const defaults = require('./defaults');
 const DEFAULT_MODEL = 'anthropic/claude-sonnet-4.5';
 const BASE = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
 const TYPES_IN = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
-/* Each kind of AI task can use its own OpenRouter model; one left blank uses the default model. */
+/* Each kind of AI task can use its own OpenRouter model; one left blank uses the default model.
+   max: the output cap (tokens) sent when the caller gives none; wait: how long to wait for the reply (ms). */
+const MIN = 60000;
 const TASKS = {
-  plan: { name: 'Meal plan import', hint: 'Reads a coach’s PDF or photo – needs a model that reads PDFs' },
-  workout: { name: 'Workout plan import', hint: 'Reads a PDF or photo of a training plan – needs a model that reads PDFs' },
-  supps: { name: 'Supplement regime import', hint: 'Reads a PDF or photo of a supplement regime – needs a model that reads PDFs' },
-  food: { name: 'Food values', hint: 'Fills in blank calories and macros in the food library (text only)' },
-  pose: { name: 'Photo poses', hint: 'Tells front / side / back from a progress photo – needs a model that sees images' },
-  exercise: { name: 'Exercise body parts', hint: 'Tags exercises with the body parts they train (text only)' },
-  summary: { name: 'Timeline summary', hint: 'Writes the summary of trends on the Timeline (text only)' },
+  plan: { name: 'Meal plan import', hint: 'Reads a coach’s PDF or photo – needs a model that reads PDFs', max: 12000, wait: 3 * MIN },
+  workout: { name: 'Workout plan import', hint: 'Reads a PDF or photo of a training plan – needs a model that reads PDFs', max: 8000, wait: 3 * MIN },
+  supps: { name: 'Supplement regime import', hint: 'Reads a PDF or photo of a supplement regime – needs a model that reads PDFs', max: 4000, wait: 3 * MIN },
+  food: { name: 'Food values', hint: 'Fills in blank calories and macros in the food library (text only)', max: 800, wait: MIN },
+  pose: { name: 'Photo poses', hint: 'Tells front / side / back from a progress photo – needs a model that sees images', max: 300, wait: MIN },
+  exercise: { name: 'Exercise body parts', hint: 'Tags exercises with the body parts they train (text only)', max: 3000, wait: MIN },
+  summary: { name: 'Timeline summary', hint: 'Writes the summary of trends on the Timeline (text only)', max: 2000, wait: MIN },
+};
+const MAGIC = {
+  'application/pdf': b => b.subarray(0, 1024).includes('%PDF-'),
+  'image/png': b => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+  'image/jpeg': b => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  'image/webp': b => b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP',
 };
 const MODEL_RE = /^[\w.\-/:]{3,100}$/;
 
@@ -25,7 +35,36 @@ const q = {
   get: db.prepare("SELECT data FROM app_config WHERE key = 'openrouter'"),
   put: db.prepare(`INSERT INTO app_config (key, data, updated_by) VALUES ('openrouter', ?, ?)
     ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_by = excluded.updated_by, updated_at = datetime('now')`),
+  used: db.prepare('SELECT calls FROM ai_usage WHERE user_id = ? AND day = ?'),
+  usedAll: db.prepare('SELECT COALESCE(SUM(calls), 0) AS n FROM ai_usage WHERE day = ?'),
+  use: db.prepare('INSERT INTO ai_usage (user_id, day, calls) VALUES (?, ?, 1) ON CONFLICT(user_id, day) DO UPDATE SET calls = calls + 1'),
+  old: db.prepare('DELETE FROM ai_usage WHERE day < ?'),
 };
+
+/* Daily caps on AI calls (Super admin › Options, 0 = no limit), counted per UTC day in ai_usage. Every call goes
+   through call(), so every route is covered. Whose call it is comes from the request (scope() below). */
+const als = new AsyncLocalStorage();
+function scope(req, res, next) { req.ai = req.ai || { user: req.user, calls: 0 }; als.run(req.ai, next); }
+const appOptions = () => require('./api').appOptions();
+const capped = msg => Object.assign(new Error(msg), { status: 429 });
+function allow(take) {
+  const o = appOptions(), s = als.getStore(), user = s && s.user, day = new Date().toISOString().slice(0, 10);
+  if (o.aiDailyAll && q.usedAll.get(day).n >= o.aiDailyAll) throw capped('The app has used all of today’s AI – try again tomorrow');
+  if (user && !defaults.isAdmin(user) && o.aiDailyUser && ((q.used.get(user.id, day) || {}).calls || 0) >= o.aiDailyUser)
+    throw capped('You’ve used today’s AI allowance – try again tomorrow');
+  if (!take) return o;
+  q.use.run(user ? user.id : 0, day);
+  q.old.run(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));
+  if (s) s.calls++;
+  return o;
+}
+/* An hourly limit per account on a route that calls the AI. A request refused before any AI call (bad file, bad input,
+   cap reached, a read already running) doesn't count. */
+const limiter = (limit, message, more = {}) => rateLimit({
+  windowMs: 60 * 60 * 1000, limit, standardHeaders: 'draft-7', legacyHeaders: false,
+  keyGenerator: req => 'u' + req.user.id, message: { error: message },
+  skipFailedRequests: true, requestWasSuccessful: (req, res) => res.statusCode < 400 || !!(req.ai && req.ai.calls), ...more,
+});
 
 function stored() { const r = q.get.get(); return r ? JSON.parse(r.data) : {}; }
 /* A key saved on the Admin page wins over OPENROUTER_API_KEY in .env. */
@@ -169,16 +208,15 @@ function tidy(raw, foods) {
   return { ...out, notes };
 }
 
-/* One file plus instructions to the model; returns the JSON object in its reply. No output cap by default – a long
-   plan can take the model's whole output limit (and up to 10 minutes). A quick question about a picture can ask for a
-   shorter reply and wait less (opts.maxTokens, opts.timeout). opts.task picks the task's model. */
+/* One file plus instructions to the model; returns the JSON object in its reply. opts.task picks the task's model and,
+   unless opts.maxTokens / opts.timeout say otherwise, its output cap and how long to wait. */
 async function ask(system, buf, type, what, opts = {}) {
   check(buf, type);
   const data = `data:${type};base64,${buf.toString('base64')}`;
   const part = type === 'application/pdf'
     ? { type: 'file', file: { filename: `${what.replace(/\W+/g, '-')}.pdf`, file_data: data } }
     : { type: 'image_url', image_url: { url: data } };
-  return call(system, [{ type: 'text', text: `Here is the ${what}. Reply with the JSON only.` }, part], opts.maxTokens || null, opts.timeout || 600000, opts.task);
+  return call(system, [{ type: 'text', text: `Here is the ${what}. Reply with the JSON only.` }, part], opts.maxTokens, opts.timeout, opts.task);
 }
 
 /* What ask() needs before it can send a file – also checked up front when a read runs in the background. */
@@ -186,24 +224,28 @@ function check(buf, type) {
   if (!current().key) throw Object.assign(new Error('Add an OpenRouter API key first'), { status: 400 });
   if (!TYPES_IN.includes(type)) throw Object.assign(new Error('Upload a PDF or a PNG, JPEG or WebP image'), { status: 400 });
   if (!buf || !buf.length) throw Object.assign(new Error('The file is empty'), { status: 400 });
+  if (!MAGIC[type](buf)) throw Object.assign(new Error('That file isn’t a readable PDF or PNG, JPEG or WebP image'), { status: 400 });
+  allow(false);
 }
 
 /* Instructions plus text only (no file). */
 function askText(system, text, opts = {}) {
   if (!current().key) throw Object.assign(new Error('AI isn’t set up – the super admin can add an OpenRouter API key on the Super admin page'), { status: 400 });
-  return call(system, String(text), 2000, 60000, opts.task);
+  return call(system, String(text), opts.maxTokens, opts.timeout, opts.task);
 }
 
 async function call(system, content, maxTokens, timeout, task) {
-  const c = current(task);
+  const c = current(task), t = TASKS[task] || {};
+  const o = allow(true);
   let r, j;
   try {
     r = await fetch(`${BASE}/chat/completions`, {
       method: 'POST',
-      signal: AbortSignal.timeout(timeout),
+      signal: AbortSignal.timeout(timeout || t.wait || 3 * MIN),
       headers: { authorization: `Bearer ${c.key}`, 'content-type': 'application/json', 'HTTP-Referer': config.baseUrl, 'X-Title': 'Logbook Monster' },
       body: JSON.stringify({
-        model: c.model, temperature: 0, ...(maxTokens ? { max_tokens: maxTokens } : {}),
+        model: c.model, temperature: 0, max_tokens: maxTokens || t.max || 2000,
+        ...(o.aiPrivate ? { provider: { data_collection: 'deny' } } : {}),
         messages: [{ role: 'system', content: system }, { role: 'user', content }],
       }),
     });
@@ -222,7 +264,7 @@ async function call(system, content, maxTokens, timeout, task) {
   try { return { reply: parseReply(parts), model }; }
   catch (e) {
     console.error(`AI reply unusable (${model}, finish_reason ${choice.finish_reason}, ${String(parts || '').length} chars): ${e.message}`);
-    if (choice.finish_reason === 'length') throw unusable('The AI reply was longer than this model can write and got cut off – try a shorter file, or a model with a bigger output limit for this task on the Super admin page');
+    if (choice.finish_reason === 'length') throw unusable('The AI reply was longer than the app allows and got cut off – try a shorter file');
     if (!String(parts || '').trim()) throw unusable(`The AI (${String(model).slice(0, 100)}) sent back an empty reply – try again, or pick another model for this task on the Super admin page`);
     throw e;
   }
@@ -234,4 +276,4 @@ async function importPlan(buf, type, user) {
   return { ...tidy(reply, foods), model };
 }
 
-module.exports = { status, save, importPlan, ask, askText, check, TYPES_IN, TASKS };
+module.exports = { status, save, importPlan, ask, askText, check, scope, limiter, TYPES_IN, TASKS };

@@ -230,6 +230,18 @@ test('progress photos: the AI tags the pose, from the thumbnail, only when asked
   assert.strictEqual((await other('POST', `/api/photos/${p.id}/ai-pose`, { save: true })).status, 404);
   assert.strictEqual((await ann('POST', '/api/photos/999999/ai-pose', {})).status, 404);
   assert.strictEqual(aiSeen.length, n, 'nothing was sent to the AI');
+
+  /* refused pose requests (no such photo, no thumbnail) don't use up the hourly limit; one the AI answers does */
+  const left = async (url = '/api/photos/999999/ai-pose') => {
+    const r = await ann('POST', url, {});
+    return [r.status, +/remaining=(\d+)/.exec(r.headers.get('ratelimit'))[1]];
+  };
+  const bare = (await ann('POST', '/api/photos?date=2026-10-07&pose=other', jpeg('nothumb'))).body;
+  const [, start] = await left();
+  for (let i = 0; i < 5; i++) assert.deepStrictEqual(await left(), [404, start]);
+  assert.deepStrictEqual(await left(`/api/photos/${bare.id}/ai-pose`), [409, start]);
+  assert.deepStrictEqual(await left(`/api/photos/${p.id}/ai-pose`), [200, start]);
+  assert.deepStrictEqual(await left(), [404, start - 1]);
 });
 
 test('progress photos: delete every photo between two dates, only your own, files and all', async () => {

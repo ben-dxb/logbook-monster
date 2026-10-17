@@ -19,7 +19,9 @@ or Google.
   trained, **Exercises** is your library. **Read a workout plan with AI** sends your coach's PDF
   or a photo/screenshot to OpenRouter (the admin's key) and shows the workouts it found to check
   before adding them; exercises with the same name as yours keep their history. Each account can
-  run 12 AI reads an hour.
+  run 12 AI reads an hour, one file read at a time (meal plan, workout plan or supplement regime).
+  The super admin sets a daily cap on AI calls per account and for the whole app (Super admin ›
+  Options, default 100 and 1000, 0 = no limit); requests refused before reaching the AI don't count.
   **Import history from Setgraph (CSV)** (on Workouts and Exercises) reads a history export from
   Setgraph – or Strong, Hevy and most trackers, as columns are found by their headings – in the
   browser, shows what it found (sets, exercises, date range, rows it couldn't read, and asks

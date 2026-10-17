@@ -102,7 +102,7 @@ function renderAdmin(){
   $('#v-admin').classList.toggle('mine',mine);
   $('#v-admin').classList.toggle('nofiles',!planFiles);$('#ad-planfiles').checked=planFiles;
   if(!adAi)adAiLoad();
-  if(!mine){if(!adSuper){adSuper=true;auLoad();amLoad();}adTabs();return;}
+  if(!mine){if(!adSuper){adSuper=true;auLoad();amLoad();aoLoad();}adTabs();return;}
   if(!AD){adPick();adLoad();}
   if(!SH)shLoad();
   pbSync();
@@ -302,6 +302,20 @@ $('#ad-planfiles').addEventListener('change',async e=>{
   try{planFiles=(await api('PUT','/api/admin/options',{planFiles:el.checked})).planFiles;}
   catch(err){if(!err.signedOut)alert(err.message);}
   el.disabled=false;el.checked=planFiles;$('#v-admin').classList.toggle('nofiles',!planFiles);
+});
+/* super admin: private AI providers only, and the daily AI caps (0 = no limit) */
+function aoFill(o){$('#ad-aiprivate').checked=o.aiPrivate!==false;$('#ad-capuser').value=o.aiDailyUser;$('#ad-capall').value=o.aiDailyAll;}
+async function aoLoad(){try{aoFill(await api('GET','/api/admin/options'));}catch(e){}}
+$('#ad-aiprivate').addEventListener('change',async e=>{
+  const el=e.target;el.disabled=true;
+  try{aoFill(await api('PUT','/api/admin/options',{aiPrivate:el.checked}));}
+  catch(err){if(!err.signedOut)alert(err.message);aoLoad();}
+  el.disabled=false;
+});
+$('#ad-capform').addEventListener('submit',async e=>{
+  e.preventDefault();
+  try{aoFill(await api('PUT','/api/admin/options',{aiDailyUser:+$('#ad-capuser').value,aiDailyAll:+$('#ad-capall').value}));$('#ad-capmsg').textContent='Limits saved.';}
+  catch(err){if(!err.signedOut)$('#ad-capmsg').textContent=err.message;}
 });
 $('#ad-file').addEventListener('change',e=>{const el=e.target;adUpload(el.files&&el.files[0]).finally(()=>{el.value='';});});
 window.addEventListener('beforeunload',e=>{if(adDirty()){e.preventDefault();e.returnValue='';}});

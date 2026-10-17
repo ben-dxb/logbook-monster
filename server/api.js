@@ -1,6 +1,5 @@
 'use strict';
 const express = require('express');
-const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const { requireAuth, csrfProtect, csrfToken } = require('./auth');
 const defaults = require('./defaults');
@@ -35,14 +34,18 @@ const q = {
   putOptions: db.prepare(`INSERT INTO app_config (key, data, updated_by) VALUES ('options', ?, ?)
     ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_by = excluded.updated_by, updated_at = datetime('now')`),
 };
-/* App-wide switches the super admin sets. planFiles: the CSV / JSON plan upload and download buttons. */
-const OPTIONS = { planFiles: true };
+/* App-wide switches the super admin sets. planFiles: the CSV / JSON plan upload and download buttons. aiPrivate: ask
+   OpenRouter for providers that don't store or train on what they're sent. aiDailyUser / aiDailyAll: AI calls a day per
+   account / for the whole app (0 = no limit; server/ai.js). */
+const OPTIONS = { planFiles: true, aiPrivate: true, aiDailyUser: 100, aiDailyAll: 1000 };
+const MAX_CAP = 1000000;
+const optionOk = (k, v) => (typeof OPTIONS[k] === 'number' ? Number.isInteger(v) && v >= 0 && v <= MAX_CAP : typeof v === 'boolean');
 function options() {
   const r = q.getOptions.get();
   let o = {};
   try { o = r ? JSON.parse(r.data) : {}; } catch { o = {}; }
   const out = {};
-  for (const k of Object.keys(OPTIONS)) out[k] = typeof o[k] === 'boolean' ? o[k] : OPTIONS[k];
+  for (const k of Object.keys(OPTIONS)) out[k] = optionOk(k, o[k]) ? o[k] : OPTIONS[k];
   return out;
 }
 
@@ -73,6 +76,7 @@ const router = express.Router();
 router.use(requireAuth);
 router.use(express.json({ limit: '300kb' }));
 router.use(csrfProtect);
+router.use(ai.scope);
 
 router.get('/me', (req, res) => {
   res.json({ email: req.user.email, name: req.user.name, hasPassword: !!req.user.password_hash,
@@ -103,12 +107,8 @@ router.put('/admin/ai', adminOnly, (req, res) => {
   try { res.json(ai.save(req.body, req.user)); } catch (e) { bad(res, e.message); }
 });
 /* The OpenRouter key is the super admin's, so each account gets a handful of reads an hour. */
-const aiLimit = rateLimit({
-  windowMs: 60 * 60 * 1000, limit: 12, standardHeaders: 'draft-7', legacyHeaders: false,
-  keyGenerator: req => 'u' + req.user.id, skip: req => defaults.isAdmin(req.user),
-  message: { error: 'That’s a lot of AI reads – wait a while and try again.' },
-});
-router.post('/my/ai-import', aiLimit, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), readPlan);
+const aiLimit = ai.limiter(12, 'That’s a lot of AI reads – wait a while and try again.', { skip: req => defaults.isAdmin(req.user) });
+router.post('/my/ai-import', aiLimit, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), ai.scope, readPlan);
 
 /* Accounts: the list, inviting someone (emailed if email is set up) and removing an account. */
 const fail = (res, e) => { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); };
@@ -135,7 +135,7 @@ router.put('/admin/options', adminOnly, (req, res) => {
   const o = options();
   for (const [k, v] of Object.entries(req.body)) {
     if (!Object.hasOwn(OPTIONS, k)) return bad(res, `Unknown option "${k}"`);
-    if (typeof v !== 'boolean') return bad(res, `"${k}" must be true or false`);
+    if (!optionOk(k, v)) return bad(res, typeof OPTIONS[k] === 'number' ? `"${k}" must be a whole number from 0 to ${MAX_CAP}` : `"${k}" must be true or false`);
     o[k] = v;
   }
   q.putOptions.run(JSON.stringify(o), req.user.email);
@@ -241,4 +241,5 @@ router.get('/export', (req, res) => {
 
 router.use((req, res) => res.status(404).json({ error: 'Not found' }));
 
+router.appOptions = options;   /* for server/ai.js (daily caps, aiPrivate) */
 module.exports = router;

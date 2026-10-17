@@ -183,6 +183,10 @@ footer{font-size:12px;color:var(--muted)}
 #v-admin.mine .adapp,#v-admin.mine .adsuper,#v-admin:not(.mine) .admine{display:none}
 #v-admin.nofiles .adfiles{display:none}
 .adoptfiles{margin:8px 0}
+.adcaps{display:grid;grid-template-columns:repeat(2,minmax(0,10em)) auto;gap:6px;align-items:end;margin:6px 0}
+.adcaps input{width:100%}
+.adcaps .adcapnote,.adcaps [role=status]{grid-column:1/-1;margin:0}
+@media (max-width:480px){.adcaps{grid-template-columns:repeat(2,minmax(0,1fr))}.adcaps button{grid-column:1/-1;justify-self:start}}
 .adtpl{display:flex;flex-wrap:wrap;gap:8px;align-items:end}
 .adtpl .adtname{flex:1 1 220px;min-width:0}
 .adtpl .adtacts{display:flex;gap:8px;flex-wrap:wrap}
