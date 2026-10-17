@@ -22,10 +22,19 @@ const noBrowser = why => {
 };
 if (!chromium) noBrowser('Playwright is not installed');
 
-const [PORT] = require('../test/_ports').freePorts(1), BASE = `http://127.0.0.1:${PORT}`;
+const [PORT, AI_PORT] = require('../test/_ports').freePorts(2), BASE = `http://127.0.0.1:${PORT}`;
+/* Stands in for OpenRouter where a read isn't faked in the browser (the workout plan read, end to end through the background job) */
+const fakeAi = require('node:http').createServer((req, res) => {
+  req.resume();
+  req.on('end', () => {
+    const program = { workouts: [{ name: 'Smoke AI upper', description: '', exercises: [{ name: 'Smoke AI press', target: '3 × 8' }] }], notes: [] };
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ model: 'test/model', choices: [{ message: { content: JSON.stringify(program) } }] }));
+  });
+}).listen(AI_PORT, '127.0.0.1');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'logbook-monster-smoke-'));
 const env = { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', BASE_URL: BASE, DB_PATH: path.join(dir, 's.db'),
-  SESSION_SECRET: 'x'.repeat(40), AUTH_RATE_LIMIT: '1000', ALLOWED_EMAILS: '', ALLOW_REGISTRATION: 'false', GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: '' };
+  SESSION_SECRET: 'x'.repeat(40), AUTH_RATE_LIMIT: '1000', ALLOWED_EMAILS: '', ALLOW_REGISTRATION: 'false', GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: '', OPENROUTER_BASE_URL: `http://127.0.0.1:${AI_PORT}` };
 const node = [process.execPath, '--disable-warning=ExperimentalWarning'];
 const root = path.join(__dirname, '..');
 /* future days nobody has saved, inside the dates the app stores (up to a year ahead): two Mondays a week apart, and the
@@ -40,7 +49,7 @@ for (const w of [1100, 390]) execSync(`"${node[0]}" ${node[1]} scripts/create-us
 const srv = spawn(node[0], [node[1], 'server/index.js'], { cwd: root, env, stdio: 'ignore' });
 
 const fail = msg => { console.error('smoke FAILED:', msg); cleanup(); process.exit(1); };
-function cleanup() { srv.kill(); fs.rmSync(dir, { recursive: true, force: true }); }
+function cleanup() { srv.kill(); fakeAi.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
 const signIn = async p => { await p.fill('#email', 'smoke@example.com'); await p.fill('#password', 'smoke-password-1'); await p.click('#submit'); };
 const until = async (fn, ms = 5000) => { for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 100))) if (await fn()) return true; return !!(await fn()); };
@@ -928,6 +937,20 @@ async function recheck(browser) {
         expect(/Line 2: amount "1,500" could be 1500 or 1\.500/.test(await pg.textContent('#ad-upmsg')), 'an ambiguous amount should be reported');
         await pg.click('#ad-discard');
         await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
+        /* a JSON file with only meals (no template list) fills a template's meals and keeps its name (NEW-plan-01) */
+        await pg.click('#ad-types [data-t=R]'); await pg.fill('#ad-tn', 'Smoke rest day'); await pg.press('#ad-tn', 'Tab');
+        await pg.setInputFiles('#ad-file', { name: 'meals-only.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ plan: { R: [{ id: '1', name: 'Smoke only meals', p: [], c: [], x: [] }] } })) });
+        await pg.waitForFunction(() => /Loaded meals-only\.json/.test(document.querySelector('#ad-upmsg').textContent), null, { timeout: 5000 });
+        expect(await pg.evaluate(() => adTplName('R') === 'Smoke rest day' && AD.plan.R[0].name === 'Smoke only meals'), 'a meals-only file should keep the template’s name');
+        /* contradictory food limits are refused before saving (PR-PL-042) */
+        await pg.click('.adfood[data-id=banana] summary');
+        await pg.fill('#ad-fd-banana-min', '300'); await pg.fill('#ad-fd-banana-max', '100'); await pg.fill('#ad-fd-banana-d', '50');
+        await pg.click('#ad-save');
+        await pg.waitForFunction(() => /min serving \(300\) is more than the max serving \(100\)/.test(document.querySelector('#ad-upmsg').textContent)
+          && /direct protein \(50\) is more than its protein/.test(document.querySelector('#ad-upmsg').textContent), null, { timeout: 5000 });
+        expect(/Unsaved/.test(await pg.textContent('#ad-status')), 'nothing should be saved with contradictory limits');
+        await pg.click('#ad-discard');
+        await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
         /* the plan CSV download keeps a value that starts like a formula as text */
         expect(JSON.stringify(await pg.evaluate(() => ['=HYPERLINK("x")', '+1', '-1', '@SUM(A1)', 'Oats, 80 g', 'plain'].map(csvCell)))
           === JSON.stringify(['"\'=HYPERLINK(""x"")"', "'+1", "'-1", "'@SUM(A1)", '"Oats, 80 g"', 'plain']), 'CSV cells starting with = + - @ get a leading apostrophe');
@@ -1024,6 +1047,17 @@ async function recheck(browser) {
         /* a change that takes effect later: Mondays are rest days from 2031, days before keep training */
         await gp.selectOption('#ad-wd-0', rs); await gp.fill('#ad-from', FROM); await gp.click('#ad-save');
         await gp.waitForFunction(() => /Scheduled/.test(document.querySelector('#ad-versions').textContent) && /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
+        /* a plan change emptied of everything asks first, then says "No plan from …" – not "Saved" (PR-PL-029) */
+        const NOPLAN = later(21);
+        await gp.evaluate(() => { AD.templates = []; AD.plan = {}; AD.targets = {}; AD.foods = {}; renderAdmin(); });
+        await gp.fill('#ad-from', NOPLAN); await gp.press('#ad-from', 'Tab');
+        let asked = ''; gp.once('dialog', d => { asked = d.message(); d.dismiss(); }); await gp.click('#ad-save');
+        expect(/no day templates or foods/.test(asked) && /Unsaved/.test(await gp.textContent('#ad-status')), 'saving an empty plan should ask first; No keeps it unsaved');
+        gp.once('dialog', d => d.accept()); await gp.click('#ad-save');
+        await gp.waitForFunction(() => /No plan from/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
+        expect(!/Saved/.test(await gp.textContent('#ad-status')) && /No plan/.test(await gp.textContent('#ad-versions')), 'an empty plan change should say "No plan from …"');
+        gp.once('dialog', d => d.accept()); await gp.click(`[data-ad=vdel][data-from="${NOPLAN}"]`);
+        await gp.waitForFunction(d => !document.querySelector(`[data-ad=vdel][data-from="${d}"]`), NOPLAN, { timeout: 5000 });
         /* delete progress photos between two dates: only those in the range go */
         await gp.evaluate(async () => {
           const jpg = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, ...new Array(40).fill(32), 0xff, 0xd9])], { type: 'image/jpeg' });
@@ -1076,6 +1110,13 @@ async function recheck(browser) {
         await pg.unroute(/\/api\/jobs(\/.*)?$/); await pg.unroute(/\/api\/my\/ai-import\?/);
         await pg.click('[data-ad=discard]');
         await pg.waitForFunction(f => !AD.foods.smoke_ai_seeds && AD.foods[f].k !== 389, fid, { timeout: 5000 });
+        /* a workout plan read with AI, not faked in the browser: the background job runs on the server against a fake OpenRouter (PR-PL-062) */
+        await pg.evaluate(() => { location.hash = '#gym'; }); await pg.waitForSelector('#g-aifile', { state: 'attached' });
+        await pg.setInputFiles('#g-aifile', { name: 'workout.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 workout') });
+        await pg.waitForSelector('.gai', { timeout: 15000 });
+        expect(/Smoke AI upper/.test(await pg.textContent('.gai')) && /workout\.pdf/.test(await pg.textContent('.gai')), 'the workout read should open its preview');
+        await pg.click('.gai [data-g=aidrop]'); await pg.waitForSelector('.gai', { state: 'detached' });
+        await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
         /* Options tab: plan files off hides the CSV / JSON buttons on Account admin, on again brings them back */
         expect(!(await pg.isHidden('[data-ad=csv]')), 'plan file buttons should show by default');
         await pg.click('#acct>summary'); await pg.click('#adminlink');

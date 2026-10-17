@@ -11,6 +11,8 @@ const J_OPEN={}, J_BUSY={};
 const J_HELD={};
 const J_KIND={plan:{name:'meal plan',page:'account'},workout:{name:'workout plan',page:'gym'},supps:{name:'supplement regime',page:'supps/lib'}};
 const jobBusy=kind=>JOBS.some(j=>j.kind===kind&&j.status==='running');
+/* the first n characters as people see them: an emoji or accented letter is never cut in two */
+const jCut=(s,n)=>{try{return Array.from(new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(s),x=>x.segment).slice(0,n).join('');}catch{return Array.from(s).slice(0,n).join('');}};
 const jWhat=j=>`${J_KIND[j.kind].name}${j.label?` (${j.label})`:''}`;
 
 /* Send the file; resolves once the server has started reading it. */
@@ -18,7 +20,7 @@ async function jobStart(url,kind,file){
   if('Notification' in window&&Notification.permission==='default'){try{Notification.requestPermission();}catch{}}
   let r;
   try{r=await fetch(url+(url.includes('?')?'&':'?')+'bg=1',{method:'POST',credentials:'same-origin',body:file,
-    headers:{'content-type':file.type||'application/pdf','x-csrf-token':csrf,'x-file-name':encodeURIComponent(Array.from(file.name).slice(0,120).join(''))}});}
+    headers:{'content-type':file.type||'application/pdf','x-csrf-token':csrf,...TZH,'x-file-name':encodeURIComponent(jCut(file.name,120))}});}
   catch{throw new Error('Can’t reach the server – is it still running?');}
   if(r.status===401){setTimeout(toLogin,0);const e=new Error('You were signed out');e.signedOut=true;throw e;}
   const j=await r.json().catch(()=>({}));
@@ -72,13 +74,15 @@ function jobSeen(kind){const id=J_HELD[kind];if(id==null)return;delete J_HELD[ki
 function jDismiss(id){JOBS=JOBS.filter(j=>j.id!==id);jRender();jSeen(id);}
 function jChanged(kind){jRender();if(J_BUSY[kind])J_BUSY[kind]();}
 
+/* unopened results are kept 30 days (server/jobs.js) */
+const jKeep=j=>j.expires&&/^\d{4}-\d\d-\d\d$/.test(j.expires)?` <span class="sub">Kept until ${esc(fmtShort(j.expires))}.</span>`:'';
 function jRender(){
   const box=$('#jobs');if(!box)return;
   box.hidden=!JOBS.length;
   box.innerHTML=JOBS.map(j=>j.status==='running'
     ?`<div class="job"><p><span class="jspin" aria-hidden="true">✦</span> Reading your ${esc(jWhat(j))}… <span class="sub">You can carry on – you’ll be told when it’s ready.</span></p></div>`
     :j.status==='done'
-    ?`<div class="job ok"><p>✦ Your ${esc(jWhat(j))} is ready to check.</p><span class="jacts"><button class="btn" type="button" data-job="open" data-id="${j.id}">Open</button><button class="x" type="button" data-job="drop" data-id="${j.id}" aria-label="Dismiss">×</button></span></div>`
+    ?`<div class="job ok"><p>✦ Your ${esc(jWhat(j))} is ready to check.${jKeep(j)}</p><span class="jacts"><button class="btn" type="button" data-job="open" data-id="${j.id}">Open</button><button class="x" type="button" data-job="drop" data-id="${j.id}" aria-label="Dismiss">×</button></span></div>`
     :`<div class="job bad"><p>The AI couldn’t read your ${esc(jWhat(j))}: ${esc(j.error||'')}</p><span class="jacts"><button class="x" type="button" data-job="drop" data-id="${j.id}" aria-label="Dismiss">×</button></span></div>`).join('');
 }
 document.addEventListener('click',e=>{

@@ -9,6 +9,10 @@ const parse=s=>{const [y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d);
 const addDays=(s,n)=>{const d=parse(s);d.setDate(d.getDate()+n);return ymd(d);};
 const wdOf=s=>(parse(s).getDay()+6)%7; /* 0 = Monday */
 const todayStr=()=>ymd(new Date());
+/* this device's time zone, sent with every request so the server's "today" is yours (server/dates.js) */
+const TZ=(()=>{try{return Intl.DateTimeFormat().resolvedOptions().timeZone||'';}catch{return '';}})();
+const TZH=TZ&&/^[\x21-\x7e]+$/.test(TZ)?{'x-time-zone':TZ}:{};
+{const a=document.querySelector('a[href="/api/export"]');if(a&&TZH['x-time-zone'])a.href='/api/export?tz='+encodeURIComponent(TZ);}   /* a plain link: the zone goes in the address */
 /* a real date (not 2026-02-31) from 2000 to a year from today – what the server stores (server/dates.js) */
 const lastDate=()=>{const d=new Date();d.setFullYear(d.getFullYear()+1);return ymd(d);};
 const isDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||'')&&ymd(parse(s))===s&&s>='2000-01-01'&&s<=lastDate();
@@ -34,7 +38,7 @@ let LIB=[], LIBV=0;                         /* the food library (yours and share
 async function api(method,url,body,ver,again){
   let r;
   try{r=await fetch(url,{method,credentials:'same-origin',
-    headers:{...(body!==undefined?{'content-type':'application/json'}:{}),'x-csrf-token':csrf,...(ver!==undefined?{'x-version':ver==null?'none':ver}:{})},
+    headers:{...(body!==undefined?{'content-type':'application/json'}:{}),'x-csrf-token':csrf,...TZH,...(ver!==undefined?{'x-version':ver==null?'none':ver}:{})},
     body:body!==undefined?JSON.stringify(body):undefined});}
   catch{throw new Error('Can’t reach the server – is it still running?');}
   if(r.status===401){setTimeout(toLogin,0);const e=new Error('You were signed out');e.signedOut=true;throw e;}

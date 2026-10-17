@@ -167,7 +167,7 @@ function fillRequest(b) {
   return { name, unit, kind, recipe, known, blank, hi, state };
 }
 
-async function fill(b, user) {
+async function fill(b, user, today) {
   const r = fillRequest(b);
   const per = r.unit === 'each' ? 'one item / portion' : `100 ${r.unit}`;
   const text = [`Food: ${r.name}`, `Type: ${r.kind === 'meal' ? 'whole meal' : 'single ingredient'}`, `Values are per: ${per}${r.state ? ` – weighed ${r.state === 'raw' ? 'raw (dry for rice, pasta, grains)' : 'cooked'}` : ''}`,
@@ -184,7 +184,7 @@ async function fill(b, user) {
   const y = Number(reply.yield);
   /* What gets signed can't be steered by the recipe / notes the person typed (library-code-002): with any, the source is
      ours, and a link is kept only to a known nutrition database. */
-  const a = cleanAi({ ...reply, fields: r.blank, of: r.blank, model,
+  const a = cleanAi({ ...reply, fields: r.blank, of: r.blank, model, at: today || '',
     source: r.recipe ? `AI estimate from the ${r.kind === 'meal' ? 'recipe' : 'notes'}` : reply.source, url: sourceUrl(reply.url) });
   a.sig = aiSig(a, user.id);
   return { values, ai: a, ...(r.state && y >= 10 && y <= 1000 ? { yield: Math.round(y) } : {}) };
@@ -200,7 +200,7 @@ router.get('/', (req, res) => res.json({ foods: q.list.all(req.user.id).map(r =>
 
 /* Estimate the blank values of a food that is being entered. Nothing is saved here. */
 router.post('/ai-fill', fillLimit, async (req, res) => {
-  try { res.json(await fill(req.body, req.user)); } catch (e) { send(res, e); }
+  try { res.json(await fill(req.body, req.user, req.today)); } catch (e) { send(res, e); }
 });
 
 router.post('/', (req, res) => {

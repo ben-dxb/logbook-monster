@@ -129,9 +129,11 @@ function foodList(user, date) {
   for (const [id, r] of Object.entries(saved)) if (id !== 'pudding') out[id] = { n: r.n, k: r.k, p: r.p, c: r.c, f: r.f, unit: r.unit || 'g' };
   return out;
 }
+/* rice pudding is always there: its values come from the person's own batch on the Daily Tracker */
+const PUDDING = 'pudding | Rice pudding (the person’s own batch – the app knows its values) | per 100g: from the batch';
 
 function prompt(foods) {
-  const list = Object.entries(foods).map(([id, F]) => `${id} | ${F.n} | per 100${F.unit}: ${F.k} kcal, P ${F.p}, C ${F.c}, F ${F.f}`).join('\n');
+  const list = [...Object.entries(foods).map(([id, F]) => `${id} | ${F.n} | per 100${F.unit}: ${F.k} kcal, P ${F.p}, C ${F.c}, F ${F.f}`), PUDDING].join('\n');
   return `You turn a nutrition coach's meal plan document into JSON for a meal planning app.
 
 The app keeps a plan as day templates: one for each kind of day the document gives its own meals or targets for (e.g. training day, rest day, high carb day, refeed). List them in "templates" as {"id": short id, "name": short name}. Use id "T" for a training day and "R" for a rest day; any other template gets an id of capital letters and digits starting with a letter, e.g. "HC". If the document has one plan for every day, make one template.
@@ -144,7 +146,7 @@ The app keeps a plan as day templates: one for each kind of day the document giv
 Each item is {"f": food id, "g": amount, "lock": false}. Amounts are grams (millilitres for foods measured in ml). Convert units: 1 egg = 50g, use label weights for items such as slices or scoops if the document gives them, otherwise give your best estimate and mention it in "notes". Use lock true only for fixed recipe ingredients that must not be scaled.
 
 Existing foods (id | name | values). Use one of these ids whenever the document's food is the same thing – check raw vs cooked weight matches:
-${list || '(none yet)'}
+${list}
 
 For any other food, add it to "foods" with a new id (lowercase letters, digits and _ only, not an existing id):
 {"n": name, "k": kcal per 100g, "p": protein, "c": carbs, "f": fat, "d": direct protein (= p for meat, fish, eggs, dairy and protein powder, otherwise 0), "step": rounding step in grams (1 for spreads and powders, 5 otherwise), "unit": "g" or "ml", "group": "p", "c" or "x" (the box it belongs in)}
@@ -177,28 +179,35 @@ function tidy(raw, foods) {
   const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
   if (isObj(raw.foods)) {
     for (const [id, r] of Object.entries(raw.foods).slice(0, 100)) {
-      if (Object.hasOwn(foods, id)) continue;   /* never overwrite an existing food */
+      if (Object.hasOwn(foods, id) || id === 'pudding') continue;   /* never overwrite an existing food, nor the batch's rice pudding */
       try { Object.assign(out.foods, defaults.clean({ foods: { [id]: r } }).foods); }
       catch (e) { notes.push(`Left out new food ${String(id).slice(0, 40)}: ${e.message}`); }
     }
   }
   /* day templates: as listed, plus any the plan uses without listing */
+  const over = new Set();
   const addTemplate = (id, name) => {
-    if (typeof id !== 'string' || !TEMPLATE_ID.test(id) || id in Object.prototype || out.templates.some(t => t.id === id) || out.templates.length >= 12) return;
+    if (typeof id !== 'string' || !TEMPLATE_ID.test(id) || id in Object.prototype || out.templates.some(t => t.id === id)) return;
+    if (out.templates.length >= 12) {
+      if (!over.has(id)) notes.push(`Left out the day template ${String(name || id).trim().slice(0, 40) || id} – a plan can have 12 at most`);
+      return over.add(id);
+    }
     out.templates.push({ id, name: String(name || OLD_NAMES[id] || id).trim().slice(0, 40) || id });
   };
   for (const t of Array.isArray(raw.templates) ? raw.templates : []) if (isObj(t)) addTemplate(t.id, t.name);
   if (isObj(raw.plan)) for (const id of Object.keys(raw.plan)) addTemplate(id);
   const tname = id => out.templates.find(t => t.id === id).name;
-  const known = id => typeof id === 'string' && (Object.prototype.hasOwnProperty.call(foods, id) || Object.prototype.hasOwnProperty.call(out.foods, id));
+  const known = id => typeof id === 'string' && (id === 'pudding' || Object.prototype.hasOwnProperty.call(foods, id) || Object.prototype.hasOwnProperty.call(out.foods, id));
   if (isObj(raw.plan)) {
     out.plan = {};
     for (const { id: t } of out.templates) {
       if (!Array.isArray(raw.plan[t]) || !raw.plan[t].length) continue;
+      if (raw.plan[t].length > 12) notes.push(`Left out ${tname(t)} meals after the 12th – a day template can have 12 at most`);
       out.plan[t] = raw.plan[t].slice(0, 12).filter(isObj).map((m, mi) => {
         const meal = { id: String(m.id == null ? mi + 1 : m.id).slice(0, 8), name: String(m.name || `Meal ${mi + 1}`).slice(0, 100), p: [], c: [], x: [] };
         if (m.note) meal.note = String(m.note).slice(0, 200);
         for (const b of ['p', 'c', 'x']) {
+          if (Array.isArray(m[b]) && m[b].length > 20) notes.push(`Left out items after the 20th in a box of ${tname(t)} meal ${meal.id}`);
           for (const i of (Array.isArray(m[b]) ? m[b] : []).slice(0, 20)) {
             const g = isObj(i) ? Math.round(+i.g) : NaN;
             if (!isObj(i) || !known(i.f)) { notes.push(`Left out "${String(isObj(i) ? i.f : i).slice(0, 40)}" in ${tname(t)} meal ${meal.id} – unknown food`); continue; }
@@ -253,10 +262,11 @@ async function call(system, content, maxTokens, timeout, task) {
   const c = current(task), t = TASKS[task] || {};
   const o = allow(true);
   let r, j;
+  const signal = AbortSignal.timeout(timeout || t.wait || 3 * MIN);
   try {
     r = await fetch(`${BASE}/chat/completions`, {
       method: 'POST',
-      signal: AbortSignal.timeout(timeout || t.wait || 3 * MIN),
+      signal,
       headers: { authorization: `Bearer ${c.key}`, 'content-type': 'application/json', 'HTTP-Referer': config.baseUrl, 'X-Title': 'Logbook Monster' },
       body: JSON.stringify({
         model: c.model, temperature: 0, max_tokens: maxTokens || t.max || 2000,
@@ -265,8 +275,10 @@ async function call(system, content, maxTokens, timeout, task) {
       }),
     });
     j = await r.json().catch(() => ({}));
+    if (signal.aborted) throw signal.reason;   /* the time ran out while the reply was coming in */
   } catch (e) {
-    throw Object.assign(new Error(e.name === 'TimeoutError' ? 'The AI took too long – try again' : 'Couldn’t reach OpenRouter'), { status: 502 });
+    if (e.name === 'TimeoutError') console.error(`AI request timed out (${c.model}, ${task || 'no task'})`);
+    throw Object.assign(new Error(e.name === 'TimeoutError' ? 'The AI took too long – try again or use a smaller file' : 'Couldn’t reach OpenRouter'), { status: 502 });
   }
   if (!r.ok || j.error) {
     /* a plain sentence for whoever asked (often not the super admin); the provider's own words go to the log */
