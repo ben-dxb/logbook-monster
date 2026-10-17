@@ -10,6 +10,7 @@ const express = require('express');
 const db = require('./db');
 const { isDate, writeError } = require('./dates');
 const version = require('./version');
+const audit = require('./audit');
 
 const DEFAULTS = [
   { id: 'weigh', label: 'Weigh in', show: 'all', auto: 'weight' },
@@ -90,7 +91,7 @@ router.put('/', send(req => {
 }));
 router.delete('/', send(req => {
   version.check(req, versionOf(req.user));
-  q.del.run(req.user.id);
+  if (q.del.run(req.user.id).changes) audit.log(req, 'checklist.reset');
   return { items: DEFAULTS, custom: false, defaults: DEFAULTS, updated: null };
 }));
 

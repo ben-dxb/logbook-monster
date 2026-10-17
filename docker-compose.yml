@@ -10,6 +10,9 @@ services:
       - "127.0.0.1:3000:3000"   # only reachable through your reverse proxy
     volumes:
       - logbook-monster-data:/app/data
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }   # the app's console log, rotated
 volumes:
   logbook-monster-data:
     name: mealswap_mealswap-data   # the volume created before the rename; keeps existing data

@@ -14,6 +14,7 @@ const ai = require('./ai');
 const rateLimit = require('express-rate-limit');
 const { isDate, writeError } = require('./dates');
 const version = require('./version');
+const audit = require('./audit');
 
 fs.mkdirSync(config.photoDir, { recursive: true });
 
@@ -202,6 +203,7 @@ router.delete('/', (req, res) => {
     if (from > to) throw fail('The first date is after the last one');
     const rows = q.delRange.all(req.user.id, from, to);
     removeFiles(rows);
+    audit.log(req, 'photos.deleted', { from, to, n: rows.length });
     res.json({ deleted: rows.length });
   } catch (e) { send(res, e); }
 });

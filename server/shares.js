@@ -15,6 +15,7 @@ const auth = require('./auth');
 const defaults = require('./defaults');
 const timeline = require('./timeline');
 const photos = require('./photos');
+const audit = require('./audit');
 
 const q = {
   list: db.prepare('SELECT id, token_hash, label, expires_at, created_at, used_at FROM shares WHERE user_id = ? ORDER BY expires_at DESC, id DESC'),
@@ -68,12 +69,15 @@ function create(user, b) {
 
 const mine = express.Router();
 mine.get('/', (req, res) => res.json({ shares: list(req.user) }));
-mine.post('/', (req, res) => { try { res.json(create(req.user, req.body)); } catch (e) { send(res, e); } });
+mine.post('/', (req, res) => {
+  try { const r = create(req.user, req.body); audit.log(req, 'coach.created', { id: r.id, expires: r.expires }); res.json(r); } catch (e) { send(res, e); }
+});
 /* Switching a link off deletes it: the next request with it finds nothing. */
 mine.delete('/:id', (req, res) => {
   const id = idOf(req.params.id), key = req.query.key;
-  if (key === undefined) { q.del.run(req.user.id, id); return res.json({ ok: true }); }
+  if (key === undefined) { if (q.del.run(req.user.id, id).changes) audit.log(req, 'coach.off', { id }); return res.json({ ok: true }); }
   if (!q.delKey.run(req.user.id, id, String(key)).changes) return res.status(404).json({ error: 'That link was switched off already – reload to see your links.' });
+  audit.log(req, 'coach.off', { id });
   res.json({ ok: true });
 });
 
@@ -92,6 +96,7 @@ function resolve(req, res, next) {
   const user = row && row.expires_at > nowIso() ? auth.q.byId.get(row.user_id) : null;
   if (!user || !auth.accountAllowed(user)) return res.status(404).json({ error: 'This link has run out or been switched off. Ask for a new one.', gone: true });
   req.user = user; req.share = row;
+  audit.once(req, 'coach.used', { id: row.id }, row.user_id);
   next();
 }
 /* Only reads get through, whatever the routes mounted below would otherwise take. */

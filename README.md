@@ -230,6 +230,21 @@ also download their own data from the account menu.
 - Coach links carry a random 256-bit secret (only its SHA-256 is stored, so the link is shown once),
   answer only reads of that account's day summaries, weights, Timeline and the photos its day cards show, are checked on
   every request against their expiry, and send `no-store`, `noindex` and `no-referrer`.
+- **Security log** (`audit` table, `server/audit.js`): sign-ins (ok, failed, locked, and alerts), the second step (code
+  asked, wrong code, locked, recovery code used, turned on or off, re-check passed or failed), sign-out, password changes
+  (with how many sessions and coach links ended), Google links, invites made and accepted, accounts removed (and by whom),
+  AI key set or cleared, email settings and Options changed, data exports, day / checklist / bulk photo deletes, shared
+  foods and supplements a super admin removed, coach links made, switched off and first opened each day, and AI daily
+  limits reached. Each row has the time, the account, who did it and the IP. It never holds a password, key, code, token,
+  cookie or health data; emails are masked (`a***@example.com` plus a keyed hash). Rows are kept **180 days** (pruned at
+  start and daily), at most 5000 per account (`AUDIT_PER_ACCOUNT`). Super admin › Security log shows it all (filter by
+  event and account); everyone sees their own sign-ins, second-step events, password changes and coach-link use on
+  Account admin. Failed sign-ins and locks also go to the server log (masked email, IP). `AUDIT_ALERT_FAILS` (default 5)
+  failed sign-ins on a super admin account within 15 minutes email the super admins (when email is set up).
+- Logs: the app never logs a request's query string, headers (`x-csrf-token`, `x-file-name`) or a coach secret – a URL in
+  an error line goes through `redact()` (`/coach/REDACTED`, no query). Docker keeps 5 × 10 MB of container logs. If you turn
+  on a Caddy access log, filter the same way, e.g. `log { format filter { request>uri regexp ^/coach/[^/?]+ /coach/REDACTED
+  request>uri query delete  request>headers>X-Csrf-Token delete  request>headers>X-File-Name delete  request>headers>Cookie delete } }`.
 
 ## Working on it
 
