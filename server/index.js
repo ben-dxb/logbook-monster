@@ -23,8 +23,8 @@ app.use(helmet({
     directives: {
       'default-src': ["'self'"],
       'script-src': ["'self'"],
-      'style-src': ["'self'", 'https://fonts.googleapis.com'],
-      'font-src': ["'self'", 'https://fonts.gstatic.com'],
+      'style-src': ["'self'"],
+      'font-src': ["'self'"],   /* Archivo is served from public/fonts – no third-party font host */
       'img-src': ["'self'", 'data:'],
       'connect-src': ["'self'"],
       'form-action': ["'self'"],
@@ -45,7 +45,7 @@ app.set('etag', () => undefined);
 /* No powerful browser features the app doesn't use (it does use Web Share, clipboard and notifications).
    API and auth answers carry health data and the CSRF token: never cached (photos set their own). */
 app.use((req, res, next) => {
-  res.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), hid=()');
+  res.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=()');
   if (/^\/(api|auth)\//.test(req.path)) res.set('Cache-Control', 'no-store');
   next();
 });
@@ -122,14 +122,20 @@ app.get(['/', '/index.html'], (req, res, next) => (auth.refused(req) ? gone(req,
 /* The HTML pages are served only by the routes above (sign-in check, no-cache). A copy reached through the static files –
    /login.html, or /%69ndex.html, which the routes above don't match but the file server decodes – goes to its route instead. */
 const PAGES = { 'index.html': '/', 'login.html': '/login', 'invite.html': '/invite', 'privacy.html': '/privacy' };
+/* A browser opening an address that isn't a page (or a page that broke) gets a page that says so, with a way home – not JSON.
+   /api, /auth and the coach API keep answering JSON, as does anything that didn't ask for HTML (fetch, curl). */
+const wantsPage = req => (req.method === 'GET' || req.method === 'HEAD') && !/^\/(api|auth)(\/|$)|^\/coach\/[^/]+\/api(\/|$)/.test(req.path)
+  && req.accepts(['json', 'html']) === 'html';
+const errorPage = (req, res, status, json) => (wantsPage(req) ? (res.status(status), files.send(res, status >= 500 ? '500.html' : '404.html')) : res.status(status).json(json));
 app.use((req, res, next) => {
   let p;
-  try { p = decodeURIComponent(req.path); } catch { return res.status(400).json({ error: 'Bad path' }); }
+  try { p = decodeURIComponent(req.path); } catch { return errorPage(req, res, 400, { error: 'Bad path' }); }
   if (!/\.html?$/i.test(p.replace(/\/+$/, ''))) return next();
   const to = PAGES[path.posix.basename(p).toLowerCase()];
-  return to ? res.redirect(to) : res.status(404).json({ error: 'Not found' });
+  return to ? res.redirect(to) : errorPage(req, res, 404, { error: 'Not found' });
 });
 app.use(files.headers, express.static(pub, { index: false, cacheControl: false }));
+app.use((req, res) => errorPage(req, res, 404, { error: 'Not found' }));
 
 app.use((err, req, res, next) => {
   /* an error after the answer went (e.g. while it was being sent) can't be answered again: log it, end what's left */
@@ -140,10 +146,11 @@ app.use((err, req, res, next) => {
   if (err instanceof URIError || (err.status === 400 && /decode/i.test(err.message))) {   /* a broken %-escape in a route id */
     /* a garbled coach link opens the coach page, which says the link doesn't work (its API answers 404 for the token) */
     if ((req.method === 'GET' || req.method === 'HEAD') && /^\/coach\/[^/]+\/?$/.test(req.path)) { res.set('X-Robots-Tag', 'noindex, nofollow'); return page('coach.html')(req, res, next); }
-    return res.status(400).json({ error: 'Bad address' });
+    return errorPage(req, res, 400, { error: 'Bad address' });
   }
   console.error(`${req.method} ${audit.redact(req.originalUrl)}:`, err);
-  res.status(500).json({ error: 'Something went wrong' });
+  if (res.headersSent) return;
+  errorPage(req, res, 500, { error: 'Something went wrong' });
 });
 
 /* compacts an older database before serving; photo file sweep and permissions, then daily (server/upkeep.js) */

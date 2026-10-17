@@ -21,7 +21,7 @@ async function jobStart(url,kind,file){
   let r;wrote();
   try{r=await fetch(url+(url.includes('?')?'&':'?')+'bg=1',{method:'POST',credentials:'same-origin',body:file,
     headers:{'content-type':file.type||'application/pdf','x-csrf-token':csrf,...TZH,'x-file-name':encodeURIComponent(jCut(file.name,120))}});}
-  catch{throw new Error('Can’t reach the server – is it still running?');}
+  catch{throw netError();}
   if(r.status===401){setTimeout(toLogin,0);const e=new Error('You were signed out');e.signedOut=true;throw e;}
   const j=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);
@@ -76,18 +76,38 @@ function jChanged(kind){jRender();if(J_BUSY[kind])J_BUSY[kind]();}
 
 /* unopened results are kept 30 days (server/jobs.js) */
 const jKeep=j=>j.expires&&/^\d{4}-\d\d-\d\d$/.test(j.expires)?` <span class="sub">Kept until ${esc(fmtShort(j.expires))}.</span>`:'';
+/* One compact bar at the bottom: a single note as it is; several as a count you can open into the list. The page keeps room
+   for the bar (body/html .hasjobs, --jobs-h) so it never sits over the control you're on. */
+let jExpanded=false,jLast=null;
+const jRow=j=>j.status==='running'
+  ?`<div class="job"><p><span class="jspin" aria-hidden="true">✦</span> Reading your ${esc(jWhat(j))}… <span class="sub">You can carry on.</span></p></div>`
+  :j.status==='done'
+  ?`<div class="job ok"><p>Your ${esc(jWhat(j))} is ready to check.${jKeep(j)}</p><span class="jacts"><button class="btn" type="button" data-job="open" data-id="${j.id}">Open</button><button class="x" type="button" data-job="drop" data-id="${j.id}" aria-label="Dismiss: ${esc(jWhat(j))}">×</button></span></div>`
+  :`<div class="job bad"><p>The AI couldn’t read your ${esc(jWhat(j))}: ${esc(j.error||'')}</p><span class="jacts"><button class="x" type="button" data-job="drop" data-id="${j.id}" aria-label="Dismiss: ${esc(jWhat(j))}">×</button></span></div>`;
 function jRender(){
   const box=$('#jobs');if(!box)return;
-  box.hidden=!JOBS.length;
-  box.innerHTML=JOBS.map(j=>j.status==='running'
-    ?`<div class="job"><p><span class="jspin" aria-hidden="true">✦</span> Reading your ${esc(jWhat(j))}… <span class="sub">You can carry on – you’ll be told when it’s ready.</span></p></div>`
-    :j.status==='done'
-    ?`<div class="job ok"><p>✦ Your ${esc(jWhat(j))} is ready to check.${jKeep(j)}</p><span class="jacts"><button class="btn" type="button" data-job="open" data-id="${j.id}">Open</button><button class="x" type="button" data-job="drop" data-id="${j.id}" aria-label="Dismiss">×</button></span></div>`
-    :`<div class="job bad"><p>The AI couldn’t read your ${esc(jWhat(j))}: ${esc(j.error||'')}</p><span class="jacts"><button class="x" type="button" data-job="drop" data-id="${j.id}" aria-label="Dismiss">×</button></span></div>`).join('');
+  const n=JOBS.length;
+  let h='';
+  if(n===1)h=jRow(JOBS[0]);
+  else if(n>1){
+    const run=JOBS.filter(j=>j.status==='running').length,ok=JOBS.filter(j=>j.status==='done').length,bad=n-run-ok;
+    const what=[ok&&`${ok} ready`,run&&`${run} running`,bad&&`${bad} failed`].filter(Boolean).join(', ');
+    h=`<div class="jhead"><p>✦ ${n} AI reads: ${what}</p><span class="jacts"><button class="ghost" type="button" data-job="more" aria-expanded="${jExpanded}" aria-controls="jlist">${jExpanded?'Hide':'Show'}</button>`
+      +(run<n?`<button class="x" type="button" data-job="dropall" aria-label="Dismiss all finished">×</button>`:'')+`</span></div>`
+      +`<div class="jlist" id="jlist"${jExpanded?'':' hidden'}>${JOBS.map(jRow).join('')}</div>`;
+  }
+  else jExpanded=false;
+  if(h!==jLast){box.innerHTML=h;jLast=h;}   /* the same notes again (each poll) aren't announced again, and keep focus */
+  box.hidden=!n;
+  [document.documentElement,document.body].forEach(el=>el.classList.toggle('hasjobs',!!n));
+  if(n)document.documentElement.style.setProperty('--jobs-h',box.offsetHeight+'px');
 }
 document.addEventListener('click',e=>{
   const b=e.target.closest('[data-job]');if(!b)return;
-  if(b.dataset.job==='open')jOpen(+b.dataset.id);else jDismiss(+b.dataset.id);
+  const a=b.dataset.job;
+  if(a==='more'){jExpanded=!jExpanded;jRender();$('#jobs [data-job=more]').focus();}
+  else if(a==='dropall'){JOBS.filter(j=>j.status!=='running').forEach(j=>jDismiss(j.id));}
+  else if(a==='open')jOpen(+b.dataset.id);else jDismiss(+b.dataset.id);
 });
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&JOBS.some(j=>j.status==='running'))jRefresh();});
 /* The app closing while a read runs: tell the server, so the result is emailed (server/jobs.js AWAY_MS). Back from the browser's cache: open again. */

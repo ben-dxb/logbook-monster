@@ -6,23 +6,27 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Logbook Monster – coach view</title>
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,400..800&display=swap">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="/base.css">
 <link rel="stylesheet" href="/app.css">
+<script defer src="/engine.js"></script>
+<script defer src="/coach.js"></script>
+<script defer src="/timeline.js"></script>
 </head>
 <body>
 <!-- A coach link: someone's logbook, read only, no sign-in (coach.js, server/shares.js). -->
+<a class="skip" href="#main">Skip to content</a>
 <div class="wrap">
-  <header class="top"><h1>Logbook Monster</h1><span class="chip info">Read only</span></header>
-  <p id="c-loading" class="note">Loading…</p>
+  <header class="top"><p class="brand">Logbook Monster</p><span class="chip info">Read only</span></header>
+  <main id="main" tabindex="-1">
+  <p id="c-loading" class="note" role="status">Loading…</p>
   <section id="c-gone" class="panel" hidden>
-    <h2>This link doesn’t work any more</h2>
+    <h1>This link doesn’t work any more</h1>
     <p id="c-gonemsg">It has run out or been switched off. Ask for a new one.</p>
   </section>
   <div id="c-main" class="view" hidden>
     <section class="panel cbanner" aria-labelledby="c-who">
-      <h2 id="c-who"></h2>
+      <h1 id="c-who">Coach view</h1>
       <p id="c-until"></p>
     </section>
     <section class="panel" aria-labelledby="c-dh">
@@ -35,9 +39,7 @@
     </section>
   </div>
   <dialog id="t-card" class="tcard" aria-labelledby="t-ctitle"><div id="t-cbody" class="tcbody"></div></dialog>
+  </main>
 </div>
-<script src="/engine.js"></script>
-<script src="/coach.js"></script>
-<script src="/timeline.js"></script>
 </body>
 </html>

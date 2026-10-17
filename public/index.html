@@ -5,15 +5,31 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Logbook Monster</title>
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,400..800&display=swap">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="/base.css">
 <link rel="stylesheet" href="/app.css">
+<!-- deferred: they run in this order once the page is parsed, before DOMContentLoaded (start-up in app.js waits for it) -->
+<script defer src="/forms.js"></script>
+<script defer src="/engine.js"></script>
+<script defer src="/app.js"></script>
+<script defer src="/jobs.js"></script>
+<script defer src="/admin.js"></script>
+<script defer src="/keys.js"></script>
+<script defer src="/gymcsv.js"></script>
+<script defer src="/exifdate.js"></script>
+<script defer src="/gym.js"></script>
+<script defer src="/starter.js"></script>
+<script defer src="/foods.js"></script>
+<script defer src="/supps.js"></script>
+<script defer src="/dash.js"></script>
+<script defer src="/photos.js"></script>
+<script defer src="/timeline.js"></script>
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 <div class="wrap">
   <header class="top">
-    <h1>Logbook Monster</h1>
+    <p class="brand">Logbook Monster</p>
     <nav class="views" aria-label="Views">
       <a href="#dash" data-view="dash">Dashboard</a>
       <a href="#day" data-view="day">Daily Tracker</a>
@@ -48,8 +64,21 @@
     </details>
   </header>
 
-  <p id="loading" class="note">Loading your data…</p>
-  <p id="bootnote" class="note" role="alert" hidden></p>
+  <main id="main" tabindex="-1">
+  <!-- the view's name, set by route() (app.js); focus moves here when you go to another page -->
+  <h1 id="vh" class="vh" tabindex="-1">Logbook Monster</h1>
+  <div id="loading" class="loading" role="status" aria-live="polite"><span class="vh">Loading your data…</span>
+    <div class="skel" aria-hidden="true"><span class="sk sk-bar"></span><span class="sk sk-card"></span><span class="sk sk-card"></span><span class="sk sk-card short"></span></div></div>
+  <div id="bootnote" class="note bootnote" role="alert" hidden><p id="bootmsg"></p><button class="btn" type="button" id="bootretry" hidden>Retry</button></div>
+
+  <!-- ===================== NO SUCH PAGE ===================== -->
+  <section id="v-none" class="view" hidden>
+    <section class="panel">
+      <h2 id="none-h">There’s no page like that</h2>
+      <p id="none-msg">The address may be mistyped, or the page has moved.</p>
+      <p class="nonelinks"><a class="btn" href="#dash">Go to the Dashboard</a> <a class="ghost" href="#day">Daily Tracker</a></p>
+    </section>
+  </section>
 
   <!-- ===================== DASHBOARD ===================== -->
   <section id="v-dash" class="view" hidden>
@@ -436,23 +465,9 @@
       <div id="ad-keys" class="adusers"></div>
     </section>
   </section>
+  </main>
 </div>
 <!-- AI reads running in the background, and finished ones waiting to be opened (jobs.js) -->
 <div id="jobs" class="jobs" role="status" aria-live="polite" hidden></div>
-<script src="/forms.js"></script>
-<script src="/engine.js"></script>
-<script src="/app.js"></script>
-<script src="/jobs.js"></script>
-<script src="/admin.js"></script>
-<script src="/keys.js"></script>
-<script src="/gymcsv.js"></script>
-<script src="/exifdate.js"></script>
-<script src="/gym.js"></script>
-<script src="/starter.js"></script>
-<script src="/foods.js"></script>
-<script src="/supps.js"></script>
-<script src="/dash.js"></script>
-<script src="/photos.js"></script>
-<script src="/timeline.js"></script>
 </body>
 </html>

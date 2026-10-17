@@ -72,6 +72,73 @@ const autoYes = async p => {
 const tapGap = p => p.waitForTimeout(450);
 const until = async (fn, ms = 5000) => { for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 100))) if (await fn()) return true; return !!(await fn()); };
 
+/* The app shell: each page has its own title and moves focus to its heading, an unknown #page says so, the skip link and the
+   account menu work from the keyboard, several AI-read notes fold into one bar that the page keeps room for, nothing sticks
+   on a very short screen (400 % zoom), and a start-up without a connection says so with a Retry button. */
+async function appShell(browser, pg, w, h) {
+  const active = () => pg.evaluate(() => document.activeElement && (document.activeElement.id || document.activeElement.className));
+  await pg.click('a[data-view=gym]'); await pg.waitForSelector('#v-gym:not([hidden])');
+  expect(await pg.title() === 'Gym – Logbook Monster', 'the Gym title: ' + await pg.title());
+  expect(await active() === 'vh' && await pg.textContent('#vh') === 'Gym', 'focus should move to the Gym heading, not ' + await active());
+  await pg.evaluate(() => { location.hash = '#day/' + addDays(todayStr(), -1); }); await pg.waitForSelector('#v-day:not([hidden])');
+  expect(await pg.title() === `Daily Tracker – ${await pg.evaluate(() => fmtLong(addDays(todayStr(), -1)))} – Logbook Monster`, 'the Daily Tracker title names the day: ' + await pg.title());
+  await pg.click('#v-day [data-act=next]');   /* another day on the same page: focus stays on the button you pressed */
+  await pg.waitForFunction(() => document.title.includes(fmtLong(todayStr())));
+  expect(await pg.evaluate(() => document.activeElement.dataset.act) === 'next', 'next day should keep focus on its button');
+  for (const [hsh, t] of [['dash', 'Dashboard'], ['history', 'History'], ['history/timeline', 'Timeline'], ['foods', 'Food Library'], ['supps', 'Supplements'],
+    ['photos', 'Progress photos'], ['account', 'Account admin'], ['admin/people', 'Super admin – People'], ['admin/log', 'Super admin – Security log']]) {
+    await pg.evaluate(x => { location.hash = '#' + x; }, hsh);
+    await pg.waitForFunction(t => document.title === t + ' – Logbook Monster' && document.activeElement.id === 'vh', t, { timeout: 5000 })
+      .catch(() => { throw new Error(`#${hsh}: title should be “${t} – Logbook Monster” with focus on its heading`); });
+  }
+  await pg.evaluate(() => { location.hash = '#nowhere'; }); await pg.waitForSelector('#v-none:not([hidden])');
+  expect(/There’s no page like that/.test(await pg.textContent('#none-h')) && await pg.isHidden('#v-day'), 'an unknown page should say so');
+  expect(await pg.title() === 'Page not found – Logbook Monster', 'its title');
+  await pg.click('#v-none a.btn'); await pg.waitForSelector('#v-dash:not([hidden])');
+  /* skip link: first in the tab order, shown when focused, takes you to <main> without touching the address */
+  await pg.evaluate(() => document.activeElement.blur()); await pg.evaluate(() => window.scrollTo(0, 0));
+  await pg.evaluate(() => { document.body.tabIndex = -1; document.body.focus(); document.body.removeAttribute('tabindex'); });
+  await pg.keyboard.press('Tab');
+  expect(await active() === 'skip' && (await pg.locator('.skip').boundingBox()).y >= 0, 'the skip link should be first and visible when focused');
+  await pg.keyboard.press('Enter');
+  expect(await active() === 'main' && await pg.evaluate(() => location.hash) === '#dash', 'skip link should focus <main> and keep the address');
+  /* account menu: Escape closes it, back on its button; tabbing out of it closes it */
+  expect(/^Account menu – smoke@example\.com$/.test(await pg.getAttribute('#acct>summary', 'aria-label')), 'account menu label');
+  await pg.click('#acct>summary'); expect(await pg.evaluate(() => $('#acct').open), 'account menu opens');
+  await pg.focus('#accountlink'); await pg.keyboard.press('Escape');
+  expect(await pg.evaluate(() => !$('#acct').open && document.activeElement === $('#acct>summary')), 'Escape should close the account menu');
+  await pg.click('#acct>summary');
+  await pg.evaluate(() => [...document.querySelectorAll('#acct .acctpanel a[href], #acct .acctpanel button')].filter(x => x.offsetParent).pop().focus());
+  await pg.keyboard.press('Tab');
+  expect(await pg.evaluate(() => !$('#acct').open && !$('#acct').contains(document.activeElement)), 'tabbing past the account menu’s last link should close it');
+  /* three AI-read notes: one compact bar with a count, its list folded away, big enough buttons, room kept for it */
+  await pg.evaluate(() => { JOBS = [{ id: 9001, kind: 'plan', status: 'done', label: 'a.pdf' }, { id: 9002, kind: 'workout', status: 'running' }, { id: 9003, kind: 'supps', status: 'error', error: 'x' }]; jRender(); });
+  const bar = await pg.evaluate(() => { const b = $('#jobs').getBoundingClientRect(), t = $('#jobs [data-job=more]').getBoundingClientRect(), x = $('#jobs [data-job=dropall]').getBoundingClientRect();
+    return { h: b.height, t: [t.width, t.height], x: [x.width, x.height], room: parseFloat(getComputedStyle(document.body).paddingBottom), folded: $('#jlist').hidden, text: $('.jhead').textContent }; });
+  expect(bar.h <= 64 && bar.folded && /3 AI reads: 1 ready, 1 running, 1 failed/.test(bar.text), 'the jobs bar should be one compact line: ' + JSON.stringify(bar));
+  expect(bar.t.concat(bar.x).every(n => n >= 24), 'jobs bar buttons at least 24 × 24: ' + JSON.stringify(bar));
+  expect(bar.room >= bar.h, 'the page keeps room below for the jobs bar');
+  await pg.click('#jobs [data-job=more]');
+  expect(await pg.evaluate(() => !$('#jlist').hidden && $('#jobs [data-job=more]').getAttribute('aria-expanded') === 'true'), 'Show opens the list');
+  expect(await pg.locator('#jobs .job').count() === 3, 'all three in the list');
+  await pg.evaluate(() => { JOBS = []; jRender(); });
+  expect(await pg.evaluate(() => $('#jobs').hidden && !document.body.classList.contains('hasjobs')), 'no bar, no room kept');
+  /* 400 % zoom (a viewport 200 px tall): the Daily Tracker summary and Account admin's bar don't stick */
+  await pg.setViewportSize({ width: Math.round(w / 4), height: 200 });
+  await pg.evaluate(() => { location.hash = '#day'; }); await pg.waitForSelector('#v-day:not([hidden]) .sticky');
+  expect(await pg.evaluate(() => getComputedStyle($('#v-day .sticky')).position) === 'static', 'nothing sticks at 400% zoom');
+  await pg.setViewportSize({ width: w, height: h });
+  /* start-up offline: the alert says so, with Retry */
+  const octx = await browser.newContext({ viewport: { width: w, height: h }, storageState: await pg.context().storageState() });
+  const op = await octx.newPage(); const oerrs = []; op.on('pageerror', e => oerrs.push(e.message));
+  await op.route('**/api/me', r => r.abort('internetdisconnected'));
+  await op.goto(BASE + '/'); await op.waitForSelector('#bootnote:not([hidden])', { timeout: 5000 });
+  expect(/You seem to be offline – your changes aren’t lost/.test(await op.textContent('#bootmsg')) && await op.isVisible('#bootretry') && await op.isHidden('#loading'), 'offline start-up note with Retry');
+  await op.unroute('**/api/me'); await op.click('#bootretry'); await op.waitForSelector('#v-dash:not([hidden])', { timeout: 5000 });
+  expect(await op.isHidden('#bootnote') && !oerrs.length, 'Retry loads the app: ' + oerrs.join('; '));
+  await octx.close();
+}
+
 /* Logged food is never lost: Timeline controls and the protein buttons on Account admin leave an unloaded day alone, changes kept
    from a sign-out are saved wherever you sign in (but never over a newer copy, nor into another account), and a tab left open
    past midnight uses the new date. */
@@ -654,11 +721,11 @@ async function phase2cLibrary(browser) {
   const hash = async (h, sel) => { await pg.evaluate(h => { location.hash = h; }, h); if (sel) await pg.waitForSelector(sel, { timeout: 5000 }); };
   const back = () => pg.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));   /* the tab shown again */
   await pg.goto(BASE + '/login'); await signIn(pg); await pg.waitForSelector('#v-dash:not([hidden])');
-  /* the Dashboard's photo card: "…still running? Reload…", not "running?. Reload" */
+  /* the Dashboard's photo card: "…try again. Reload…", not "try again.. Reload" */
   await pg.route(PHOTO_LIST, r => r.abort());
   await pg.reload(); await pg.waitForFunction(() => /Couldn’t load your photos/.test(document.querySelector('#d-body').textContent), null, { timeout: 5000 });
   const dt = await pg.textContent('#d-body');
-  expect(/still running\? Reload/.test(dt) && !/\?\./.test(dt), 'the photo card error should end one sentence once: ' + dt.slice(0, 200));
+  expect(/check your connection and try again\. Reload/.test(dt) && !/[?.]\./.test(dt), 'the photo card error should end one sentence once: ' + dt.slice(0, 200));
   await pg.unroute(PHOTO_LIST);
 
   /* gym: assisted sets, less assistance is a 🏆; Records loads */
@@ -974,6 +1041,7 @@ async function formKit(browser) {
       }
       const dashScroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(dashScroll <= 1, `horizontal overflow of ${dashScroll}px on the dashboard at ${w}px wide`);
+      await appShell(browser, pg, w, h);
       await pg.click('a[data-view=day]');
       if (first) {   /* no app defaults: a new account has no plan until it makes one; this one takes the old built-in plan */
         await pg.waitForSelector('#v-day:not([hidden]) #meals .noplan', { timeout: 5000 });
@@ -1807,8 +1875,13 @@ async function formKit(browser) {
         expect(await gp.isHidden('#pudpanel') && await gp.isHidden('#ft-pud'), 'no rice pudding panel or note without pudding in the plan');
         expect(await gp.evaluate(() => pudUsed({ meals: [], off: [{ snack: 'pudding' }] })), 'a day with rice pudding shows the batch panel');
         expect(await gp.isHidden('#adminlink'), 'super admin link should be hidden for other accounts');
+        /* Super admin, for someone who isn't one: a page that says so (it used to open the Daily Tracker without a word) */
         await gp.evaluate(() => { location.hash = '#admin'; });
-        await gp.waitForSelector('#v-day:not([hidden])', { timeout: 5000 });
+        await gp.waitForSelector('#v-none:not([hidden])', { timeout: 5000 });
+        expect(/Super admin is for the app’s admins/.test(await gp.textContent('#none-h')) && await gp.isHidden('#v-admin'), 'Super admin should say it is for admins');
+        expect(/^Super admin – not available – Logbook Monster$/.test(await gp.title()), 'the title says so too: ' + await gp.title());
+        expect(await gp.getAttribute('#v-none .ghost', 'href') === '#account', 'it points to Account admin');
+        await gp.click('a[data-view=day]'); await gp.waitForSelector('#v-day:not([hidden]) #meals .noplan', { timeout: 5000 });
         await gp.click('#meals .noplan a.btn');
         await gp.waitForSelector('#v-admin.mine:not([hidden]) #ad-planstate', { timeout: 5000 });
         expect(/No plan yet/.test(await gp.textContent('#ad-planstate')) && await gp.locator('#ad-foods .adfood').count() === 0, 'the guest should have no plan and no foods');

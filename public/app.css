@@ -1,7 +1,18 @@
 /* Layout: sticky day summary on top, meals stacked below as cards with protein | carbs boxes side by side (stacked on phones) */
-.wrap{max-width:1080px;margin:0 auto;padding-inline:16px;padding-block:16px 48px;display:flex;flex-direction:column;gap:14px}
-h1{font-size:22px;font-weight:800;font-stretch:80%;margin:0;letter-spacing:.01em}
+.wrap{max-width:1080px;margin:0 auto;padding-inline:max(16px,env(safe-area-inset-left)) max(16px,env(safe-area-inset-right));padding-block:16px 48px;display:flex;flex-direction:column;gap:14px}
+.brand{font-size:22px;font-weight:800;font-stretch:80%;margin:0;letter-spacing:.01em}
+main{display:flex;flex-direction:column;gap:14px;min-width:0}
+main:focus,#vh:focus{outline:0}
 .view{display:flex;flex-direction:column;gap:14px}
+.cbanner h1{font-size:20px;margin:0}
+/* start-up: the shape of the Dashboard / Daily Tracker while the account loads (no script, no layout jump when it arrives) */
+.skel{display:flex;flex-direction:column;gap:14px}
+.sk{display:block;background:var(--surface);border:1px solid var(--line);border-radius:12px;height:150px;animation:skp 1.6s ease-in-out infinite}
+.sk-bar{height:64px}.sk.short{height:90px}
+@keyframes skp{50%{opacity:.55}}
+@media (prefers-reduced-motion:reduce){.sk{animation:none}}
+.bootnote{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px}.bootnote p{margin:0;flex:1 1 240px}
+.nonelinks{display:flex;flex-wrap:wrap;gap:8px;margin:0}.nonelinks a{text-decoration:none;padding:8px 14px}
 
 /* ---------- header ---------- */
 .top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px}
@@ -299,13 +310,20 @@ footer{font-size:var(--fs-xs);color:var(--muted)}
   .adrow{grid-template-columns:minmax(0,1fr) auto auto;grid-template-areas:"sel sel x" "amt lock .";row-gap:4px;padding-bottom:6px;border-bottom:1px solid var(--soft)}
   .adrow select{grid-area:sel}.adrow .amt{grid-area:amt}.adrow .lock{grid-area:lock}.adrow .x{grid-area:x}
 }
-/* AI reads running in the background (jobs.js) */
-.jobs{position:fixed;right:16px;bottom:16px;z-index:50;display:grid;gap:8px;width:min(380px,calc(100vw - 32px))}
-.job{display:flex;align-items:center;gap:10px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-left:4px solid var(--info);
-  border-radius:10px;padding:10px 12px;box-shadow:0 6px 20px rgba(0,0,0,.14)}
+/* AI reads running in the background (jobs.js): one compact bar – one note, or a count that opens into the list. The page
+   keeps room for it at the bottom (body.hasjobs, --jobs-h), so it never covers the control you're on. */
+.jobs{position:fixed;right:16px;bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:50;display:grid;gap:6px;width:min(400px,calc(100vw - 32px));
+  max-height:min(60vh,420px);overflow:auto;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:6px 8px;box-shadow:0 6px 20px rgba(0,0,0,.14)}
+body.hasjobs{padding-bottom:calc(var(--jobs-h,56px) + 24px + env(safe-area-inset-bottom,0px))}
+html.hasjobs{scroll-padding-bottom:calc(var(--jobs-h,56px) + 24px)}
+.job,.jhead{display:flex;align-items:center;gap:8px;border-left:4px solid var(--info);padding:2px 0 2px 8px;font-size:14px}
 .job.ok{border-left-color:var(--good)}.job.bad{border-left-color:var(--bad)}
-.job p{margin:0;flex:1;min-width:0;overflow-wrap:anywhere}.job .sub{display:block}
-.jacts{display:flex;align-items:center;gap:8px;flex:none}
+.jhead{border-left-color:var(--accent);font-weight:700}
+.job p,.jhead p{margin:0;flex:1;min-width:0;overflow-wrap:anywhere}
+.jacts{display:flex;align-items:center;gap:6px;flex:none}
+.jacts .btn,.jacts .ghost{min-height:32px;padding:4px 12px}
+.jacts .x{min-width:32px;min-height:32px;font-size:18px;line-height:1}
+.jlist{display:grid;gap:6px;padding-top:6px;border-top:1px solid var(--line)}
 .jspin{display:inline-block;animation:jspin 1.6s linear infinite}
 @keyframes jspin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}.jspin{animation:none}}
@@ -682,3 +700,11 @@ footer{font-size:var(--fs-xs);color:var(--muted)}
 .btn.danger{background:var(--bad);color:var(--accent-ink)}
 .acctfoot{margin:0;display:flex;gap:12px;justify-content:center;font-size:var(--fs-s)}
 .acctfoot a{color:var(--muted)}
+
+/* Zoomed in far (400 %) or a short landscape phone: a bar that sticks would cover most of the screen, so nothing sticks. */
+@media (max-height:500px){
+  .sticky,.adbar,.psel,.tchead{position:static}
+  .gquick{position:static;box-shadow:none}
+  .gqf{flex-wrap:wrap}.gqin{min-width:6ch}
+}
+@media (max-width:400px){.adbar{position:static}}

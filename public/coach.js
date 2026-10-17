@@ -110,4 +110,6 @@ async function start(){
 }
 $('#c-more').addEventListener('click',async()=>{cDays=Math.min(cDays+14,366);$('#c-more').hidden=cDays>=366;try{await cLoadDays();}catch{}});
 window.addEventListener('hashchange',route);
+/* the skip link moves focus to the page without changing the address */
+$('.skip').addEventListener('click',e=>{e.preventDefault();$('#main').focus();});
 document.addEventListener('DOMContentLoaded',start);
