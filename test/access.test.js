@@ -17,6 +17,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { DatabaseSync } = require('node:sqlite');
+const totp = require('../server/totp');
 
 const [PORT, AI_PORT] = require('./_ports').freePorts(2);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -55,7 +56,7 @@ let srv;
 before(async () => {
   await new Promise(r => fakeAi.listen(AI_PORT, '127.0.0.1', r));
   /* adm first: with ADMIN_EMAILS empty the first account is the super admin */
-  for (const who of ['adm', 'ann', 'bob', 'cat']) {
+  for (const who of ['adm', 'ann', 'bob', 'cat', 'dee']) {
     execFileSync(process.execPath, ['--disable-warning=ExperimentalWarning', 'scripts/create-user.js', `${who}@example.com`],
       { cwd: root, env: { ...env, NEW_PASSWORD: PASSWORD }, stdio: 'ignore' });
   }
@@ -139,6 +140,10 @@ let adm, ann, bob, A_ID, B_ID, aiMark = 0;
 async function seed() {
   adm = await signIn('adm@example.com'); ann = await signIn('ann@example.com'); bob = await signIn('bob@example.com');
   A_ID = userId('ann@example.com'); B_ID = userId('bob@example.com');
+  /* dee has the second sign-in step on */
+  const dee = await signIn('dee@example.com');
+  const key = (await dee('POST', '/api/totp/setup', {})).body.secret;
+  assert.strictEqual((await dee('POST', '/api/totp/enable', { code: totp.totp(totp.fromBase32(key)) })).status, 200);
   const ok = async (p, what) => { const r = await p; assert.ok(r.status === 200 || r.status === 202, `${what}: ${r.status} ${JSON.stringify(r.body)}`); return r.body; };
   await ok(ann('PUT', '/api/settings', { theme: 'annmark' }), 'settings');
   await ok(ann('PUT', '/api/my/defaults', plan('annmark bowl')), 'plan');
@@ -205,6 +210,7 @@ const ROUTES = [
   { key: 'POST /auth/invite/accept', scope: 'auth', body: () => ({ token: 'x'.repeat(43), password: PASSWORD }) },
   { key: 'POST /auth/logout', scope: 'auth' },
   { key: 'POST /auth/password', scope: 'auth', body: () => ({ current: PASSWORD, next: 'another-password-2' }) },
+  { key: 'POST /auth/second', scope: 'auth', body: () => ({ code: '123456' }) },
   /* server/api.js */
   { key: 'GET /api/me', own: [{ check: r => assert.strictEqual(r.body.email, 'bob@example.com') }] },
   { key: 'GET /api/defaults', own: [{ check: noAnn }] },
@@ -232,6 +238,12 @@ const ROUTES = [
   { key: 'GET /api/weights', own: [{ check: r => { noAnn(r); assert.ok(!r.text.includes('81.37')); } }] },
   { key: 'PUT /api/weights/:date', body: () => ({ kg: 55 }), own: [{ body: () => ({ kg: 70 }) }] },
   { key: 'DELETE /api/weights/:date', own: [{}] },
+  { key: 'POST /api/recheck', body: () => ({ password: PASSWORD }), own: SELF },
+  /* server/twostep.js */
+  { key: 'GET /api/totp', own: [{ check: r => assert.deepStrictEqual(r.body, { on: false, recoveryLeft: 0, readable: true }) }] },
+  { key: 'POST /api/totp/setup', own: SELF },
+  { key: 'POST /api/totp/enable', body: () => ({ code: '123456' }), own: SELF },
+  { key: 'POST /api/totp/disable', body: () => ({ password: PASSWORD }), own: SELF },
   { key: 'GET /api/export', own: [{ check: r => { noAnn(r); assert.ok(!r.text.includes('81.37')); } }] },
   /* server/gym.js */
   { key: 'GET /api/gym', own: [{ check: noAnn }] },
@@ -396,6 +408,18 @@ test('signed out: every /api route answers 401 and changes nothing', async t => 
       assert.strictEqual((await call(r.method, urlOf(r), { cookie, csrf: cfg.body.csrf, body: bodyOf(r) })).status, 401, r.key);
     }
     assert.strictEqual((await call('POST', '/auth/password', { cookie, csrf: cfg.body.csrf, body: { current: PASSWORD, next: 'another-password-2' } })).status, 401);
+  });
+  await t.test('a half-signed-in session (password right, second step not done) is not a sign-in', async () => {
+    const cfg = await call('GET', '/auth/config');
+    const r = await call('POST', '/auth/login', { cookie: cfg.headers.get('set-cookie').split(';')[0], csrf: cfg.body.csrf,
+      body: { email: 'dee@example.com', password: PASSWORD } });
+    assert.strictEqual(r.body.second, true);
+    const cookie = r.headers.get('set-cookie').split(';')[0], csrf = r.body.csrf;
+    for (const x of ROUTES.filter(x => x.scope === 'api' || x.scope === 'admin')) {
+      assert.strictEqual((await call(x.method, urlOf(x), { cookie, csrf, body: bodyOf(x) })).status, 401, x.key);
+    }
+    assert.strictEqual((await call('POST', '/auth/password', { cookie, csrf, body: { current: PASSWORD, next: 'another-password-2' } })).status, 401);
+    assert.strictEqual((await call('GET', '/', { cookie })).status, 302);
   });
   await t.test('the app page sends you to sign in', async () => {
     for (const p of ['/', '/index.html']) {

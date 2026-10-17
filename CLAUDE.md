@@ -83,6 +83,11 @@
   with `?bg=1` (`jobStart`), the route answers `202 {job}` (`jobs.respond`; without `bg` it still answers with the result) and the server keeps reading, results in `ai_jobs`
   until the person adds or drops what it read (`jobSeen(kind)` → `POST /api/jobs/:id/seen`; a reload before that lists it again). A meal plan read opens as a preview of what it would change (`adAiPend` in `admin.js`): nothing goes into the plan until "Use ticked", and the account's own foods keep their values unless ticked. The app polls `GET /api/jobs` while one runs; a finished one opens by itself if you're still on its page, otherwise a note
   (`#jobs`) and a browser notification say it's ready – and an email if the app isn't open. Each page sets `J_OPEN[kind]` / `J_BUSY[kind]`; `jobs.js` loads right after `app.js`.
+- `server/totp.js` / `server/twostep.js` – optional second sign-in step (TOTP, node:crypto only): `/api/totp` sets it up (key sealed with AES-256-GCM from
+  `SESSION_SECRET`, 10 recovery codes stored hashed) and switches it off; with it on, `/auth/login` (and Google) only half signs in (`session.half`, no `userId`)
+  until `POST /auth/second`. Wrong codes count in `login_failures` under `2fa:<id>`. `twostep.fresh` asks for the password or a code again (`POST /api/recheck`,
+  the app's `recheck()` dialog) before changing the AI key, the email settings or removing an account on a sign-in over 15 minutes old – put it on any new route that
+  sensitive. Option `adminTotp` keeps super admins without it out of `/api/admin/*`. `create-user … --no-2fa` switches it off from the shell.
 - `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by tests.
 - Secrets live only in `.env` on the server; never send them to the client or commit them.
 - Strict CSP: no inline scripts or `style=` attributes in HTML.

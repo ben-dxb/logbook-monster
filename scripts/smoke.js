@@ -1,6 +1,6 @@
 'use strict';
 /* Browser smoke test: starts a throwaway server, signs in, weighs a meal-prep pack, edits and saves a day, logs a weight,
-   opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, shares a read-only coach link and opens it signed out, uploads a plan and adds a day template on Account admin, sets up AI models and invites someone on the Super admin tabs, builds a plan from nothing as the new account, switches a day to another template, edits one day in two tabs, at desktop and phone widths. Fails on any page error.
+   opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, shares a read-only coach link and opens it signed out, sets up two-step sign-in and signs in with a code and a recovery code, confirms a sensitive admin change on an old sign-in, uploads a plan and adds a day template on Account admin, sets up AI models and invites someone on the Super admin tabs, builds a plan from nothing as the new account, switches a day to another template, edits one day in two tabs, at desktop and phone widths. Fails on any page error.
    Needs Playwright (npm i -g playwright, or available in the environment); skips if missing. */
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -27,6 +27,7 @@ const later = n => { const d = new Date(monAt); d.setDate(d.getDate() + n); retu
 const MON = later(0), FROM = later(3), MON2 = later(7);
 
 execSync(`"${node[0]}" ${node[1]} scripts/create-user.js smoke@example.com`, { cwd: root, env: { ...env, NEW_PASSWORD: 'smoke-password-1' }, stdio: 'ignore' });
+for (const w of [1100, 390]) execSync(`"${node[0]}" ${node[1]} scripts/create-user.js smoke2fa${w}@example.com`, { cwd: root, env: { ...env, NEW_PASSWORD: 'smoke-password-1' }, stdio: 'ignore' });
 const srv = spawn(node[0], [node[1], 'server/index.js'], { cwd: root, env, stdio: 'ignore' });
 
 const fail = msg => { console.error('smoke FAILED:', msg); cleanup(); process.exit(1); };
@@ -141,6 +142,73 @@ async function twoTabsOneDay(ctx) {
   await A.evaluate(async d => api('DELETE', '/api/days/' + d), d);
   await A.close(); await B.close();
   expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
+}
+
+/* Two-step sign-in from the account menu: the key and otpauth link, one code to turn it on, ten recovery codes; then a
+   sign-in asks for a code after the password, and a recovery code works too. */
+async function twoStep(browser, w, h) {
+  const totp = require('../server/totp'), email = `smoke2fa${w}@example.com`;
+  const ctx = await browser.newContext({ viewport: { width: w, height: h } }), pg = await ctx.newPage(), errs = [];
+  pg.on('pageerror', e => errs.push(e.message));   /* (wrong codes are refused on purpose, so no console-error check here) */
+  const overflow = async what => { const x = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth); expect(x <= 1, `horizontal overflow of ${x}px ${what} at ${w}px wide`); };
+  const login = async () => { await pg.goto(BASE + '/login'); await pg.fill('#email', email); await pg.fill('#password', 'smoke-password-1'); await pg.click('#submit'); };
+  await login(); await pg.waitForSelector('#v-dash:not([hidden])');
+  await pg.click('#acct>summary'); await pg.click('#tfbox>summary');
+  await pg.click('#tfbody [data-tf=start]'); await pg.waitForSelector('#tf-secret');
+  const secret = (await pg.textContent('#tf-secret')).replace(/\s/g, '');
+  expect(/^[A-Z2-7]{32}$/.test(secret) && await pg.locator(`#tfbody a[href^="otpauth://totp/"][href*="secret=${secret}"]`).count() === 1, 'the key should show as text and as an otpauth link');
+  await overflow('with the two-step set-up open');
+  const code = n => totp.totp(totp.fromBase32(secret), Date.now() + n * 30000);
+  await pg.fill('#tf-code', '000000' === code(0) ? '111111' : '000000'); await pg.click('#tfbody [data-tf=on] button');
+  await pg.waitForFunction(() => /didn’t match/.test(document.querySelector('#tfmsg').textContent), null, { timeout: 5000 });
+  await pg.fill('#tf-code', code(0)); await pg.click('#tfbody [data-tf=on] button');
+  await pg.waitForFunction(() => document.querySelectorAll('#tf-codes li').length === 10, null, { timeout: 5000 });
+  const recovery = await pg.textContent('#tf-codes li >> nth=0');
+  await overflow('with the recovery codes shown');
+  await pg.click('#tfbody [data-tf=done]');
+  await pg.waitForFunction(() => /10 recovery codes left/.test(document.querySelector('#tfbody').textContent), null, { timeout: 5000 });
+  await pg.click('#logout'); await pg.waitForURL(/\/login/);
+  /* the password alone isn't enough now */
+  await login(); await pg.waitForSelector('#second:not([hidden]) #code');
+  expect(await pg.isHidden('#form'), 'the password form should give way to the code');
+  expect((await pg.evaluate(async () => (await fetch('/api/me')).status)) === 401, 'half signed in reaches no /api route');
+  await overflow('on the code step');
+  await pg.fill('#code', '12345'); await pg.click('#codebtn');
+  await pg.waitForFunction(() => !document.querySelector('#err').hidden, null, { timeout: 5000 });
+  await pg.fill('#code', code(1)); await pg.click('#codebtn');
+  await pg.waitForSelector('#v-dash:not([hidden])');
+  await pg.click('#acct>summary'); await pg.click('#logout'); await pg.waitForURL(/\/login/);
+  let said = ''; pg.once('dialog', d => { said = d.message(); d.accept(); });
+  await login(); await pg.waitForSelector('#second:not([hidden]) #code');
+  await pg.fill('#code', recovery); await pg.click('#codebtn');
+  await pg.waitForSelector('#v-dash:not([hidden])');
+  expect(/recovery code/.test(said), 'using a recovery code should say it won’t work again');
+  await pg.click('#acct>summary'); await pg.click('#tfbox>summary');
+  await pg.waitForFunction(() => /9 recovery codes left/.test(document.querySelector('#tfbody').textContent), null, { timeout: 5000 });
+  expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
+  await ctx.close();
+}
+
+/* A sensitive admin change on a sign-in over 15 minutes old asks for the password again, then goes through. */
+async function recheck(browser) {
+  const { DatabaseSync } = require('node:sqlite');
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } }), pg = await ctx.newPage(), errs = [];
+  pg.on('pageerror', e => errs.push(e.message));
+  await pg.goto(BASE + '/login'); await signIn(pg); await pg.waitForSelector('#v-dash:not([hidden])');
+  const sid = decodeURIComponent((await ctx.cookies()).find(c => c.name === 'logbookmonster.sid').value).replace(/^s:/, '').split('.')[0];
+  const db = new DatabaseSync(env.DB_PATH);
+  db.prepare("UPDATE sessions SET sess = json_set(sess, '$.at', ?) WHERE sid = ?").run(Date.now() - 16 * 60 * 1000, sid);
+  db.close();
+  const change = pg.evaluate(() => api('PUT', '/api/admin/email', { from: '', fromName: '', host: '', port: '', secure: null, user: '', pass: '' }).then(() => 'ok', e => e.message));
+  await pg.waitForSelector('#recheck[open] #rc-in');
+  const x = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth); expect(x <= 1, `horizontal overflow of ${x}px with the re-check open`);
+  await pg.fill('#rc-in', 'wrong-password-9'); await pg.click('#rc-form button[type=submit]');
+  await pg.waitForFunction(() => /didn’t work/.test(document.querySelector('#rc-msg').textContent), null, { timeout: 5000 });
+  await pg.fill('#rc-in', 'smoke-password-1'); await pg.click('#rc-form button[type=submit]');
+  expect(await change === 'ok', 'the change should go through after the password: ' + await change);
+  expect(!(await pg.evaluate(() => document.querySelector('#recheck').open)), 'the dialog should close');
+  expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
+  await ctx.close();
 }
 
 (async () => {
@@ -935,7 +1003,9 @@ async function twoTabsOneDay(ctx) {
       await pg.click('#acct summary'); await pg.click('#logout'); await pg.waitForURL(/\/login/);
       expect(await pg.evaluate(() => localStorage.getItem('logbook-monster-unsaved')) === stash, 'unsaved-changes stash should survive sign-out');
       await ctx.close();
+      await twoStep(browser, w, h);
     }
+    await recheck(browser);
     console.log('smoke: ok (desktop + phone)');
   } catch (e) { await browser.close(); return fail(e.stack); }
   await browser.close(); cleanup();

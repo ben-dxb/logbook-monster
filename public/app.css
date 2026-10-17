@@ -8,7 +8,7 @@ h1{font-size:22px;font-weight:800;font-stretch:80%;margin:0;letter-spacing:.01em
 .views{display:flex;gap:4px;background:var(--surface);border:1px solid var(--line);border-radius:99px;padding:3px;margin-right:auto}
 .views a{text-decoration:none;color:var(--muted);font-weight:700;font-size:14px;padding:4px 14px;border-radius:99px;white-space:nowrap}
 .views a[aria-current="page"]{background:var(--accent);color:var(--accent-ink)}
-.acct{position:relative}
+.acct{position:relative;margin-left:auto}   /* at the right of its row, so the panel (right-aligned) stays on screen */
 .acct>summary{list-style:none;cursor:pointer;border:1px solid var(--line);border-radius:99px;padding:4px 12px;font-size:13px;color:var(--muted);
   max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--surface)}
 .acct>summary::-webkit-details-marker{display:none}
@@ -631,3 +631,10 @@ footer{font-size:12px;color:var(--muted)}
 .adclrow input,.adclrow select{width:100%;min-width:0;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px;color:inherit}
 .adclrow .gmv{display:flex;gap:4px;align-items:center}
 @media (max-width:640px){.adclrow{grid-template-columns:minmax(0,1fr) minmax(0,1fr);border-top:1px solid var(--line);padding-top:8px}.adclrow .adclname{grid-column:1/-1}.adclrow .gmv{grid-column:1/-1;justify-content:flex-end}}
+
+/* ---------- two-step sign-in (account menu) and the re-check dialog ---------- */
+.tfsecret{font-family:ui-monospace,monospace;font-size:13px;word-break:break-all;user-select:all;background:var(--soft);border-radius:6px;padding:6px 8px;margin:0}
+.tfcodes{font-family:ui-monospace,monospace;font-size:13px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin:0;padding:0;list-style:none;user-select:all}
+.recheck{border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);padding:16px;width:min(360px,calc(100vw - 32px))}
+.recheck h2{margin:0;font-size:18px}
+.rcbtns{display:flex;gap:8px}

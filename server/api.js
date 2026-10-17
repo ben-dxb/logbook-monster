@@ -18,6 +18,7 @@ const shares = require('./shares');
 const jobs = require('./jobs');
 const { isDate, writeError } = require('./dates');
 const version = require('./version');
+const twostep = require('./twostep');
 
 const q = {
   getSettings: db.prepare('SELECT data FROM settings WHERE user_id = ?'),
@@ -42,8 +43,9 @@ const q = {
 };
 /* App-wide switches the super admin sets. planFiles: the CSV / JSON plan upload and download buttons. aiPrivate: ask
    OpenRouter for providers that don't store or train on what they're sent. aiDailyUser / aiDailyAll: AI calls a day per
-   account / for the whole app (0 = no limit; server/ai.js). */
-const OPTIONS = { planFiles: true, aiPrivate: true, aiDailyUser: 100, aiDailyAll: 1000 };
+   account / for the whole app (0 = no limit; server/ai.js). adminTotp: super admins must have the second sign-in step on
+   before any /api/admin route answers them (off by default so turning it on can't lock the owner out). */
+const OPTIONS = { planFiles: true, aiPrivate: true, aiDailyUser: 100, aiDailyAll: 1000, adminTotp: false };
 const MAX_CAP = 1000000;
 const optionOk = (k, v) => (typeof OPTIONS[k] === 'number' ? Number.isInteger(v) && v >= 0 && v <= MAX_CAP : typeof v === 'boolean');
 function options() {
@@ -93,7 +95,7 @@ router.use(rateLimit({
 
 router.get('/me', (req, res) => {
   res.json({ id: req.user.id, email: req.user.email, name: req.user.name, hasPassword: !!req.user.password_hash,
-    google: !!req.user.google_sub, admin: defaults.isAdmin(req.user), ai: ai.status().configured, ...options(), csrf: csrfToken(req, res) });
+    google: !!req.user.google_sub, totp: twostep.isOn(req.user.id), admin: defaults.isAdmin(req.user), ai: ai.status().configured, ...options(), csrf: csrfToken(req, res) });
 });
 
 /* Each account's own meal plan (foods, day templates, week, targets), as dated changes. There are no app-wide defaults. */
@@ -116,14 +118,22 @@ router.delete('/my/defaults/:from', (req, res) => {
 });
 
 /* AI: the OpenRouter key and models (super admin), and reading a plan PDF into an account's plan format. */
-const adminOnly = (req, res, next) => (defaults.isAdmin(req.user) ? next() : res.status(403).json({ error: 'Only the super admin can do this' }));
+const adminOnly = (req, res, next) => {
+  if (!defaults.isAdmin(req.user)) return res.status(403).json({ error: 'Only the super admin can do this' });
+  if (options().adminTotp && !twostep.isOn(req.user.id)) {
+    return res.status(403).json({ setup2fa: true, error: 'Super admins must use a second sign-in step. Set it up under Two-step sign-in on the account menu first.' });
+  }
+  next();
+};
+/* changing the AI key, the email account or removing an account: password or code again if the sign-in is over 15 minutes old */
+const fresh = twostep.fresh;
 /* ?bg=1 runs it in the background (server/jobs.js); ?date= is the plan change being edited, whose foods the AI is told */
 const readPlan = (req, res) => {
   const buf = Buffer.isBuffer(req.body) ? req.body : null, type = String(req.get('content-type') || '').split(';')[0].trim();
   return jobs.respond(req, res, 'plan', () => ai.check(buf, type), () => ai.importPlan(buf, type, req.user, isDate(req.query.date) ? req.query.date : undefined));
 };
 router.get('/admin/ai', adminOnly, (req, res) => res.json(ai.status()));
-router.put('/admin/ai', adminOnly, (req, res) => {
+router.put('/admin/ai', adminOnly, (req, res, next) => (isObj(req.body) && Object.hasOwn(req.body, 'key') ? fresh(req, res, next) : next()), (req, res) => {
   if (!isObj(req.body)) return bad(res, 'Settings must be an object');
   try { res.json(ai.save(req.body, req.user)); } catch (e) { bad(res, e.message); }
 });
@@ -142,7 +152,7 @@ router.post('/admin/users', adminOnly, async (req, res) => {
 router.post('/admin/users/:id/invite', adminOnly, async (req, res) => {
   try { res.json(await users.resend(userId(req), req.user)); } catch (e) { fail(res, e); }
 });
-router.delete('/admin/users/:id', adminOnly, (req, res) => {
+router.delete('/admin/users/:id', adminOnly, fresh, (req, res) => {
   try {
     const files = photos.filesOf(userId(req));
     res.json(users.remove(userId(req), req.user, defaults.isAdmin));
@@ -157,6 +167,7 @@ router.put('/admin/options', adminOnly, (req, res) => {
   for (const [k, v] of Object.entries(req.body)) {
     if (!Object.hasOwn(OPTIONS, k)) return bad(res, `Unknown option "${k}"`);
     if (!optionOk(k, v)) return bad(res, typeof OPTIONS[k] === 'number' ? `"${k}" must be a whole number from 0 to ${MAX_CAP}` : `"${k}" must be true or false`);
+    if (k === 'adminTotp' && v && !o.adminTotp && !twostep.isOn(req.user.id)) return bad(res, 'Set up your own second sign-in step (account menu) before requiring it.');
     o[k] = v;
   }
   q.putOptions.run(JSON.stringify(o), req.user.email);
@@ -165,7 +176,7 @@ router.put('/admin/options', adminOnly, (req, res) => {
 
 /* The account the app sends email from (SMTP). */
 router.get('/admin/email', adminOnly, (req, res) => res.json(mail.status()));
-router.put('/admin/email', adminOnly, async (req, res) => {
+router.put('/admin/email', adminOnly, fresh, async (req, res) => {
   if (!isObj(req.body)) return bad(res, 'Settings must be an object');
   try { res.json(await mail.save(req.body, req.user)); } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
@@ -250,6 +261,9 @@ router.use('/photos', photos.router);
 router.use('/timeline', timeline.router);
 router.use('/shares', shares.mine);
 router.use('/jobs', jobs.router);
+router.use('/totp', twostep.router);
+/* password or code again before a sensitive change (twostep.fresh) */
+router.post('/recheck', twostep.recheck);
 
 /* Everything you've stored, as one JSON file. Written a section (and a few hundred days) at a time, letting other
    requests run in between, and only a few times an hour per account. */
