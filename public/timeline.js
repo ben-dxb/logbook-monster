@@ -136,11 +136,19 @@ function tVisible(){
     return {...s,pts};
   }).filter(s=>s.pts.length);
 }
+/* nothing to chart: say why in one sentence, with the one thing that fixes it */
+function tEmpty(){
+  const any=TL.series.some(s=>s.points.length), msg=(t,b)=>`<div class="emptyc"><p>${t}</p>${b||''}</div>`;
+  if(!any)return msg(tRange?'Nothing logged in this range yet – the days you save, your weigh-ins, gym sets and supplements chart here.':'Nothing logged yet – the days you save, your weigh-ins, gym sets and supplements chart here.',
+    tRO?'':tRange?'<button class="btn" type="button" data-ta="rangeall">Show all time</button>':`<a class="btn" href="#day/${todayStr()}">Log today on the Daily Tracker</a>`);
+  if(!tOn.size)return msg('Pick a metric above to chart it.');
+  return msg('No data for the metrics you picked in this range – pick another metric above, or a longer range.',tRange?'<button class="btn" type="button" data-ta="rangeall">Show all time</button>':'');
+}
 function drawTrends(){
   const box=$('#t-chart');if(!box||!TL)return;
   const col=tColours(), vis=tVisible();
   $('#t-scale').textContent=vis.length>1?'Each line has its own scale – hover or tap for the values.':'';
-  if(!vis.length){box.innerHTML=`<p class="emptyc">${tOn.size?'No data for the metrics you picked in this range.':'Pick a metric above to chart it.'}</p>`;return;}
+  if(!vis.length){box.innerHTML=tEmpty();return;}
   const W=Math.max(300,box.clientWidth||600), H=Math.round(Math.min(340,Math.max(230,W*0.45)));
   const one=vis.length===1, m={l:one?46:12,r:12,t:14,b:26};
   let x0=tFrom()||vis.reduce((a,s)=>s.pts[0][0]<a?s.pts[0][0]:a,TL.to);
@@ -207,7 +215,7 @@ async function tSummarise(){
   try{
     const r=await api('POST','/api/timeline/summary',{from:tFrom()||'',to:TL.to,metrics:vis.map(s=>s.key)});
     tAi={...r,about};
-  }catch(e){if(e.signedOut)return;tAi=null;tAiErr=e.message;}
+  }catch(e){if(e.signedOut)return;tAi=null;tAiErr=`Couldn’t summarise your metrics: ${endStop(e.message)}`;}
   tAiBusy=false;const b=$('#t-aibtn');if(b)b.disabled=!TL.ai;renderAi();
 }
 
@@ -292,7 +300,7 @@ function tCardBody(r){
 document.addEventListener('click',e=>{
   const b=e.target.closest('[data-ta]');if(!b||view!=='timeline')return;
   const a=b.dataset.ta;
-  if(a==='range'){tRange=+b.dataset.r;tKeep();document.querySelectorAll('[data-ta=range]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));tLoad();}
+  if(a==='range'||a==='rangeall'){tRange=a==='range'?+b.dataset.r:0;const on=document.querySelector(`[data-ta=range][data-r="${tRange}"]`);tKeep();document.querySelectorAll('[data-ta=range]').forEach(x=>x.setAttribute('aria-pressed',String(x===on)));if(a==='rangeall'&&on)on.focus();tLoad();}
   else if(a==='metric'){const k=b.dataset.k;if(tOn.has(k))tOn.delete(k);else tOn.add(k);tKeep();b.setAttribute('aria-pressed',String(tOn.has(k)));drawTrends();}
   else if(a==='ai')tSummarise();
   else if(a==='exnone')document.querySelectorAll('#t-exlist input:checked').forEach(i=>gTrendSet(+i.dataset.tx,false));

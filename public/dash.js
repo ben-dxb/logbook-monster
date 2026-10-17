@@ -120,9 +120,11 @@ async function dSend(date){
 
 /* ---------- the module cards ---------- */
 const dCard=(href,title,body,cls)=>`<a class="panel dcard${cls?' '+cls:''}" href="${href}"><h2>${esc(title)} <i class="gch">›</i></h2>${body}</a>`;
+/* a module with nothing in it yet: a plain card that says so, with the button that starts it (a link card can't hold one) */
+const dStart=(title,text,href,act)=>`<section class="panel dcard dstart"><h2>${esc(title)}</h2><p>${text}</p><p><a class="btn" href="${href}">${esc(act)}</a></p></section>`;
 function dFood(t){
   const s=SUMS[t], tpl=dTplOn(t), tg=(s&&s.targets&&s.targets.k)?s.targets:(tpl&&COACH[tpl])||null;
-  if(!s&&!TEMPLATES.length)return dCard('#day','Food today','<p>No meal plan yet – set one up on Account admin, or log food on the Daily Tracker.</p>');
+  if(!s&&!TEMPLATES.length)return dStart('Food today','No meal plan yet – set one up on Account admin, or log food on the <a href="#day">Daily Tracker</a>.','#account','Set up my meal plan');
   const row=(k,l,u)=>{const v=s?Math.round(s[k]):0, g=tg?Math.round(tg[k]):0;
     return `<div class="dmac"><span>${l}</span><b>${v}${u}</b>${g?`<span class="sub">of ${g}${u}</span><progress class="dbar${v>g*1.05?' over':''}" max="${g}" value="${Math.min(v,g)}" aria-label="${l}: ${v} of ${g}${u}"></progress>`:''}</div>`;};
   return dCard('#day','Food today',(s?'':'<p>Nothing saved for today yet.</p>')+`<div class="dmacs">${row('k','Calories',' kcal')}${row('p','Protein','g')}${row('c','Carbs','g')}${row('f','Fat','g')}</div>`);
@@ -138,7 +140,7 @@ function dWeight(t){
 }
 function dGymCard(t){
   if(dErr.gym)return dCard('#gym','Gym',dFailed('your gym sessions',dErr.gym));
-  if(!dGym.length)return dCard('#gym','Gym','<p>No sets logged yet.</p>');
+  if(!dGym.length)return dStart('Gym','No sets logged yet. Build a workout, then log its sets as you train.','#gym/new','Build a workout');
   const last=dGym.reduce((a,b)=>b.date>a.date?b:a), wk=dGym.filter(s=>s.date>addDays(t,-7)).length;
   return dCard('#gym','Gym',`<div class="dbig"><b>${wk}</b> session${wk===1?'':'s'} in the last 7 days</div>
     <p>Last: ${last.date===t?'today':esc(fmtLong(last.date))} – ${last.sets} set${last.sets===1?'':'s'}${last.volume?`, ${Math.round(last.volume).toLocaleString()} kg volume`:''}</p>`);
@@ -146,14 +148,14 @@ function dGymCard(t){
 function dSupps(){
   if(dErr.supps&&!SUPPS)return dCard('#supps/lib','Supplement regime',dFailed('your supplements',dErr.supps));
   const mine=(SUPPS||[]).filter(s=>s.mine);
-  if(!mine.length)return dCard('#supps/lib','Supplement regime','<p>No supplements yet – add them in the library, or read your regime from a PDF with AI.</p>');
+  if(!mine.length)return dStart('Supplement regime','No supplements yet – add them in the library, or read your regime from a PDF with AI.','#supps/lib','Add supplements');
   const show=mine.slice(0,8);
   return dCard('#supps/lib','Supplement regime',`<ul class="dsupps">${show.map(s=>`<li><span>${esc(s.name)}</span>${s.amount!=null?`<b>${esc(sDose(s.amount,s.unit))}</b>`:''}</li>`).join('')}</ul>
     ${mine.length>show.length?`<p>…and ${mine.length-show.length} more</p>`:''}<p>Tick “Supplements taken” on the checklist – no need to log each one.</p>`);
 }
 function dPhoto(){
   if(dErr.photos)return dCard('#photos','Progress photos',dFailed('your photos',dErr.photos));
-  if(!dPhotos||!dPhotos.length)return dCard('#photos','Progress photos','<p>No progress photos yet.</p>');
+  if(!dPhotos||!dPhotos.length)return dStart('Progress photos','No progress photos yet. Add one now and compare as you go.','#photos','Add progress photos');
   const t=todayStr(), past=dPhotos.filter(x=>x.date<=t), p=(past.length?past:dPhotos).reduce((a,b)=>b.date>a.date||(b.date===a.date&&b.id>a.id)?b:a);   /* not one dated ahead */
   return dCard('#photos','Progress photos',`<div class="dphoto"><img src="${pThumb(p)}" alt="Latest progress photo, ${esc(p.pose)}" loading="lazy"><p>Latest: ${esc(fmtLong(p.date))}<br>${dPhotoN} photo${dPhotoN===1?'':'s'} in all</p></div>`);
 }
