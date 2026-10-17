@@ -31,6 +31,8 @@ const q = {
   bytes: db.prepare('SELECT COALESCE(SUM(size + thumb_size), 0) AS n FROM photos WHERE user_id = ?'),
   add: db.prepare('INSERT INTO photos (user_id, date, pose, style, pose_ai, note, file, type, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
   put: db.prepare('UPDATE photos SET date = ?, pose = ?, style = ?, pose_ai = ?, note = ?, updated_at = ? WHERE user_id = ? AND id = ?'),
+  /* the AI's pose: only while the pose is still the one the request was asked about, or still the AI's – never over a hand edit made meanwhile */
+  aiPose: db.prepare('UPDATE photos SET pose = ?, style = ?, pose_ai = 1, updated_at = ? WHERE user_id = ? AND id = ? AND (pose_ai = 1 OR (pose = ? AND style = ?))'),
   thumb: db.prepare('UPDATE photos SET thumb = ?, thumb_size = ? WHERE user_id = ? AND id = ?'),
   del: db.prepare('DELETE FROM photos WHERE user_id = ? AND id = ?'),
   delRange: db.prepare('DELETE FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? RETURNING file, thumb'),
@@ -212,7 +214,9 @@ router.delete('/:id', (req, res) => {
 
 /* Ask the AI which pose a photo shows. It is sent only the thumbnail (the app makes one first for a photo without), and
    only when the person asks: on upload with "Let AI tell", "Tag with AI" in the catalog or "Ask AI" on one photo.
-   POST /api/photos/12/ai-pose {save: true} also stores the answer (marked as the AI's); without it the answer is only returned. */
+   POST /api/photos/12/ai-pose {save: true} also stores the answer (marked as the AI's); without it the answer is only returned.
+   {if: {pose, style}} is the pose the app saw when it asked (default: the one when the request came in); the answer is saved
+   only if the photo still has it or its pose is still the AI's, so a pose set by hand meanwhile stays (saved: false). */
 const POSE_PROMPT = `You sort fitness progress photos. Look at the picture and give two things.
 
 "pose" – which way the person's body faces the camera:
@@ -236,9 +240,10 @@ Reply with only {"pose": "front" | "back" | "left" | "right" | "other", "style":
 const poseLimit = ai.limiter(200, 'That’s a lot of photos for the AI – wait a while and try again.');
 router.post('/:id/ai-pose', poseLimit, async (req, res) => {
   try {
-    const id = idOf(req.params.id), row = q.files.get(req.user.id, id);
-    if (!row) throw fail('No such photo', 404);
+    const id = idOf(req.params.id), row = q.files.get(req.user.id, id), was = q.get.get(req.user.id, id);
+    if (!row || !was) throw fail('No such photo', 404);
     if (!row.thumb) throw fail('That photo has no small version yet – open it and try again', 409);
+    const want = (req.body || {}).if, from = want && typeof want === 'object' ? { pose: String(want.pose ?? ''), style: String(want.style ?? '') } : { pose: was.pose, style: was.style || '' };
     let buf;
     try { buf = await fs.promises.readFile(fileAt(row.thumb)); } catch { throw fail('That photo’s file is missing', 404); }
     const { reply, model } = await ai.ask(POSE_PROMPT, buf, sniff(buf) || row.type, 'progress photo', { maxTokens: 200, timeout: 60000, task: 'pose' });
@@ -246,8 +251,8 @@ router.post('/:id/ai-pose', poseLimit, async (req, res) => {
     const style = STYLES.includes(reply && reply.style) ? reply.style : '';
     const now = q.get.get(req.user.id, id);
     if (!now) throw fail('No such photo', 404);                  /* deleted while the AI was looking */
-    if (req.body && req.body.save === true) q.put.run(now.date, pose, style, 1, now.note, version.stamp(), req.user.id, id);
-    res.json({ pose, style, model, photo: view(q.get.get(req.user.id, id)) });
+    const saved = !!(req.body && req.body.save === true) && q.aiPose.run(pose, style, version.stamp(), req.user.id, id, from.pose, from.style).changes > 0;
+    res.json({ pose, style, model, saved, photo: view(q.get.get(req.user.id, id)) });
   } catch (e) { send(res, e); }
 });
 

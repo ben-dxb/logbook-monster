@@ -402,7 +402,7 @@ async function gLogSet(){
 }
 async function gAiRead(file){
   if(file.size>10*1024*1024){gMsg='That file is over 10 MB.';renderGym();return;}
-  gMsg='';gAi=null;
+  gMsg='';gAi=null;jobSeen('workout');
   try{await jobStart('/api/gym/ai-import','workout',file);}   /* read in the background: jobs.js brings the result to J_OPEN.workout */
   catch(err){if(err.signedOut)return;gMsg='The AI couldn’t read that: '+err.message;}
   renderGym();
@@ -416,7 +416,7 @@ J_OPEN.workout=job=>{
 async function gAiAdd(){
   const list=gAi.workouts.filter(w=>w.on).map(w=>({name:w.name,description:w.description,exercises:w.exercises.map(x=>({name:x.name,target:x.target,parts:x.parts||[]}))}));
   try{const r=await api('POST','/api/gym/import',{workouts:list});GY={...r,parts:GY.parts,ai:GY.ai};
-    gMsg=`Added ${list.length} workout${list.length===1?'':'s'}.`;gAi=null;renderGym();}
+    gMsg=`Added ${list.length} workout${list.length===1?'':'s'}.`;gAi=null;jobSeen('workout');renderGym();}
   catch(err){if(!err.signedOut){gMsg='Couldn’t add them: '+err.message;renderGym();}}
 }
 
@@ -447,7 +447,7 @@ document.addEventListener('click',async e=>{
   else if(g==='aitag1'){gExOpen=true;gTagAi([+b.dataset.id]);}
   else if(g==='csvgo'){if(gCsv&&!gCsv.busy)gCsvImport();}
   else if(g==='csvdrop'){gCsv=null;renderGym();}
-  else if(g==='aidrop'){gAi=null;gMsg='';renderGym();}
+  else if(g==='aidrop'){gAi=null;gMsg='';jobSeen('workout');renderGym();}
 });
 document.addEventListener('input',e=>{
   const el=e.target;if(view!=='gym')return;

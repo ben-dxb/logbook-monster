@@ -270,14 +270,18 @@ async function fFill(btn){
   err.hidden=true;
   if(!body.name.trim()){err.textContent='Give the food a name first – AI works from it.';err.hidden=false;$('#f-name').focus();return;}
   btn.disabled=true;msg.hidden=false;msg.textContent='Asking AI…';
+  /* the answer is for this form and this name: dropped if the form was closed or reopened (another food, New food) or renamed meanwhile */
+  const form=$('#f-form'), ed=fEdit, here=()=>form.isConnected&&fEdit===ed;
   try{
     const r=await api('POST','/api/foods/ai-fill',body);
+    if(!here())return;
+    if(v('f-name')!==body.name){msg.textContent='The name changed while AI was looking – tap Fill blanks with AI again.';return;}
     for(const [m,x] of Object.entries(r.values))$('#f-'+m).value=x;
     if(r.yield&&!$('#f-yield').value.trim())$('#f-yield').value=r.yield;
     fEdit.ai=r.ai;fPaintAi();
     msg.textContent=`AI filled in ${fList(r.ai.fields.map(m=>M_NAME[m]))}. Check them – its source is below.`;
-  }catch(e){msg.hidden=true;if(!e.signedOut){err.textContent=e.message;err.hidden=false;}}
-  btn.disabled=false;
+  }catch(e){if(!here())return;msg.hidden=true;if(!e.signedOut){err.textContent=e.message;err.hidden=false;}}
+  finally{btn.disabled=false;}
 }
 async function fSave(form){
   const v=id=>$('#'+id).value, err=$('#f-err');
