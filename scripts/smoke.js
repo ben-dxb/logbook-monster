@@ -2072,7 +2072,6 @@ async function formKit(browser) {
         expect(await pg.inputValue('#ad-capuser') === '100', 'saved cap should show');
         /* a refused number stays in its box with the reason, and nothing is sent */
         { let sent = 0; const on = r => { if (r.method() === 'PUT' && /\/api\/admin\/options$/.test(r.url())) sent++; }; pg.on('request', on);
-          await pg.evaluate(() => { document.querySelector('#ad-capmsg').textContent = ''; });
           await tapGap(pg); await pg.fill('#ad-capuser', '-5'); await pg.click('#ad-capform button[type=submit]'); await pg.waitForTimeout(500); pg.off('request', on);
           expect(sent === 0 && !/saved/.test(await pg.textContent('#ad-capmsg')) && await pg.getAttribute('#ad-capuser', 'aria-invalid') === 'true', 'a refused cap should not be saved'); }
         await pg.fill('#ad-capuser', '100');

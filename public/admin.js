@@ -375,6 +375,7 @@ $('#ad-capform').addEventListener('submit',e=>{
     catch(err){if(!err.signedOut&&!errToField(err,[[/aiDailyUser|per account/i,u],[/aiDailyAll|whole app/i,all]]))$('#ad-capmsg').textContent=err.message;}
   },'Saving…');
 });
+$('#ad-capform').addEventListener('input',()=>{$('#ad-capmsg').textContent='';});   /* "Limits saved." is about the last save, not what's in the boxes now */
 $('#ad-file').addEventListener('change',e=>{const el=e.target;adUpload(el.files&&el.files[0]).finally(()=>{el.value='';});});
 window.addEventListener('beforeunload',e=>{if(adDirty()){e.preventDefault();e.returnValue='';}});
 
