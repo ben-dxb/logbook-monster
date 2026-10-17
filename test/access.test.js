@@ -240,6 +240,14 @@ const ROUTES = [
   { key: 'GET /api/admin/email', scope: 'admin' },
   { key: 'PUT /api/admin/email', scope: 'admin', body: () => ({ host: 'smtp.example.com', user: 'x', pass: 'y', from: 'x@example.com' }) },
   { key: 'POST /api/admin/email/test', scope: 'admin', body: () => ({ to: 'x@example.com' }) },
+  /* Phase 4: rotating the OpenRouter key and the SMTP password, and the credential list (super admin, behind the re-check) */
+  { key: 'POST /api/admin/ai/next', scope: 'admin', body: () => ({ key: 'sk-hijack-next-0000' }) },
+  { key: 'POST /api/admin/ai/verify', scope: 'admin', body: () => ({ slot: 'active' }) },
+  { key: 'POST /api/admin/ai/promote', scope: 'admin' },
+  { key: 'POST /api/admin/email/next', scope: 'admin', body: () => ({ pass: 'hijack-pass' }) },
+  { key: 'POST /api/admin/email/verify', scope: 'admin', body: () => ({ slot: 'active' }) },
+  { key: 'POST /api/admin/email/promote', scope: 'admin' },
+  { key: 'GET /api/admin/keys', scope: 'admin' },
   { key: 'GET /api/settings', own: [{ check: noAnn }] },
   { key: 'PUT /api/settings', body: () => ({ snackOv: { hijack: { k: 1 } } }), own: [{ body: () => ({ snackOv: { bob: { k: 1 } } }) }] },
   { key: 'GET /api/days', own: [{ check: noAnn }] },
@@ -349,6 +357,7 @@ const ROUTES = [
   { key: 'GET /api/shares', own: [{ check: r => assert.deepStrictEqual(r.body.shares, []) }] },
   { key: 'POST /api/shares', body: () => ({ label: 'hijack', expires: inDays(3) }), own: SELF },
   { key: 'DELETE /api/shares/:id', u: () => `/api/shares/${c.share}`, own: NOOP },
+  { key: 'POST /api/shares/:id/renew', u: () => `/api/shares/${c.share}/renew`, own: [{ expect: [404] }] },
   /* server/jobs.js */
   { key: 'GET /api/jobs', own: [{ check: r => assert.deepStrictEqual(r.body.jobs, []) }] },
   { key: 'GET /api/jobs/:id', u: () => `/api/jobs/${c.job}`, own: [{ expect: [404] }] },

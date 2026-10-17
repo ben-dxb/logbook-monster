@@ -36,7 +36,9 @@ const safeEqual = (a, b) => {
    sign-in page stores nothing on the server. Signed in, it lives in the session. */
 const PRE = 'logbookmonster.pre';
 const preCookie = req => { const m = /(?:^|;\s*)logbookmonster\.pre=([A-Za-z0-9_-]{43})(?:;|$)/.exec(req.headers.cookie || ''); return m ? m[1] : ''; };
-const preToken = v => (v ? b64url(crypto.createHmac('sha256', config.sessionSecret).update('csrf:' + v).digest()) : '');
+/* signed with the first session secret; one signed with any secret in SESSION_SECRETS is still taken (docs/rotation.md) */
+const preTokenWith = (key, v) => (v ? b64url(crypto.createHmac('sha256', key).update('csrf:' + v).digest()) : '');
+const preToken = v => preTokenWith(config.sessionSecrets[0], v);
 function csrfToken(req, res) {
   if (req.session.userId || req.session.csrf) {
     if (!req.session.csrf) req.session.csrf = randomToken();
@@ -53,8 +55,9 @@ function csrfToken(req, res) {
 /* Every state-changing request must echo the CSRF token in a header. */
 function csrfProtect(req, res, next) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
-  const want = req.session && req.session.csrf ? req.session.csrf : preToken(preCookie(req));
-  if (!safeEqual(req.get('x-csrf-token'), want)) {
+  const got = req.get('x-csrf-token'), pre = preCookie(req);
+  const ok = req.session && req.session.csrf ? safeEqual(got, req.session.csrf) : config.sessionSecrets.some(k => safeEqual(got, preTokenWith(k, pre)));
+  if (!ok) {
     return res.status(403).json({ error: 'Your session expired. Reload the page and try again.' });
   }
   next();

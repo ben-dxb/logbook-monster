@@ -4,7 +4,8 @@
      which template each weekday uses and free foods – kept as dated changes. There are no app-wide defaults:
      a new account starts with no plan and builds or uploads its own here;
    - super admin (#admin, ADMIN_EMAILS): app-wide settings in tabs – AI (#admin/ai: OpenRouter key and a model per
-     task), People (#admin/people), Email (#admin/email), Options (#admin/options) and the Security log (#admin/log).
+     task), People (#admin/people), Email (#admin/email), Options (#admin/options), the Security log (#admin/log) and Keys
+     (#admin/keys, keys.js – credential ages and rotation).
    Uses helpers from app.js. */
 
 const AD_BOXES=[['p','Protein'],['c','Carbs'],['x','Additional fats']];
@@ -19,7 +20,7 @@ let adAi=null, adNotes=[], adSuper=false;
 const LOADERR={};   /* a part of the page whose data didn't load: its message, shown in its place */
 const loadErr=(what,k)=>`<p class="aderr" role="alert">Couldn’t load ${what}: ${esc(endStop(LOADERR[k]))} Open this tab again or reload the page to try again.</p>`;
 const loadTry=async(k,fn)=>{try{const v=await fn();delete LOADERR[k];return v;}catch(e){if(e.signedOut)throw e;LOADERR[k]=e.message||'Something went wrong';return null;}};
-const AD_TABS=['ai','people','email','options','log'];
+const AD_TABS=['ai','people','email','options','log','keys'];
 let adTab='ai';                              /* the super admin tab shown */
 const adOpen=new Set();                      /* food editors left open */
 
@@ -109,7 +110,9 @@ function renderAdmin(){
   if(!mine){if(!adSuper){adSuper=true;auLoad();amLoad();aoLoad();}
     else{if(LOADERR.au)auLoad();if(LOADERR.am)amLoad();if(LOADERR.ao)aoLoad();}   /* a part that failed to load tries again when you come back */
     if(LOADERR.ai)adAiLoad();
-    if(adTab==='log'&&!LG)lgLoad();adTabs();return;}
+    if(adTab==='log'&&!LG)lgLoad();
+    if(typeof kyLoad==='function'&&(!KY||adTab==='keys'||adTab==='ai'||adTab==='email'))kyLoad();   /* the Keys tab, its banner and the rotation controls (keys.js) */
+    adTabs();return;}
   if(!AD){adPick();adLoad();}
   if(!SH)shLoad();
   if(!ML)mlLoad();
@@ -737,8 +740,8 @@ function shRender(){
   if(!SH){$('#ad-shares').innerHTML=LOADERR.sh?loadErr('your coach links','sh'):'';return;}
   $('#ad-shares').innerHTML=SH.length?SH.map(x=>`<div class="aduser"><span class="who"><b>${esc(x.label||'Coach link')}</b>
       <span class="sub">${x.live?`Live until ${esc(shWhen(x.expires))}`:`Ran out ${esc(shWhen(x.expires))}`} · made ${esc(shWhen(x.created))}${x.used?` · last opened ${esc(shWhen(x.used))}`:' · not opened yet'}</span></span>
-    <span class="chip ${x.live?'ok':'bad'}">${x.live?'Live':'Ran out'}</span>
-    <span class="acts"><button type="button" class="ghost" data-sh="${x.live?'off':'del'}" data-id="${x.id}">${x.live?'Switch off':'Remove'}</button></span></div>`).join('')
+    <span class="chip ${x.live?'ok':'bad'}">${x.live?'Live':'Ran out'}</span>${x.idle?'<span class="chip info" title="Nobody has opened it for 30 days or more – switch it off if your coach no longer uses it">Unused 30+ days</span>':''}
+    <span class="acts">${x.live?`<button type="button" class="ghost" data-sh="renew" data-id="${x.id}">Renew</button>`:''}<button type="button" class="ghost" data-sh="${x.live?'off':'del'}" data-id="${x.id}">${x.live?'Switch off':'Remove'}</button></span></div>`).join('')
     :'<p class="sub">No coach links yet.</p>';
 }
 /* when the link runs out: a length of time from now, or the end of a picked day (this browser's time) */
@@ -764,6 +767,12 @@ document.addEventListener('click',async e=>{
   if(a==='send'){try{await navigator.share({title:'My Logbook Monster',url:$('#ad-sh-link').value});}catch{}return;}
   const x=SH&&SH.find(s=>String(s.id)===b.dataset.id);if(!x)return;
   if(a==='off'&&!confirm(`Switch off ${x.label?`“${x.label}”`:'this link'}? It stops working straight away.`))return;
+  /* a new link (new secret) for 3 months in its place; the old one stops working, and the person sends the new one themselves */
+  if(a==='renew'){
+    if(!confirm(`Renew ${x.label?`“${x.label}”`:'this link'}? You get a new link, live for 3 months, to send your coach – the current one stops working straight away.`))return;
+    once(b,async()=>{try{shNew=await api('POST',`/api/shares/${x.id}/renew`,{key:x.key});await shLoad();}catch(err){if(!err.signedOut){alert(err.message);await shLoad();}}});
+    return;
+  }
   b.disabled=true;
   try{await api('DELETE',`/api/shares/${x.id}?key=${encodeURIComponent(x.key)}`);shNew=null;await shLoad();}catch(err){b.disabled=false;if(!err.signedOut){alert(err.message);await shLoad();}}
 });
@@ -884,7 +893,8 @@ const LG_EV={'signin.ok':'Signed in','signin.failed':'Failed sign-in','signin.lo
   'recheck.failed':'Failed to confirm it’s you',signout:'Signed out','password.changed':'Password changed','google.linked':'Google linked','invite.created':'Invite made','invite.accepted':'Invite accepted',
   'account.removed':'Account removed','ai.settings':'AI settings changed','email.settings':'Email settings changed','options.changed':'Options changed',
   export:'Data downloaded','day.deleted':'Day deleted','checklist.reset':'Checklist reset','photos.deleted':'Photos deleted','food.removed':'Shared food removed',
-  'supp.removed':'Shared supplement removed','coach.created':'Coach link made','coach.off':'Coach link switched off','coach.used':'Coach link opened','ai.cap':'AI daily limit reached'};
+  'supp.removed':'Shared supplement removed','coach.created':'Coach link made','coach.off':'Coach link switched off','coach.used':'Coach link opened','ai.cap':'AI daily limit reached',
+  'secret.next':'Next key saved','secret.tested':'Key tested','secret.promoted':'Next key promoted','secret.stale':'Key due for rotation','coach.renewed':'Coach link renewed','coach.reminded':'Coach link reminder sent'};
 let LG=null, ML=null;
 const lgDetail=d=>Object.entries(d||{}).filter(([k])=>k!=='eh').map(([k,v])=>`${k}: ${Array.isArray(v)?v.join(', ')||'–':v}`).join(' · ');
 const lgAcct=a=>a.email||`account #${a.id} (removed)`;

@@ -215,7 +215,9 @@
         <a href="#admin/email" data-adt="email">Email</a>
         <a href="#admin/options" data-adt="options">Options</a>
         <a href="#admin/log" data-adt="log">Security log</a>
+        <a href="#admin/keys" data-adt="keys">Keys</a>
       </nav>
+      <p id="ad-keybanner" class="aderr adapp" role="alert" hidden></p>
     </section>
     <div class="adbar admine" role="status">
       <div id="ad-status" class="status"></div>
@@ -301,8 +303,8 @@
       <form id="ad-share" class="adshare">
         <label class="f"><span class="lbl">Who it’s for (optional)</span><input id="ad-sh-label" maxlength="60" autocomplete="off" placeholder="e.g. Coach Sam"></label>
         <label class="f"><span class="lbl">Stays live for</span><select id="ad-sh-for">
-          <option value="h1">1 hour</option><option value="h24">1 day</option><option value="d3">3 days</option><option value="d7" selected>1 week</option>
-          <option value="d14">2 weeks</option><option value="d30">1 month</option><option value="d90">3 months</option><option value="d180">6 months</option>
+          <option value="h1">1 hour</option><option value="h24">1 day</option><option value="d3">3 days</option><option value="d7">1 week</option>
+          <option value="d14">2 weeks</option><option value="d30">1 month</option><option value="d90" selected>3 months</option><option value="d180">6 months</option>
           <option value="d365">1 year</option><option value="date">Until a date…</option></select></label>
         <label class="f" id="ad-sh-untilf" hidden><span class="lbl">Until the end of</span><input id="ad-sh-until" type="date" disabled></label>
         <button class="btn" type="submit" id="ad-sh-btn">Make link</button>
@@ -345,6 +347,7 @@
         <div class="admailact"><button class="btn" type="submit">Save models</button></div>
       </form>
       <p id="ad-keymsg" class="sub" role="status"></p>
+      <div id="ad-rot-ai" class="adrot"></div>
     </section>
     <section class="panel adsuper" aria-labelledby="ad-uh" data-adtab="people">
       <h2 id="ad-uh">People</h2>
@@ -409,6 +412,12 @@
         <label class="f"><span class="lbl">Send a test email to</span><input id="ad-m-to" type="email" autocomplete="off" spellcheck="false"></label>
         <button class="ghost" type="submit" id="ad-m-testbtn">Send test email</button>
       </form>
+      <div id="ad-rot-mail" class="adrot"></div>
+    </section>
+    <section class="panel adsuper" aria-labelledby="ad-kyh" data-adtab="keys">
+      <h2 id="ad-kyh">Keys</h2>
+      <p>Every credential the app holds: where it’s kept, the slots in use, how old it is and the next step. Each should be rotated every 30 days – you get an email from day 25. Values are never shown. Step by step: <code>docs/rotation.md</code>.</p>
+      <div id="ad-keys" class="adusers"></div>
     </section>
   </section>
 </div>
@@ -418,6 +427,7 @@
 <script src="/app.js"></script>
 <script src="/jobs.js"></script>
 <script src="/admin.js"></script>
+<script src="/keys.js"></script>
 <script src="/gymcsv.js"></script>
 <script src="/exifdate.js"></script>
 <script src="/gym.js"></script>

@@ -74,8 +74,8 @@ if (config.sessionCookie !== OLD_COOKIE) {
 }
 app.use(session({
   name: config.sessionCookie,
-  /* SESSION_SECRET_OLD: the one before a rotation, still accepted on cookies signed with it (README › Rotating secrets) */
-  secret: [config.sessionSecret, config.sessionSecretOld].filter(Boolean),
+  /* SESSION_SECRETS: signs with the first, still accepts cookies signed with the others (docs/rotation.md) */
+  secret: config.sessionSecrets,
   store: new SqliteStore(db, { maxAge: config.sessionDays * 24 * 60 * 60 * 1000 }),
   resave: false,
   saveUninitialized: false,
@@ -134,4 +134,7 @@ app.use((err, req, res, next) => {
 app.listen(config.port, config.host, () => {
   console.log(`Logbook Monster listening on ${config.baseUrl} (bound to ${config.host}:${config.port})`);
   if (!config.google.enabled) console.log('Google sign-in is off - set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to turn it on.');
+  /* credential ages (server/credentials.js) and coach links about to run out (server/shares.js): now and daily */
+  require('./credentials').schedule();
+  shares.schedule();
 });

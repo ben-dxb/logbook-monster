@@ -20,11 +20,12 @@ const inList = l => l.map(e => `'${e}'`).join(', ');
 /* the events a person sees for their own account on Account admin */
 const OWN = ['signin.ok', 'signin.failed', 'signin.locked', 'second.asked', 'second.failed', 'second.locked', 'recovery.used',
   'twostep.on', 'twostep.off', 'recheck.failed', 'signout', 'password.changed', 'google.linked', 'invite.accepted',
-  'export', 'photos.deleted', 'coach.created', 'coach.off', 'coach.used'];
+  'export', 'photos.deleted', 'coach.created', 'coach.off', 'coach.used', 'coach.renewed', 'coach.reminded'];
 const EVENTS = ['signin.ok', 'signin.failed', 'signin.locked', 'signin.alert', 'second.asked', 'second.failed', 'second.locked',
   'recovery.used', 'twostep.on', 'twostep.off', 'recheck.ok', 'recheck.failed', 'signout', 'password.changed', 'google.linked',
   'invite.created', 'invite.accepted', 'account.removed', 'ai.settings', 'email.settings', 'options.changed', 'export',
-  'day.deleted', 'checklist.reset', 'photos.deleted', 'food.removed', 'supp.removed', 'coach.created', 'coach.off', 'coach.used', 'ai.cap'];
+  'day.deleted', 'checklist.reset', 'photos.deleted', 'food.removed', 'supp.removed', 'coach.created', 'coach.off', 'coach.used', 'ai.cap',
+  'secret.next', 'secret.tested', 'secret.promoted', 'secret.stale', 'coach.renewed', 'coach.reminded'];
 
 const q = {
   add: db.prepare('INSERT INTO audit (at, user_id, actor_id, event, ip, detail) VALUES (?, ?, ?, ?, ?, ?)'),
@@ -47,7 +48,9 @@ const q = {
 const redact = url => String(url == null ? '' : url).split(/[?#]/)[0].replace(/\/coach\/[^/]+/g, '/coach/REDACTED');
 /* a***@example.com, plus a keyed hash so repeated tries on one address can be told apart without storing it */
 const mask = e => { const s = String(e || '').toLowerCase(), at = s.lastIndexOf('@'); return at > 0 ? s[0] + '***' + s.slice(at) : '***'; };
-const emailHash = e => crypto.createHmac('sha256', config.sessionSecret).update('audit:' + String(e || '').toLowerCase()).digest('hex').slice(0, 12);
+/* keyed with AUDIT_HASH_KEY, or the first session secret without it: set AUDIT_HASH_KEY before rotating those, or the hashes
+   in new rows stop matching the old ones (docs/rotation.md) */
+const emailHash = e => crypto.createHmac('sha256', config.auditHashKey || config.sessionSecrets[0]).update('audit:' + String(e || '').toLowerCase()).digest('hex').slice(0, 12);
 
 /* Only small plain values; key names that could carry a secret are dropped, emails masked, URLs redacted. */
 const SECRET_KEY = /pass|secret|token|csrf|cookie|hash/i;

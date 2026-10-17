@@ -41,7 +41,7 @@
 - `public/app.js` – views (Daily Tracker, History calendar), saving, routing. A day keeps its template (`D.type`; the weekday's unless switched on the Daily Tracker) and its summary the name (`tname`). A meal marked eaten (`m.eaten`) is locked whole – the solver never moves it, its controls
   are disabled – and undoing it asks for confirmation. Shared by every page: a button or form that POSTs/PUTs runs through `once(el, fn)` (no double submits), and a number box the browser can't read ("80e") or outside its min/max is put back with a note before any page listener sees it, and letters typed into one (which Chromium drops after wiping the selection, leaving a truly empty box) are refused as typed – only a box really emptied means delete / 0; the server refuses non-numbers with 400 (`server/num.js`).
 - `public/admin.js` – Account admin (`#account`, anyone: own plan – day templates, meals, week, targets, foods) and Super admin
-  (`#admin`, in tabs: `#admin/ai`, `#admin/people`, `#admin/email`, `#admin/options`, `#admin/log` (Security log); no plan editor) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope,
+  (`#admin`, in tabs: `#admin/ai`, `#admin/people`, `#admin/email`, `#admin/options`, `#admin/log` (Security log), `#admin/keys` (credential ages, `public/keys.js`); no plan editor) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope,
   `data-adtab` per super admin tab. AI settings (OpenRouter key, default model and a model per task – `TASKS` in `server/ai.js`:
   plan, workout, supps, food, pose, exercise, summary; pass `{ task }` to `ai.ask`/`ai.askText`) are super admin only. App-wide switches (`OPTIONS` in `server/api.js`, stored in `app_config` 'options', sent in `/api/me`;
   `planFiles` shows the CSV / JSON plan upload and download buttons on Account admin; `aiPrivate` sends OpenRouter `provider: {data_collection: 'deny'}`;
@@ -77,8 +77,8 @@
   you follow – `exercises.trend`, set by "Trend" on the exercise in the Gym or the Timeline's exercise picker, `PUT /api/gym/trends` –, plus supplements with "Trend" ticked – `supplement_trends`, by name, in their most-logged unit; g/mg/mcg and vitamin D IU converted by `server/units.js`, other doses counted as `left`) toggled on the chart; `POST /api/timeline/summary`
   sends weekly averages and correlations of the shown metrics to the AI.
 - `server/shares.js` / `public/coach.html` + `public/coach.js` – coach links: Account admin's "Share with your coach" makes a passwordless,
-  read-only link (`/coach/<secret>`, only the secret's SHA-256 stored, live until a time the person picks – up to a year – or switched off,
-  `/api/shares`). The coach page reads only through GET routes under `/coach/<secret>/api` (info, defaults, days, weights, `timeline`,
+  read-only link (`/coach/<secret>`, only the secret's SHA-256 stored, live until a time the person picks – 90 days by default, up to a year – or switched off,
+  `/api/shares`; an email a week before it runs out, `POST /api/shares/:id/renew` swaps in a new secret, `idle` flags one unopened for 30 days). The coach page reads only through GET routes under `/coach/<secret>/api` (info, defaults, days, weights, `timeline`,
   `photos/<id>/file|thumb` – only a photo a day card shows, the latest of its pose on its date; no photo list or notes) and reuses `timeline.js` with `coach.js` standing in for the app's helpers (`SHARED` set → `tRO`: no edits, app links or AI).
   Add a route there only if it is a read and the coach should see it.
 - `server/jobs.js` / `public/jobs.js` – long AI reads (meal plan, workout plan, supplement regime files) run in the background: the app posts the file
@@ -97,5 +97,17 @@
 - `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by the plan CSV reader in `admin.js` (`parseCsv`, `readNum` – decimal commas and thousands separators, ambiguous `1,025` reported, never guessed) and by tests.
 - `server/assets.js` – versioned static files: the HTML pages are served with every `/x.js`/`/x.css`/`/icon.svg` rewritten to `/x.js?v=<content hash>` (immutable for a year); the pages themselves are `no-cache` + strong ETag (the route runs, then 304). Plain or old-hash URLs still load, `no-cache`. Hashes are taken at start-up in production, re-checked per page load otherwise. Reference new files from the HTML as `src="/name.js"` and they're versioned for you.
 - `server/trendcache.js` – process-local memo of `GET /api/timeline/trends` JSON per account and range; any non-GET under /api bumps the caller's generation (as the answer is sent), jobs and account removal bump theirs, AI settings/options bump all. A new background writer or an admin route that changes another account's gym/food/weight/supplement data must call `trendCache.bump(id)`. In the browser, `WGEN` (app.js) goes up on every write and when the tab is shown again; the Dashboard's feeds and the Timeline's trends are kept while it stays the same.
+- `server/seal.js` / `server/credentials.js` / `public/keys.js` – credentials (Phase 4, `docs/rotation.md`). Sealed values are envelope-encrypted:
+  a data key per purpose (`PURPOSES`) in app_config 'keys', wrapped by `SEAL_KEY` (or the first session secret), values `v2.<kid>.…`; `seal.js` rewraps,
+  reseals (v1 → v2, data keys over 30 days) and self-checks on start and daily – a new sealed field must be added to its `SPOTS` (or the totp scan).
+  `config.sessionSecrets` (SESSION_SECRETS, or SESSION_SECRET/_OLD): sign with `[0]`, accept any – anything keyed from the session secret must do the same.
+  `config.envSecret(NAME)` reads a .env secret and its date (`YYYY-MM-DD:` prefix or `NAME_SET`). `credentials.record(name, kid)` restarts a DB-held key's age
+  (only when the key changes); `credentials.list()` is Super admin › Keys (`GET /api/admin/keys`); `check()` is the 25/30/35-day backstop. The OpenRouter key
+  and SMTP password have next/old slots (`saveNext`, `verify(slot)`, `promote` in `ai.js`/`mail.js`, routes `/api/admin/{ai,email}/{next,verify,promote}`).
+- **Enrolling a new credential (five minutes, every time):** it must (1) get a row in the README › Security notes credential table; (2) be read through
+  the age-recording helper (`config.envSecret` for .env, `credentials.record` for DB-held) and listed in `credentials.list()`; (3) have two slots
+  (next/active, or a list where the first signs and all are accepted) – or a written reason there that it expires by itself within 30 days; (4) have a
+  verify call (one real, cheap use of it); (5) never be logged, sent to the browser or included in the export; (6) come with a test that the app works
+  with only NEXT set and with ACTIVE+OLD.
 - Secrets live only in `.env` on the server; never send them to the client or commit them.
 - Strict CSP: no inline scripts or `style=` attributes in HTML.
