@@ -299,6 +299,21 @@ if (!db.prepare('PRAGMA table_info(photos)').all().some(c => c.name === 'updated
   db.exec('ALTER TABLE photos ADD COLUMN updated_at TEXT');
 }
 
+/* Added later: the security log (server/audit.js). No foreign keys: a removed account's rows stay, to show who removed it. */
+db.exec(`CREATE TABLE IF NOT EXISTS audit (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  at       TEXT NOT NULL,
+  user_id  INTEGER,
+  actor_id INTEGER,
+  event    TEXT NOT NULL,
+  ip       TEXT,
+  detail   TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS audit_user ON audit(user_id, id);
+CREATE INDEX IF NOT EXISTS audit_actor ON audit(actor_id, id);
+CREATE INDEX IF NOT EXISTS audit_at ON audit(at);
+CREATE INDEX IF NOT EXISTS audit_event ON audit(event, id);`);
+
 /* Added later: ids are never handed out twice (AUTOINCREMENT), so a stale tab, or an id kept in a day or a workout, can't reach a
    record made after the one it meant was deleted. SQLite can't add that to a table, so each older table is rebuilt once – rows,
    ids, indexes and the foreign keys pointing at it as they were – in one transaction (sqlite.org/lang_altertable.html#otheralter). */

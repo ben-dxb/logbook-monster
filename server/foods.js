@@ -10,6 +10,7 @@ const { isNum } = require('./num');
 const defaults = require('./defaults');
 const ai = require('./ai');
 const version = require('./version');
+const audit = require('./audit');
 
 const COLS = 'f.id, f.user_id, f.name, f.unit, f.kind, f.k, f.p, f.c, f.f, f.recipe, f.public, f.ai, f.state, f.yield, f.free, f.updated_at, u.name AS owner';
 const q = {
@@ -197,6 +198,7 @@ router.delete('/:id', (req, res) => {
     if (!row || (row.user_id !== req.user.id && !row.public)) throw fail('No such food', 404);
     if (row.user_id !== req.user.id && !defaults.isAdmin(req.user)) throw fail('Only the person who added this food can remove it', 403);
     q.del.run(row.id);
+    if (row.user_id !== req.user.id) audit.log(req, 'food.removed', { id: row.id, name: row.name }, row.user_id);
     res.json({ ok: true });
   } catch (e) { send(res, e); }
 });

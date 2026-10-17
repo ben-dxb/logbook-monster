@@ -7,6 +7,7 @@ const rateLimit = require('express-rate-limit');
 const config = require('./config');
 const db = require('./db');
 const defaults = require('./defaults');
+const audit = require('./audit');
 
 const DEFAULT_MODEL = 'anthropic/claude-sonnet-4.5';
 const BASE = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
@@ -50,9 +51,14 @@ const appOptions = () => require('./api').appOptions();
 const capped = msg => Object.assign(new Error(msg), { status: 429 });
 function allow(take) {
   const o = appOptions(), s = als.getStore(), user = s && s.user, day = new Date().toISOString().slice(0, 10);
-  if (o.aiDailyAll && q.usedAll.get(day).n >= o.aiDailyAll) throw capped('The app has used all of today’s AI – try again tomorrow');
-  if (user && !defaults.isAdmin(user) && o.aiDailyUser && ((q.used.get(user.id, day) || {}).calls || 0) >= o.aiDailyUser)
+  if (o.aiDailyAll && q.usedAll.get(day).n >= o.aiDailyAll) {
+    audit.once(null, 'ai.cap', { cap: 'app' }, user ? user.id : null);
+    throw capped('The app has used all of today’s AI – try again tomorrow');
+  }
+  if (user && !defaults.isAdmin(user) && o.aiDailyUser && ((q.used.get(user.id, day) || {}).calls || 0) >= o.aiDailyUser) {
+    audit.once(null, 'ai.cap', { cap: 'account' }, user.id);
     throw capped('You’ve used today’s AI allowance – try again tomorrow');
+  }
   if (!take) return o;
   q.use.run(user ? user.id : 0, day);
   q.old.run(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));

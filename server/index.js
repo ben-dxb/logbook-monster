@@ -9,6 +9,7 @@ const SqliteStore = require('./sessionStore');
 const auth = require('./auth');
 const api = require('./api');
 const shares = require('./shares');
+const audit = require('./audit');
 
 const app = express();
 app.disable('x-powered-by');
@@ -76,7 +77,7 @@ app.use(express.static(pub, { index: false, maxAge: config.isProd ? '1h' : 0 }))
 app.use((err, req, res, next) => {
   if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Request too large' });
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Bad JSON' });
-  console.error(err);
+  console.error(`${req.method} ${audit.redact(req.originalUrl)}:`, err);
   res.status(500).json({ error: 'Something went wrong' });
 });
 

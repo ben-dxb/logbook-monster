@@ -7,6 +7,7 @@ const db = require('./db');
 const { hashPassword, verifyPassword, dummyVerify, passwordProblem } = require('./passwords');
 const users = require('./users');
 const mail = require('./mail');
+const audit = require('./audit');
 const twostep = require('./twostep');
 const { fetchJson } = require('./fetchjson');
 
@@ -168,14 +169,17 @@ router.post('/login', limiter, csrfProtect, needBody, async (req, res) => {
   const ok = user && user.password_hash ? await verifyPassword(password, user.password_hash) : await dummyVerify(password);
   if (!ok || locked || !accountAllowed(user)) {
     if (!ok && valid && !locked) noteFailure(email);
+    audit.log(req, locked ? 'signin.locked' : 'signin.failed', { email }, user ? user.id : null);
     return res.status(401).json({ error: 'That email and password don’t match an account.' });
   }
   q.failClear.run(email);
   if (twostep.isOn(user.id)) {
     await halfIn(req, user);
+    audit.log(req, 'second.asked', { via: 'password' }, user.id);
     return res.json({ ok: true, second: true, csrf: req.session.csrf });
   }
   await logIn(req, user);
+  audit.log(req, 'signin.ok', { via: 'password' });
   res.json({ ok: true });
 });
 
@@ -185,9 +189,11 @@ router.post('/second', limiter, csrfProtect, needBody, async (req, res) => {
   const user = h ? q.byId.get(h.uid) : null;
   if (!user || !accountAllowed(user)) return res.status(401).json({ error: 'That sign-in took too long. Start again.', restart: true });
   const r = twostep.attempt(user.id, req.body.code);
+  if (!r.ok) audit.log(req, r.locked ? 'second.locked' : 'second.failed', {}, user.id);
   if (r.locked) return res.status(429).json({ error: twostep.LOCKED });
   if (!r.ok) return res.status(401).json({ error: 'That code didn’t work. Use the newest code from your app, or a recovery code.' });
   await logIn(req, user);
+  audit.log(req, r.kind === 'recovery' ? 'recovery.used' : 'signin.ok', { via: 'second' });
   res.json({ ok: true, recovery: r.kind === 'recovery' });
 });
 
@@ -202,6 +208,7 @@ router.post('/register', limiter, csrfProtect, needBody, async (req, res) => {
   if (q.byEmail.get(email)) return res.status(409).json({ error: 'An account with this email already exists. Sign in instead.' });
   const info = q.create.run(email, name, await hashPassword(password), null);
   await logIn(req, q.byId.get(info.lastInsertRowid));
+  audit.log(req, 'signin.ok', { via: 'register' });
   res.json({ ok: true });
 });
 
@@ -233,6 +240,7 @@ router.post('/invite/accept', inviteLimiter, csrfProtect, needBody, async (req, 
   q.setPassword.run(await hashPassword(password), inv.user_id);
   if (name) q.setName.run(name, inv.user_id);
   await logIn(req, q.byId.get(inv.user_id));
+  audit.log(req, 'invite.accepted');
   if (inv.created_by) {
     mail.notify({ to: inv.created_by, subject: `${inv.email} joined Logbook Monster`,
       text: `${mailName(name) ? `${mailName(name)} (${inv.email})` : inv.email} accepted your invite and has signed in to Logbook Monster.\n\n${config.baseUrl}/#admin\n` });
@@ -241,6 +249,7 @@ router.post('/invite/accept', inviteLimiter, csrfProtect, needBody, async (req, 
 });
 
 router.post('/logout', csrfProtect, (req, res) => {
+  if (req.session.userId) audit.log(req, 'signout');
   req.session.destroy(() => {
     /* Drops cached photos and pages; the app puts back its unsaved-changes stash itself (app.js). */
     res.set('Clear-Site-Data', '"cache", "storage"');
@@ -267,6 +276,7 @@ router.post('/password', csrfProtect, requireAuth, limiter, async (req, res) => 
   const signedOut = users.endSessions(req.user.id, req.sessionID);
   const linksOff = endLinks === false ? 0 : q.endShares.run(req.user.id, new Date().toISOString()).changes;
   await renew(req);
+  audit.log(req, 'password.changed', { signedOut, linksOff });
   res.json({ ok: true, signedOut, linksOff });
 });
 
@@ -340,6 +350,7 @@ router.get('/google/callback', limiter, async (req, res) => {
     if (existing) {
       if (existing.google_sub && existing.google_sub !== claims.sub) return fail(res, 'google_failed');
       q.linkGoogle.run(claims.sub, claims.name || null, existing.id);
+      audit.log(req, 'google.linked', {}, existing.id);
       user = q.byId.get(existing.id);
     } else {
       if (!config.mayCreateAccount(email)) return fail(res, 'not_allowed');
@@ -351,6 +362,7 @@ router.get('/google/callback', limiter, async (req, res) => {
     if (twostep.isOn(user.id)) { await halfIn(req, user); return res.redirect('/login?second=1'); }
     await logIn(req, user);
   } catch { return fail(res, 'google_failed'); }
+  audit.log(req, 'signin.ok', { via: 'google' });
   res.redirect('/');
 });
 

@@ -4,7 +4,7 @@
      which template each weekday uses and free foods – kept as dated changes. There are no app-wide defaults:
      a new account starts with no plan and builds or uploads its own here;
    - super admin (#admin, ADMIN_EMAILS): app-wide settings in tabs – AI (#admin/ai: OpenRouter key and a model per
-     task), People (#admin/people) and Email (#admin/email).
+     task), People (#admin/people), Email (#admin/email), Options (#admin/options) and the Security log (#admin/log).
    Uses helpers from app.js. */
 
 const AD_BOXES=[['p','Protein'],['c','Carbs'],['x','Additional fats']];
@@ -16,7 +16,7 @@ let AD=null, AD_BASE=null, adSaved='', adType=null, adMsg='', adErrs=[], adBusy=
 let DEFS={mine:null,myVersions:[]};          /* your plan from the server: the change in effect today and every dated change */
 let DEFS_ON, adVer=null, adFrom='', adFromToday=false;          /* plan change applied now; the one being edited; the date a save takes effect from ('' = from the start) */
 let adAi=null, adNotes=[], adSuper=false;
-const AD_TABS=['ai','people','email','options'];
+const AD_TABS=['ai','people','email','options','log'];
 let adTab='ai';                              /* the super admin tab shown */
 const adOpen=new Set();                      /* food editors left open */
 
@@ -92,7 +92,7 @@ function adAddTpl(name,from){
 
 /* ---------- rendering ---------- */
 /* from the route: #admin/ai, #admin/people, #admin/email; #admin opens the first tab */
-function adRoute(arg){adTab=AD_TABS.includes(arg)?arg:AD_TABS[0];renderAdmin();}
+function adRoute(arg){adTab=AD_TABS.includes(arg)?arg:AD_TABS[0];if(adTab==='log')LG=null;if(view==='account')ML=null;renderAdmin();}
 function adTabs(){
   document.querySelectorAll('#v-admin [data-adtab]').forEach(el=>{el.hidden=el.dataset.adtab!==adTab;});
   document.querySelectorAll('#ad-tabs a').forEach(a=>{if(a.dataset.adt===adTab)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
@@ -103,9 +103,10 @@ function renderAdmin(){
   $('#v-admin').classList.toggle('mine',mine);
   $('#v-admin').classList.toggle('nofiles',!planFiles);$('#ad-planfiles').checked=planFiles;
   if(!adAi)adAiLoad();
-  if(!mine){if(!adSuper){adSuper=true;auLoad();amLoad();aoLoad();}adTabs();return;}
+  if(!mine){if(!adSuper){adSuper=true;auLoad();amLoad();aoLoad();}if(adTab==='log'&&!LG)lgLoad();adTabs();return;}
   if(!AD){adPick();adLoad();}
   if(!SH)shLoad();
+  if(!ML)mlLoad();
   pbSync();
   if(!clDraft)clLoad();else clRender();
   adVersions();
@@ -742,7 +743,7 @@ document.addEventListener('click',async e=>{
 let AU=null, auLink=null;
 const AU_STATUS={active:['ok','Active'],invited:['info','Invite sent'],expired:['bad','Invite expired']};
 const auDate=s=>s?new Date(s.replace(' ','T')+'Z').toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}):'';
-async function auLoad(){try{AU=await api('GET','/api/admin/users');}catch(e){AU=null;}auRender();}
+async function auLoad(){try{AU=await api('GET','/api/admin/users');}catch(e){AU=null;}auRender();if(LG)lgRender();}
 function auRender(){
   const m=$('#ad-ivmsg');
   m.innerHTML=auLink?`<p class="admsg">${esc(auLink.msg)}</p>${auLink.error?`<p class="aderr">${esc(auLink.error)} Send them this link yourself:</p>`:''}
@@ -817,3 +818,44 @@ $('#ad-mailtest').addEventListener('submit',async e=>{
   catch(err){if(!err.signedOut)$('#ad-mailmsg').textContent=err.message;}
   $('#ad-m-testbtn').disabled=false;
 });
+
+/* ---------- Security log (server/audit.js): the whole log on Super admin › Security log, your own account's on Account admin ---------- */
+const LG_EV={'signin.ok':'Signed in','signin.failed':'Failed sign-in','signin.locked':'Sign-in refused (locked)','signin.alert':'Alert: failed sign-ins',
+  'second.asked':'Password right, code asked for','second.failed':'Wrong sign-in code','second.locked':'Sign-in code refused (locked)',
+  'recovery.used':'Recovery code used','twostep.on':'Two-step sign-in on','twostep.off':'Two-step sign-in off','recheck.ok':'Confirmed it’s you',
+  'recheck.failed':'Failed to confirm it’s you',signout:'Signed out','password.changed':'Password changed','google.linked':'Google linked','invite.created':'Invite made','invite.accepted':'Invite accepted',
+  'account.removed':'Account removed','ai.settings':'AI settings changed','email.settings':'Email settings changed','options.changed':'Options changed',
+  export:'Data downloaded','day.deleted':'Day deleted','checklist.reset':'Checklist reset','photos.deleted':'Photos deleted','food.removed':'Shared food removed',
+  'supp.removed':'Shared supplement removed','coach.created':'Coach link made','coach.off':'Coach link switched off','coach.used':'Coach link opened','ai.cap':'AI daily limit reached'};
+let LG=null, ML=null;
+const lgDetail=d=>Object.entries(d||{}).filter(([k])=>k!=='eh').map(([k,v])=>`${k}: ${Array.isArray(v)?v.join(', ')||'–':v}`).join(' · ');
+const lgAcct=a=>a.email||`account #${a.id} (removed)`;
+function lgRow(r,all){
+  const who=all?[r.user&&lgAcct(r.user),r.actor&&(!r.user||r.actor.id!==r.user.id)&&`by ${lgAcct(r.actor)}`].filter(Boolean).join(' '):'';
+  return `<div class="aduser"><span class="who"><b>${esc(LG_EV[r.event]||r.event)}</b><span class="sub">${esc([shWhen(r.at),who,r.ip&&'from '+r.ip].filter(Boolean).join(' · '))}</span>`
+    +`${lgDetail(r.detail)?`<span class="sub">${esc(lgDetail(r.detail))}</span>`:''}</span></div>`;
+}
+$('#ad-lg-ev').insertAdjacentHTML('beforeend',Object.entries(LG_EV).map(([k,l])=>`<option value="${esc(k)}">${esc(l)}</option>`).join(''));
+async function lgLoad(more){
+  const p=new URLSearchParams(),ev=$('#ad-lg-ev').value,u=$('#ad-lg-user').value;
+  if(ev)p.set('event',ev);if(u)p.set('user',u);if(more&&LG&&LG.next)p.set('before',LG.next);
+  try{const r=await api('GET','/api/admin/log?'+p);LG=more&&LG?{rows:LG.rows.concat(r.rows),next:r.next}:r;}catch(e){if(!more)LG={rows:[],next:null};}
+  lgRender();
+}
+function lgRender(){
+  const sel=$('#ad-lg-user');
+  if(AU&&sel.options.length<2)sel.insertAdjacentHTML('beforeend',AU.users.map(u=>`<option value="${u.id}">${esc(u.email)}</option>`).join(''));
+  $('#ad-log').innerHTML=LG?(LG.rows.length?LG.rows.map(r=>lgRow(r,true)).join(''):'<p class="sub">Nothing logged for this filter.</p>'):'';
+  $('#ad-lg-more').hidden=!(LG&&LG.next);
+}
+$('#ad-lgform').addEventListener('submit',e=>{e.preventDefault();lgLoad();});
+$('#ad-lg-ev').addEventListener('change',()=>lgLoad());
+$('#ad-lg-user').addEventListener('change',()=>lgLoad());
+$('#ad-lg-more').addEventListener('click',()=>lgLoad(true));
+async function mlLoad(more){
+  ML=ML||{rows:[],next:null};
+  try{const r=await api('GET','/api/my/log'+(more&&ML.next?'?before='+ML.next:''));ML=more?{rows:ML.rows.concat(r.rows),next:r.next}:r;}catch(e){}
+  $('#ad-mylog').innerHTML=ML.rows.length?ML.rows.map(r=>lgRow(r,false)).join(''):'<p class="sub">Nothing logged yet.</p>';
+  $('#ad-ml-more').hidden=!ML.next;
+}
+$('#ad-ml-more').addEventListener('click',()=>mlLoad(true));

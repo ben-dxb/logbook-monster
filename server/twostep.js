@@ -11,6 +11,7 @@ const db = require('./db');
 const totp = require('./totp');
 const users = require('./users');
 const { verifyPassword } = require('./passwords');
+const audit = require('./audit');
 
 const q = {
   get: db.prepare('SELECT secret, enabled, last_step, recovery FROM totp WHERE user_id = ?'),
@@ -87,8 +88,14 @@ function fresh(req, res, next) {
   res.status(403).json({ recheck: can, error: can ? 'Confirm it’s you: enter your password or a code from your authenticator app.'
     : 'You signed in more than 15 minutes ago. Sign out and in again, then try once more.' });
 }
+/* the security log: a recovery code taken, and the outcome of a re-check */
+function note(req, r, event) {
+  if (r.kind === 'recovery') audit.log(req, 'recovery.used', { for: event });
+  audit.log(req, r.ok ? event + '.ok' : event + '.failed', r.ok ? { by: r.kind ? 'code' : 'password' } : { locked: !!r.locked });
+}
 async function recheck(req, res) {
   const r = await confirm(req.user, req.body || {});
+  note(req, r, 'recheck');
   if (r.locked) return res.status(429).json({ error: LOCKED });
   if (!r.ok) return res.status(400).json({ error: 'That password or code didn’t work.' });
   req.session.checked = Date.now();
@@ -119,6 +126,7 @@ router.post('/enable', (req, res) => {
     return res.status(409).json({ error: 'The second step is already on.' });
   }
   q.failClear.run(failKey(req.user.id));
+  audit.log(req, 'twostep.on');
   /* other sessions signed in with the password alone end; this one counts as just checked */
   const signedOut = users.endSessions(req.user.id, req.sessionID);
   req.session.checked = Date.now();
@@ -128,8 +136,10 @@ router.post('/disable', async (req, res) => {
   if (!row(req.user.id)) return res.json({ ok: true });
   if (isOn(req.user.id)) {
     const r = await confirm(req.user, req.body || {});
+    note(req, r, 'recheck');
     if (r.locked) return res.status(429).json({ error: LOCKED });
     if (!r.ok) return res.status(400).json({ error: 'Enter your password or a code to switch the second step off.' });
+    audit.log(req, 'twostep.off');
   }
   q.remove.run(req.user.id);
   res.json({ ok: true });
