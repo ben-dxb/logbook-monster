@@ -28,7 +28,8 @@ const newKid = () => crypto.randomBytes(5).toString('hex');
 function record(name, kid, setAt) {
   const s = read(), had = s[name];
   if (had && had.kid === kid && !setAt) return had;
-  s[name] = { ...(had || {}), name, kid, set_at: setAt || new Date().toISOString() };
+  const { old_dead_at, ...kept } = had || {};   /* a new key: "old tested dead" was about the key before it */
+  s[name] = { ...(had && had.kid === kid ? had : kept), name, kid, set_at: setAt || new Date().toISOString() };
   write(s);
   return s[name];
 }
@@ -70,10 +71,10 @@ function list() {
     return at == null ? `secret ${i + 2} can go once ${config.sessionDays} days and an hour have passed since it stopped being first`
       : at <= Date.now() ? `secret ${i + 2} can be removed now` : `secret ${i + 2} can be removed after ${fmt(at)}`;
   });
-  add({ name: 'SESSION_SECRETS', label: 'Session secret', where: src === 'file' ? 'data/.session-secret (local only)' : `.env (${src})`,
+  /* named as the owner's .env names it (SESSION_SECRET until they move to the list) */
+  add({ name: src === 'SESSION_SECRET' ? 'SESSION_SECRET' : 'SESSION_SECRETS', label: 'Session secret', where: src === 'file' ? 'data/.session-secret (local only)' : `.env (${src})`,
     slots: `${ss.length} in use – the first signs`, set: config.sessionSecretDates[0] || '',
     next: [!config.sessionSecretDates[0] ? howToDate(src === 'SESSION_SECRET' ? 'SESSION_SECRET' : 'SESSION_SECRETS') : '',
-      src === 'SESSION_SECRET' ? 'Move to SESSION_SECRETS=new,current (docs/rotation.md).' : '',
       'To rotate: put a new random secret first in SESSION_SECRETS and restart.', ...drops].filter(Boolean).join(' ') });
 
   /* the key-encrypting key */
@@ -92,21 +93,21 @@ function list() {
   add({ name: 'DATA_KEYS', label: 'Data keys (seal the AI key, SMTP password, authenticator keys)', where: 'database, wrapped', rotate: false,
     slots: `${seal.dataKeys.filter(k => k.opens).length} in use`,
     next: seal.problems ? 'Some sealed secrets don’t open – see the server log.' : `Replaced automatically every ${seal.rotateDays} days.` });
-  add({ name: 'AUDIT_HASH_KEY', label: 'Security log email hash key', where: config.auditHashKey ? '.env' : 'not set – the first session secret', rotate: false, slots: '1',
+  add({ name: 'AUDIT_HASH_KEY', label: 'Security log email hash key', where: config.auditHashKey ? '.env' : 'not set – the first session secret', rotate: false, slots: '1 in use',
     next: 'No scheduled rotation: it only links masked emails in the security log, and a new one stops new rows matching older ones. Change it only if it leaked.' });
 
   /* keys held in the database, two slots each */
   for (const [name, label, mod, envName] of [['OPENROUTER', 'OpenRouter API key', './ai', 'OPENROUTER_API_KEY'], ['SMTP', 'SMTP password', './mail', 'SMTP_PASS']]) {
     const sl = require(mod).slots();
     if (!sl.source) continue;
-    const env = sl.source === 'env', r = recorded(name);
+    const env = sl.source === 'env', r = recorded(name), oldDead = !!(sl.old && r && r.old_dead_at);
     const set = env ? config.envSecret(envName).set : (r && r.set_at) || '';
     const used = ['active', sl.next ? 'next' : '', sl.old ? `old (until ${fmt(sl.oldUntil)})` : ''].filter(Boolean).join(' + ');
     add({ name, label, where: env ? `.env (${envName})` : name === 'SMTP' ? 'database, sealed (Super admin › Email)' : 'database, sealed (Super admin › AI)', set, slots: used,
       next: [env ? (set ? 'Save one on Super admin to rotate it there.' : `${howToDate(envName)} Or save one on Super admin to rotate it there.`)
         : !set ? `To record its age, save it again on Super admin › ${name === 'SMTP' ? 'Email' : 'AI'} or promote a new one.` : '',
         sl.next ? 'Test next, then Promote.' : 'To rotate: make a new one at the provider, Save as next, Test next, Promote, revoke the old one, Test old.',
-        sl.old ? 'Revoke the old one at the provider, then Test old – it must fail.' : ''].filter(Boolean).join(' ') });
+        sl.old && !oldDead ? 'Revoke the old one at the provider, then Test old – it must fail.' : ''].filter(Boolean).join(' ') });
   }
   if (config.google.enabled) {
     const g = config.envSecret('GOOGLE_CLIENT_SECRET');
