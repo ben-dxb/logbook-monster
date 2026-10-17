@@ -209,7 +209,7 @@ async function loadDay(date){
     showLoading(true);
     try{const r=await api('GET','/api/days/'+date);
       if(r&&!S.days[date]){S.days[date]=migrate(r.data,date);SAVED.days[date]=JSON.stringify(S.days[date]);VER[date]=r.updated;}
-    }catch(e){showLoading(false);if(!e.signedOut)alert('Couldn’t load that day: '+e.message);return false;}
+    }catch(e){showLoading(false);if(!e.signedOut)noteBy(null,`Couldn’t load ${fmtLong(date)}: ${endStop(e.message)}`,()=>go('day/'+date));return false;}
     showLoading(false);
   }
   if(!S.days[date]){S.days[date]=freshOn(date);if(SAVED.days[date]===undefined)SAVED.days[date]=JSON.stringify(S.days[date]);}
@@ -219,15 +219,16 @@ async function openDay(date){
   const was=S.cur;S.cur=date;
   if(!await loadDay(date))return;
   if(S.cur!==date)return;
-  try{render();}catch(e){S.cur=was;render();alert('Couldn’t show that day: '+e.message);}   /* never leave another day on screen */
+  try{render();}catch(e){S.cur=was;render();noteBy(null,`Couldn’t show ${fmtLong(date)}: ${endStop(e.message)}`);}   /* never leave another day on screen */
 }
 async function saveNow(){                    /* log a plan you haven't changed */
   const date=S.cur;pending.set(date,JSON.stringify(day()));await flush();
 }
-async function unlogDay(){
+async function unlogDay(sure){
   const date=S.cur;
-  if(!await ask(`Remove ${fmtLong(date)} from your history? This can’t be undone.`,{yes:'Remove from history',no:'Keep it',danger:true}))return;
-  try{await api('DELETE','/api/days/'+date);}catch(e){alert(e.message);return;}
+  if(!sure&&!await ask(`Remove ${fmtLong(date)} from your history? This can’t be undone.`,{yes:'Remove from history',no:'Keep it',danger:true}))return;
+  try{await api('DELETE','/api/days/'+date);}
+  catch(e){if(!e.signedOut)noteBy($('#status [data-act=unlog]'),`Couldn’t remove ${fmtLong(date)} from your history: ${endStop(e.message)}`,()=>{if(S.cur===date)unlogDay(true);});return;}
   LOGGED.delete(date);delete SUMS[date];pending.delete(date);delete VER[date];CONFLICT.delete(date);
   S.days[date]=freshOn(date);SAVED.days[date]=JSON.stringify(S.days[date]);
   render();
@@ -420,7 +421,7 @@ function render(){
   const dir=pKey()==='d';if(dir)names.p='Direct protein min';
   const val=m=>m==='p'&&dir?T.d:T[m];
   $('#sum').innerHTML=MAC.map(m=>`<div class="stat"><span class="lbl">${names[m]}</span>
-      <span class="num">${r0(val(m))}<i>/ ${r0(tg[m])}${m==='k'?'':'g'}</i></span>${chip(m,val(m),+tg[m])}
+      <span class="num">${r0(val(m))}${+tg[m]>0?`<i>/ ${r0(tg[m])}${m==='k'?'':'g'}</i></span>${chip(m,val(m),+tg[m])}`:`<i>${m==='k'?' kcal':'g'}</i></span><span class="sub">no target</span>`}
       ${m==='p'?`<span class="sub">${dir?`total ${r0(T.p)}g`:`direct ${r0(T.d)}g`}</span>`:''}</div>`).join('');
   pbSync();
   const left={k:tg.k-T.k,p:tg.p-T.p,c:tg.c-T.c,f:tg.f-T.f};
@@ -452,6 +453,8 @@ function render(){
   ['k','p','c','f'].forEach(m=>{$('#t-'+m).value=r0(+tg[m]);});
   /* the batch panel only for a plan (or a day) that has rice pudding in it */
   {const on=pudUsed(D);$('#pudpanel').hidden=$('#ft-pud').hidden=!on;}
+  /* the pack-weighing note only for a plan (or a day) with meat delivered in sauce (foods with a daily order) */
+  $('#ft-pack').hidden=!Object.keys(FOODS).some(f=>FOODS[f].order!=null&&planFood(f))&&!D.meals.some(m=>(m.p||[]).some(i=>FOODS[i.f]&&FOODS[i.f].order!=null));
   {const {b,t}=pudBatch();const P=FOODS.pudding,sv=pudServe();
     Object.keys(PUD_DEFAULT).forEach(k=>{const el=$('#pd-'+k);if(document.activeElement!==el)el.value=+b[k];});
     $('#pudsum').innerHTML=`<b>Per 100g:</b> ${r0(P.k)} kcal · P ${r1(P.p)} · C ${r1(P.c)} · F ${r1(P.f)}<br>`+
@@ -522,7 +525,7 @@ async function addFoodToDay(food,date,qty,mi){
   S.cur=date;
   /* a food from your meal plan goes in as the plan's own food; a plan meal or library food as a library food */
   const D=day(), fid=food.fid||libFid(food);
-  if(mi!=null&&D.meals[mi]&&D.meals[mi].eaten){alert(`Meal ${D.meals[mi].id} is marked eaten – undo that first to change it.`);go('day/'+date);return false;}
+  if(mi!=null&&D.meals[mi]&&D.meals[mi].eaten){go('day/'+date);noteBy(null,`Meal ${D.meals[mi].id} is marked eaten – undo that first to change it.`);return false;}
   if(!food.fid&&!FOODS[fid])FOODS[fid]=libFoodRec(food);
   if(mi!=null&&D.meals[mi]&&FOODS[fid]){const box=(food.fid&&foodGroup(food.fid))||libBox(food);
     editMeal(mi,box,(D,m)=>{(m[box]=m[box]||[]).push(it(fid,qty));});saveMeal(mi);}
@@ -580,6 +583,11 @@ function renderHistory(){
   const avg=k=>ds.length?ds.reduce((a,s)=>a+s[k],0)/ds.length:0;
   const on=ds.filter(s=>dayStatus(s).cls==='on').length;
   const wch=ws.length>1?WEIGHTS[ws[ws.length-1]]-WEIGHTS[ws[0]]:null;
+  /* a month with nothing in it says so, with the way to start, instead of a row of "–" */
+  const none=!ds.length&&!ws.length, ever=Object.keys(SUMS).length||Object.keys(WEIGHTS).length;
+  $('#hempty').hidden=!none;$('#msum').hidden=none;
+  if(none)$('#hempty').innerHTML=`<p>${ever?`Nothing logged in ${esc(fmtMonth(month))}.`:'Nothing logged yet – the days you save on the Daily Tracker and your weigh-ins show here.'}</p>
+    <p><a class="btn" href="#day/${todayStr()}">${ever?'Open today’s Daily Tracker':'Log today on the Daily Tracker'}</a></p>`;
   $('#msum').innerHTML=[
     ['Days logged',`${ds.length}`,''],
     ['On target',ds.length?`${on}/${ds.length}`:'–','within ±100 kcal'],
@@ -601,7 +609,7 @@ function renderBadDates(){
 async function delBadDate(d){
   if(!await ask(`Delete what was saved under ${d}? This can’t be undone.`,{yes:'Delete it',no:'Keep it',danger:true}))return;
   try{if(SUMS[d])await api('DELETE','/api/days/'+d);if(WEIGHTS[d]!=null)await api('DELETE','/api/weights/'+d);}
-  catch(e){if(!e.signedOut)alert(e.message);return;}
+  catch(e){if(!e.signedOut)noteBy(document.querySelector(`[data-act=baddel][data-d="${CSS.escape(d)}"]`),`Couldn’t delete it: ${endStop(e.message)}`,()=>delBadDate(d));return;}
   delete SUMS[d];delete WEIGHTS[d];LOGGED.delete(d);renderBadDates();
 }
 
@@ -784,7 +792,7 @@ document.addEventListener('change',e=>{
   else if(a==='swap'){editMeal(+el.dataset.m,el.dataset.b,D=>{const h=new Set();const i=get(D),box=D.meals[+el.dataset.m][el.dataset.b];const mac=el.dataset.b==='p'?'p':el.dataset.b==='x'?'f':'c';
       const need=FOODS[i.f][mac]*i.g/100;placeMatched(box,el.value,mac,need,h,i);h.forEach(x=>{x.ed=true;});});}
   else if(a==='dtpl'){const D=day();if(!el.value||el.value===D.type)return;
-    if(anyEaten(D)){alert('Some meals are marked eaten – undo them first to switch this day to another template.');render();return;}
+    if(anyEaten(D)){render();noteBy($('#dtpl'),'Some meals are marked eaten – undo them first to switch this day to another template.');return;}
     /* start the day again from that template; off-plan food and pack weights stay */
     const tpl=el.value,date=S.cur,sw=()=>{if(S.cur!==date||S.days[date]!==D)return;const N=freshDay(wd(),tpl);N.off=D.off;if(D.packs)N.packs=D.packs;S.days[date]=N;render();};
     if(D.meals.some(m=>m.dirty)){render();ask('This day has unsaved meal changes. Switch template anyway? They’re dropped.',{yes:'Switch and drop them',no:'Keep my changes',danger:true}).then(ok=>{if(ok)sw();});return;}
@@ -823,13 +831,14 @@ async function offAdd(){
   const v=id=>$('#'+id).value;
   const o={n:v('o-n').trim()||'Off-plan food',k:+v('o-k')||0,p:+v('o-p')||0,c:+v('o-c')||0,f:+v('o-f')||0};
   if(!o.k&&!o.p&&!o.c&&!o.f)return;
-  let food=null;
+  let food=null,offErr='';
   if($('#o-save').checked){   /* keep it in the food library as one item, to add again on other days */
     try{food=await api('POST','/api/foods',{name:o.n,unit:'each',k:o.k,p:o.p,c:o.c,f:o.f});LIB.push(food);LIB.sort((a,b)=>a.name.localeCompare(b.name));libRegister();}
-    catch(err){if(err.signedOut)return;alert('It’s added to this day, but it couldn’t be saved to your food library: '+err.message);}   /* the day's entry is never lost */
+    catch(err){if(err.signedOut)return;offErr=`It’s added to this day, but it couldn’t be saved to your food library: ${endStop(err.message)}`;}   /* the day's entry is never lost */
   }
   act(D=>{if(food)libAdd(D,food,1);else D.off.push(o);});
   ['o-n','o-k','o-p','o-c','o-f'].forEach(id=>$('#'+id).value='');$('#o-save').checked=false;
+  if(offErr)noteBy($('#o-save'),offErr);
 }
 $('#coach').addEventListener('click',()=>act(D=>{const t=hasTemplate(D.type)?D.type:TYPE[wd()];D.targets={...(t?COACH[t]:{k:0,p:0,c:0,f:0})};}));
 
@@ -949,6 +958,6 @@ document.addEventListener('DOMContentLoaded',async()=>{
   if(libErr)bootNote(`Your food library couldn’t load (${libErr}), so its foods are missing until you reload the page.`,true);
   route();
   if(pending.size)flush();   /* changes kept from a sign-out go now, whatever page you land on */
-  if(skipped.length)alert(`Changes you made before you were signed out weren’t put back, because ${skipped.join(', ')} changed on another device or tab since. The newer copy is kept.`);
+  if(skipped.length)bootNote(`Changes you made before you were signed out weren’t put back, because ${skipped.join(', ')} changed on another device or tab since. The newer copy is kept.`);
   jobsInit();
 });

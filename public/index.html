@@ -109,11 +109,11 @@
     <div id="meals"></div>
     <section class="panel" aria-labelledby="ph" id="pudpanel">
       <h2 id="ph">Rice pudding batch</h2>
-      <p>Enter what went into the pan and what the finished batch weighed. Every rice pudding amount on this page is in grams and works from these numbers, so you can portion it however you like. Your biggest serving is set by the 20g casein limit.</p>
+      <p>Enter what went into the pan and what the finished batch weighed. Every rice pudding amount on this page is in grams and works from these numbers, so you can portion it however you like. Your biggest serving keeps its casein to 20g or less.</p>
       <div class="grid6">
         <label class="f"><span class="lbl">Pudding rice g</span><input id="pd-rice" data-pud="rice" type="number" inputmode="decimal" min="0"></label>
         <label class="f"><span class="lbl">Almond milk ml</span><input id="pd-almond" data-pud="almond" type="number" inputmode="decimal" min="0"></label>
-        <label class="f"><span class="lbl">Oatly Barista ml</span><input id="pd-oat" data-pud="oat" type="number" inputmode="decimal" min="0"></label>
+        <label class="f"><span class="lbl">Oat milk ml</span><input id="pd-oat" data-pud="oat" type="number" inputmode="decimal" min="0"></label>
         <label class="f"><span class="lbl">Custard powder g</span><input id="pd-custard" data-pud="custard" type="number" inputmode="decimal" min="0"></label>
         <label class="f"><span class="lbl">Casein g</span><input id="pd-casein" data-pud="casein" type="number" inputmode="decimal" min="0"></label>
         <label class="f"><span class="lbl">Finished weight g</span><input id="pd-weight" data-pud="weight" type="number" inputmode="decimal" min="1"></label>
@@ -122,7 +122,9 @@
     </section>
     <section class="panel" aria-labelledby="oh">
       <h2 id="oh">Off plan</h2>
-      <p>Changes inside a meal wait until you tap “Save meal”; saving locks that meal and rebalances the rest. While you edit, tick “Balance this meal as I edit” to have the meal's other unlocked foods move as you change one (say more protein or fat), keeping the meal's calories. Add what you want to eat off plan and the rest of the day shrinks to make room. Lock anything you don't want touched. To free up space by hand instead, turn off auto-balance and trim meals – what you free up shows at the top as “left to spend”.</p>
+      <p>Add what you want to eat off plan and the rest of the day shrinks to make room.</p>
+      <details class="dhelp"><summary>How balancing works</summary>
+        <p>Changes inside a meal wait until you tap “Save meal”; saving locks that meal and rebalances the rest. While you edit, tick “Balance this meal as I edit” to have the meal's other unlocked foods move as you change one (say more protein or fat), keeping the meal's calories. Lock anything you don't want touched. To free up space by hand instead, turn off auto-balance and trim meals – what you free up shows at the top as “left to spend”.</p></details>
       <form id="snackform" class="snackf">
         <label class="f sn"><span class="lbl">Snack</span><select id="sn"></select></label>
         <label class="f sq"><span class="lbl" id="su">How many</span><input id="sq" type="number" inputmode="decimal" min="0" step="1" value="1"></label>
@@ -163,7 +165,7 @@
         <button class="btn" id="coach" type="button">Plan targets</button>
       </div>
     </section>
-    <footer>Every change saves to your account automatically. Green/red amounts show the change from the plan.<span id="ft-pud"> Rice pudding is weighed in grams from the batch.</span> For meat delivered in sauce, weigh the pack and the box under the meat tells you how much of it to eat.</footer>
+    <footer>Every change saves to your account automatically. Green/red amounts show the change from the plan.<span id="ft-pud"> Rice pudding is weighed in grams from the batch.</span><span id="ft-pack"> For meat delivered in sauce, weigh the pack and the box under the meat tells you how much of it to eat.</span></footer>
   </section>
 
   <!-- ===================== HISTORY ===================== -->
@@ -183,6 +185,7 @@
       <span><i class="dot over">▲</i> Over</span>
       <span><i class="dot under">▼</i> Under</span>
     </div>
+    <div id="hempty" class="panel hempty" hidden></div>
     <div id="cal" class="cal"></div>
     <div id="msum" class="msum"></div>
     <div id="hbad" class="note hbad" role="note" hidden></div>
