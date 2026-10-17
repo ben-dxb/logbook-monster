@@ -382,7 +382,7 @@ async function gCsvImport(){
     const out=C.res.skipped;
     C.done=`Added ${added.toLocaleString()} set${added===1?'':'s'}${skipped?` (${skipped.toLocaleString()} you already had ${skipped===1?'was':'were'} skipped)`:''}${fresh?` and ${fresh} new exercise${fresh===1?'':'s'}`:''}.`
       +(out.length?` ${out.length.toLocaleString()} row${out.length===1?' of the file was':'s of the file were'} left out: ${out.slice(0,3).map(x=>`line ${x.line}, ${x.why}`).join('; ')}${out.length>3?'; …':''}.`:'');
-  }catch(e){if(e.signedOut)return;C.err=`Stopped after ${C.sent.toLocaleString()} sets: ${e.message}. Import the file again to carry on – sets already added are skipped.`;}
+  }catch(e){if(e.signedOut)return;C.err=`Stopped after ${C.sent.toLocaleString()} sets: ${endStop(e.message)} Import the file again to carry on – sets already added are skipped.`;}
   C.busy=false;Object.keys(GSETS).forEach(k=>delete GSETS[k]);gChanged();
   try{await gLoad();}catch{}
   renderGym();

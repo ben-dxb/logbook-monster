@@ -84,19 +84,27 @@ mine.delete('/:id', (req, res) => {
 });
 
 /* ---------- the coach's side (under /coach/<secret>/api, no sign-in, read only) ---------- */
-/* The secret is 256 random bits, so guessing is hopeless; this only slows anyone trying, and never a working link. */
+/* the live link a request names, or null (looked up once per request) */
+function lookup(req) {
+  if (req.shareFound !== undefined) return req.shareFound;
+  const token = String(req.params.token || '');
+  const row = TOKEN_RE.test(token) ? q.byHash.get(hash(token)) : null;
+  const user = row && row.expires_at > nowIso() ? q.owner.get(row.user_id) : null;
+  return (req.shareFound = user && auth.accountAllowed(user) ? { row, user } : null);
+}
+/* The secret is 256 random bits, so guessing is hopeless; this only slows anyone trying. Only links that don't work count,
+   and a working link is never held back by them – a coach behind the same address as someone mistyping still gets in. */
 const badLimit = rateLimit({
   windowMs: 15 * 60 * 1000, limit: Math.max(30, config.authRateLimit), standardHeaders: 'draft-7', legacyHeaders: false,
-  skipSuccessfulRequests: true, requestWasSuccessful: (req, res) => res.statusCode !== 404 || !!req.share,
+  skip: req => !!lookup(req),
   message: { error: 'Too many tries. Wait a few minutes and try again.' },
 });
 
 function resolve(req, res, next) {
   res.set({ 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' });
-  const token = String(req.params.token || '');
-  const row = TOKEN_RE.test(token) ? q.byHash.get(hash(token)) : null;
-  const user = row && row.expires_at > nowIso() ? q.owner.get(row.user_id) : null;
-  if (!user || !auth.accountAllowed(user)) return res.status(404).json({ error: 'This link has run out or been switched off. Ask for a new one.', gone: true });
+  const found = lookup(req);
+  if (!found) return res.status(404).json({ error: 'This link has run out or been switched off. Ask for a new one.', gone: true });
+  const { row, user } = found;
   req.user = user; req.share = row;
   audit.once(req, 'coach.used', { id: row.id }, row.user_id);
   next();

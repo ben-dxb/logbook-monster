@@ -113,7 +113,11 @@ app.use(express.static(pub, { index: false, maxAge: config.isProd ? '1h' : 0 }))
 app.use((err, req, res, next) => {
   if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Request too large' });
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Bad JSON' });
-  if (err instanceof URIError || (err.status === 400 && /decode/i.test(err.message))) return res.status(400).json({ error: 'Bad address' });   /* a broken %-escape in a route id */
+  if (err instanceof URIError || (err.status === 400 && /decode/i.test(err.message))) {   /* a broken %-escape in a route id */
+    /* a garbled coach link opens the coach page, which says the link doesn't work (its API answers 404 for the token) */
+    if ((req.method === 'GET' || req.method === 'HEAD') && /^\/coach\/[^/]+\/?$/.test(req.path)) { res.set('X-Robots-Tag', 'noindex, nofollow'); return page('coach.html')(req, res, next); }
+    return res.status(400).json({ error: 'Bad address' });
+  }
   console.error(`${req.method} ${audit.redact(req.originalUrl)}:`, err);
   res.status(500).json({ error: 'Something went wrong' });
 });

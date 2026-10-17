@@ -36,6 +36,7 @@ const q = {
   putWeight: db.prepare(`INSERT INTO weights (user_id, date, kg) VALUES (?, ?, ?)
     ON CONFLICT(user_id, date) DO UPDATE SET kg = excluded.kg, updated_at = datetime('now')`),
   delWeight: db.prepare('DELETE FROM weights WHERE user_id = ? AND date = ?'),
+  getWeight: db.prepare('SELECT kg FROM weights WHERE user_id = ? AND date = ?'),
   daysSize: db.prepare('SELECT COALESCE(SUM(length(data)), 0) AS n FROM days WHERE user_id = ?'),   /* covered by days_size */
   daySize: db.prepare('SELECT length(data) AS n FROM days WHERE user_id = ? AND date = ?'),
   daysAfter: db.prepare('SELECT date, data FROM days WHERE user_id = ? AND date > ? ORDER BY date LIMIT ?'),
@@ -297,8 +298,11 @@ router.put('/days/:date', (req, res) => {
   q.putDay.run(req.user.id, req.params.date, json, JSON.stringify(cleanSummary(summary)), updated);
   res.json({ ok: true, updated });
 });
+/* a delete also takes a key stored before dates were checked (2026-02-31) exactly as stored – only while that row is there */
+const SHAPE = /^\d{4}-\d{2}-\d{2}$/;
+const delOk = (d, has) => isDate(d) || (SHAPE.test(d) && !!has(d));
 router.delete('/days/:date', (req, res) => {
-  if (!isDate(req.params.date)) return bad(res, 'Bad date');
+  if (!delOk(req.params.date, d => q.dayVersion.get(req.user.id, d))) return bad(res, 'Bad date');
   if (q.delDay.run(req.user.id, req.params.date).changes) audit.log(req, 'day.deleted', { date: req.params.date });
   res.json({ ok: true });
 });
@@ -315,7 +319,7 @@ router.put('/weights/:date', (req, res) => {
   res.json({ ok: true });
 });
 router.delete('/weights/:date', (req, res) => {
-  if (!isDate(req.params.date)) return bad(res, 'Bad date');
+  if (!delOk(req.params.date, d => q.getWeight.get(req.user.id, d))) return bad(res, 'Bad date');
   q.delWeight.run(req.user.id, req.params.date);
   res.json({ ok: true });
 });
@@ -360,7 +364,10 @@ router.get('/export', exportLimit, async (req, res) => {
     ['photos', () => photos.exportFor(user)],
   ];
   audit.log(req, 'export');
-  res.attachment(`logbook-monster-${new Date().toISOString().slice(0, 10)}.json`);
+  /* named by the browser's own date (?date=, within a day of the server's – time zones run from UTC−12 to UTC+14) */
+  const near = [-1, 0, 1].map(n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10));
+  const on = isDate(req.query.date) && near.includes(req.query.date) ? req.query.date : near[1];
+  res.attachment(`logbook-monster-${on}.json`);
   res.type('json');
   try {
     await field('exported', new Date().toISOString(), true);

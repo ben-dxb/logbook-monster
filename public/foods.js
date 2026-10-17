@@ -216,12 +216,18 @@ function fAddForm(f){
   </form>`;
 }
 
-/* the meals of that day (as saved, or as the plan would start it), plus the off-plan list */
+/* the meals of that day (as saved, or as the plan would start it), plus the off-plan list. A saved day not loaded yet is loaded
+   first – its meals can differ from the plan's (another template, meals eaten), so the plan's are never offered for it. */
 function fWhereOpts(date,sel){
   let meals=[];
+  if(isDate(date)&&!S.days[date]&&LOGGED.has(date)){fWhereLoad(date);return `<option value="off">Off plan</option><option disabled>Loading that day’s meals…</option>`;}
   if(isDate(date)){try{meals=S.days[date]?S.days[date].meals:freshOn(date).meals;}catch{meals=[];}}
   return `<option value="off">Off plan</option>`+meals.map((m,mi)=>`<option value="${mi}"${String(mi)===String(sel)&&!m.eaten?' selected':''}${m.eaten?' disabled':''}>Meal ${esc(m.id)} – ${esc(m.name)}${m.eaten?' (eaten)':''}</option>`).join('');
 }
+const F_WHERE=new Set();
+async function fWhereLoad(date){if(F_WHERE.has(date))return;F_WHERE.add(date);
+  try{await loadDay(date);}finally{F_WHERE.delete(date);}
+  const s=$('#f-awhere');if(s&&S.days[date]&&fAdding&&fAdding.date===date)s.innerHTML=fWhereOpts(date,fAdding.where);}
 
 /* ---------- add / edit ---------- */
 const fNotesLabel=k=>k==='meal'?'Recipe (optional)':'Notes (optional) – brand, where to buy';

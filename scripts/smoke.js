@@ -256,6 +256,112 @@ async function phase1c(browser) {
   await ctx.close();
 }
 
+/* Phase 2C tracker leftovers: a far "Takes effect from" date is refused (never read as "from the start"), an impossible month
+   isn't rolled into another, Food Library's "Where" lists a saved day's own meals, a save for a day under another plan doesn't
+   take that plan's foods away from the day on screen, the export is named by the browser's date, a tab left open past midnight
+   moves on at the next tap, a garbled coach link shows the "doesn't work" panel, a day stored under an impossible date can be
+   deleted from History, and a load error reads as one sentence. */
+async function phase2c(browser) {
+  const ctx = await browser.newContext({ viewport: { width: 1100, height: 900 } }), pg = await ctx.newPage(), errs = [];
+  pg.on('pageerror', e => errs.push(e.message)); pg.on('dialog', d => d.accept());
+  await pg.goto(BASE + '/login'); await signIn(pg); await pg.waitForSelector('#v-dash:not([hidden])');
+  /* REG-1: a date past the window keeps the box as typed, says why and can't be saved; clearing it means from the start */
+  await pg.evaluate(() => { location.hash = '#account'; }); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
+  const from0 = await pg.evaluate(() => adFrom), far = await pg.evaluate(() => addDays(lastDate(), 30));
+  await pg.evaluate(() => { AD.targets[adType].k += 1; adStatus(); });
+  await pg.fill('#ad-from', far); await pg.press('#ad-from', 'Tab');
+  expect(await pg.evaluate(() => adFrom) === from0 && await pg.inputValue('#ad-from') === far && await pg.isDisabled('#ad-save')
+    && /Pick a date from 2000 to a year from today/.test(await pg.textContent('#ad-fromhint')), 'a far "Takes effect from" date should be refused, not read as from the start');
+  await pg.fill('#ad-from', from0); await pg.press('#ad-from', 'Tab');
+  expect(!(await pg.isDisabled('#ad-save')), 'a good date again should let the plan be saved');
+  await pg.click('#ad-discard');
+  /* PR-TR-037: no month 13 */
+  await pg.evaluate(() => { location.hash = '#history/2026-13'; });
+  await pg.waitForFunction(() => location.hash === '#history' && /no such month/.test(document.querySelector('#numnote').textContent), null, { timeout: 5000 });
+  expect(await pg.textContent('#mtitle') === await pg.evaluate(() => fmtMonth(todayStr().slice(0, 7) + '-01')), '#history/2026-13 should show this month');
+  /* PR-TR-053 / PR-FS-026: a saved day's own meals in the Food Library's "Where", loaded first after a reload */
+  const saved = await pg.evaluate(async () => {
+    const d = addDays(todayStr(), -9), D = freshOn(d);
+    D.meals = [{ ...D.meals[0], id: 'Z', name: 'Smoke saved meal' }];
+    await api('PUT', '/api/days/' + d, { data: D, summary: { k: 0, p: 0, c: 0, f: 0, targets: D.targets } }); return d; });
+  await pg.evaluate(() => { location.hash = '#dash'; }); await pg.reload(); await pg.waitForSelector('#v-dash:not([hidden])');
+  await pg.evaluate(() => { location.hash = '#foods'; }); await pg.waitForSelector('#v-foods:not([hidden]) [data-fa=add]');
+  await pg.click('#v-foods [data-fa=add] >> nth=0');
+  await pg.fill('#f-adate', saved); await pg.dispatchEvent('#f-adate', 'change');
+  await pg.waitForFunction(() => [...document.querySelectorAll('#f-awhere option')].map(o => o.textContent).join('|') === 'Off plan|Meal Z – Smoke saved meal', null, { timeout: 5000 });
+  await pg.click('#v-foods [data-fa=cancel]');
+  /* PR-TR-048: a save for an older day under a plan without bananas, landing while a newer day (with them) is on screen */
+  const full = require('../server/legacy').effective({}, {}), lean = JSON.parse(JSON.stringify(full));
+  delete lean.foods.banana;
+  for (const t in lean.plan) for (const m of lean.plan[t]) for (const b of ['p', 'c', 'x']) m[b] = (m[b] || []).filter(i => i.f !== 'banana');
+  const [older, newer, at, orig] = await pg.evaluate(async ([lean, full]) => {
+    const cur = (await api('GET', '/api/defaults')).myVersions.find(v => !v.from);
+    await api('PUT', '/api/my/defaults', { ...lean, from: null }, cur && cur.updatedAt);
+    const orig = cur && Object.fromEntries(['foods', 'templates', 'schedule', 'targets', 'plan', 'free'].filter(k => k in cur).map(k => [k, cur[k]]));
+    const at = addDays(todayStr(), -13); setDefaults(await api('PUT', '/api/my/defaults', { ...full, from: at }));
+    return [addDays(todayStr(), -16), addDays(todayStr(), -11), at, orig]; }, [lean, full]);
+  await pg.goto(BASE + '/#day/' + older); await pg.reload();
+  await pg.waitForFunction(d => document.querySelector('#datepick').value === d && document.querySelector('#meals .meal'), older);
+  await pg.fill('#o-n', 'Smoke older bar'); await pg.fill('#o-k', '150'); await pg.click('#offform button[type=submit]');
+  await pg.evaluate(d => { location.hash = '#day/' + d; }, newer);
+  await pg.waitForFunction(d => document.querySelector('#datepick').value === d && document.querySelector('#meals .meal'), newer);
+  await pg.waitForFunction(() => !pending.size && !inFlight, null, { timeout: 5000 });
+  const bananas = () => pg.evaluate(() => S.days[S.cur].meals.flatMap(m => m.c).filter(i => i.f === 'banana').length);
+  const b0 = await bananas();
+  await pg.locator('#meals select[data-add=c]').first().selectOption('banana');
+  expect(await until(async () => await bananas() === b0 + 1), 'picking a food of the day’s plan should add it after an older day’s save');
+  await pg.evaluate(async ([orig, at]) => { const cur = (await api('GET', '/api/defaults')).myVersions.find(v => !v.from);   /* the plan as it was */
+    if (orig) await api('PUT', '/api/my/defaults', { ...orig, from: null }, cur.updatedAt); setDefaults(await api('DELETE', '/api/my/defaults/' + at)); }, [orig, at]);
+  /* NEW-02: a day stored under a date that doesn't exist is listed on History and can be deleted there */
+  const { DatabaseSync } = require('node:sqlite'), db = new DatabaseSync(env.DB_PATH);
+  db.prepare("INSERT INTO days (user_id, date, data, summary) SELECT id, '2026-02-31', '{\"meals\":[],\"off\":[]}', '{\"k\":900,\"p\":1,\"c\":1,\"f\":1,\"targets\":{}}' FROM users WHERE email = 'smoke@example.com'").run();
+  db.close();
+  await pg.goto(BASE + '/#history'); await pg.reload(); await pg.waitForSelector('#hbad:not([hidden]) [data-act=baddel]');
+  expect(/2026-02-31: a day of 900 kcal/.test(await pg.textContent('#hbad')), 'the impossible date should be listed');
+  await pg.click('#hbad [data-act=baddel]'); await pg.waitForSelector('#hbad', { state: 'hidden' });
+  expect(!(await pg.evaluate(() => fetch('/api/days').then(r => r.json()))).some(d => d.date === '2026-02-31'), 'the impossible date should be deleted');
+  /* the doubled stop: "…still running?. Reload" */
+  await pg.route('**/api/photos', r => r.abort());
+  await pg.evaluate(() => { location.hash = '#dash'; }); await pg.waitForFunction(() => /Couldn’t load your photos/.test(document.querySelector('#d-body').textContent), null, { timeout: 5000 });
+  expect(/still running\? Reload/.test(await pg.textContent('#d-body')), 'a load error should end once: ' + await pg.textContent('#d-body'));
+  await pg.unroute('**/api/photos');
+  /* PR-TL-029: a garbled coach link */
+  await pg.goto(BASE + '/coach/abc%E0%A4'); await pg.waitForSelector('#c-gone:not([hidden])', { timeout: 5000 });
+  expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
+  await ctx.close();
+  /* PR-TR-047: far east of the server, the export is named by the browser's date (there already tomorrow, by the server's UTC) */
+  const c2 = await browser.newContext({ timezoneId: 'Pacific/Kiritimati', acceptDownloads: true }), p2 = await c2.newPage();
+  const tmr = new Date(Date.now() + 864e5); await p2.clock.install({ time: new Date(Date.UTC(tmr.getUTCFullYear(), tmr.getUTCMonth(), tmr.getUTCDate(), 1)) });
+  await p2.goto(BASE + '/login'); await signIn(p2); await p2.waitForSelector('#v-dash:not([hidden])');
+  await p2.click('#acct summary');
+  const [dl] = await Promise.all([p2.waitForEvent('download'), p2.click('#exportlink')]);
+  const local = await p2.evaluate(() => todayStr());
+  expect(local === tmr.toISOString().slice(0, 10) && dl.suggestedFilename() === `logbook-monster-${local}.json`, `the export should be named by the browser’s date ${local}: ${dl.suggestedFilename()}`);
+  await c2.close();
+  /* NEW-03: a Daily Tracker left on Today past midnight moves on at the next tap, so food goes to the new day */
+  const c3 = await browser.newContext({ viewport: { width: 1100, height: 900 } }), p3 = await c3.newPage();
+  p3.on('pageerror', e => errs.push(e.message)); p3.on('dialog', d => d.accept());
+  const eve = new Date(); eve.setDate(eve.getDate() + 20); eve.setHours(23, 57, 0, 0);
+  const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const day1 = ymd(eve), day2 = ymd(new Date(eve.getFullYear(), eve.getMonth(), eve.getDate() + 1));
+  await p3.clock.install({ time: eve });
+  await p3.goto(BASE + '/login'); await signIn(p3); await p3.waitForSelector('#v-dash:not([hidden])');
+  await p3.evaluate(() => { location.hash = '#day'; });
+  await p3.waitForFunction(d => document.querySelector('#datepick').value === d && document.querySelector('#meals .meal'), day1, { timeout: 5000 });
+  await p3.clock.fastForward('05:00');
+  await p3.waitForFunction(d => document.querySelector('#datepick').value === d && /showing the new day/.test(document.querySelector('#numnote').textContent), day2, { timeout: 5000 });
+  await p3.fill('#o-n', 'Smoke midnight snack'); await p3.fill('#o-k', '120'); await p3.click('#offform button[type=submit]');
+  await p3.waitForFunction(d => document.querySelector('#datepick').value === d && document.querySelector('#dtitle').textContent === 'Today'
+    && /Smoke midnight snack/.test(document.querySelector('#offlist').textContent), day2, { timeout: 5000 });
+  await p3.waitForFunction(() => !pending.size && !inFlight, null, { timeout: 5000 });
+  const offs = await p3.evaluate(async ds => Promise.all(ds.map(d => fetch('/api/days/' + d).then(r => r.ok ? r.json() : null)
+    .then(j => (j ? j.data.off.map(o => o.n).join() : '')))), [day1, day2]);
+  expect(!/midnight/.test(offs[0]) && /midnight/.test(offs[1]), 'food added after midnight should go to the new day: ' + offs);
+  await p3.evaluate(async d => api('DELETE', '/api/days/' + d), day2);
+  await c3.close();
+  expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
+}
+
 async function recheck(browser) {
   const { DatabaseSync } = require('node:sqlite');
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } }), pg = await ctx.newPage(), errs = [];
@@ -328,6 +434,15 @@ async function recheck(browser) {
         await pg.locator('#wt').selectText(); await pg.keyboard.type('80e'); await pg.keyboard.press('Tab');
         await pg.waitForSelector('#numnote:not([hidden])', { timeout: 5000 });
         expect(await pg.inputValue('#wt') === '80.5' && /isn’t a number – kept 80\.5/.test(await pg.textContent('#numnote')), 'a typo should keep the weight and say so');
+        /* letters typed over a saved value: Chromium wipes the selection and drops them, leaving a really empty box – refused too */
+        await pg.evaluate(() => { document.querySelector('#numnote').hidden = true; });
+        await pg.locator('#wt').selectText(); await pg.keyboard.type('abc'); await pg.keyboard.press('Tab');
+        await pg.waitForSelector('#numnote:not([hidden])', { timeout: 5000 });
+        expect(await pg.inputValue('#wt') === '80.5' && /isn’t a number – kept 80\.5/.test(await pg.textContent('#numnote')), '"abc" over the weight should keep it and say so');
+        const tk0 = await pg.inputValue('#t-k');
+        if (!(await pg.isVisible('#t-k'))) await pg.evaluate(() => { const d = document.querySelector('#t-k').closest('details'); if (d) d.open = true; });
+        await pg.locator('#t-k').selectText(); await pg.keyboard.type('abc'); await pg.keyboard.press('Tab'); await pg.waitForTimeout(300);
+        expect(tk0 !== '' && await pg.inputValue('#t-k') === tk0 && await pg.evaluate(k => day().targets.k === +k, tk0), '"abc" over the kcal target should keep it, not set 0');
         expect(JSON.stringify(await pg.evaluate(d => fetch('/api/weights').then(r => r.json()).then(w => w.filter(x => x.date === d).map(x => x.kg)), await pg.evaluate(() => S.cur))) === '[80.5]',
           'the server should still have the weight');
         const qty = () => pg.evaluate(() => (day().off.find(o => o.snack === 'skittles') || { qty: 0 }).qty);
@@ -1149,6 +1264,7 @@ async function recheck(browser) {
     }
     await recheck(browser);
     await phase1c(browser);
+    await phase2c(browser);
     console.log('smoke: ok (desktop + phone)');
   } catch (e) { await browser.close(); return fail(e.stack); }
   await browser.close(); cleanup();

@@ -361,4 +361,39 @@ function seqTables() {
 }
 seqTables();
 
+/* Before dates were checked (#69) a few rows were stored under dates that don't exist (2026-02-30), which nothing can open now.
+   Each moves to the real date it stood for – the one a browser turned it into (2026-03-02) – unless that would land on a row
+   already there: a day or weight is then kept where it is, and stays deletable (DELETE takes a stored key as it is). Every move
+   and every row kept is written to the server log, so nothing changes silently. Runs at each start (a quick scan once nothing is left). */
+function fixImpossibleDates() {
+  const { isDate } = require('./dates');
+  /* SQLite's date() rolls 2026-02-31 over (or gives NULL for month 13), so only impossible dates differ from it */
+  const SHAPE = c => `${c} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' AND date(substr(${c}, 1, 10)) IS NOT substr(${c}, 1, 10)`;
+  const rolled = d => { const [y, m, dd] = d.slice(0, 10).split('-').map(Number); return new Date(Date.UTC(y, m - 1, dd)).toISOString().slice(0, 10); };
+  const bad = d => !isDate(d.slice(0, 10));
+  /* [table, date column, the columns that with the date make a row unique (null: any number of rows share a date)] */
+  const TABLES = [['days', 'date', ['user_id']], ['weights', 'date', ['user_id']], ['checklist_log', 'date', ['user_id', 'item']],
+    ['supplement_log', 'date', null], ['photos', 'date', null], ['sets', 'at', null]];
+  const said = [];
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    for (const [t, col, key] of TABLES) {
+      const cols = ['user_id', ...(key || []).filter(k => k !== 'user_id')];
+      const rows = db.prepare(`SELECT rowid AS rid, ${col} AS d, ${cols.join(', ')} FROM ${t} WHERE ${SHAPE(col)}`).all().filter(r => bad(r.d));
+      for (const r of rows) {
+        const to = rolled(r.d) + r.d.slice(10);
+        const taken = key && db.prepare(`SELECT 1 FROM ${t} WHERE ${key.map(k => k + ' = ?').join(' AND ')} AND ${col} = ?`)
+          .get(...key.map(k => r[k]), to);
+        if (taken && t === 'checklist_log') { db.prepare(`DELETE FROM ${t} WHERE rowid = ?`).run(r.rid); said.push(`${t} user ${r.user_id} ${r.d}: the same tick is already on ${to.slice(0, 10)} – dropped`); continue; }
+        if (taken) { said.push(`${t} user ${r.user_id} ${r.d}: kept – ${to.slice(0, 10)} already has one; delete it from History`); continue; }
+        db.prepare(`UPDATE ${t} SET ${col} = ? WHERE rowid = ?`).run(to, r.rid);
+        said.push(`${t} user ${r.user_id} ${r.d.slice(0, 10)} → ${to.slice(0, 10)}`);
+      }
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  if (said.length) console.log(`Rows stored under dates that don't exist (saved before dates were checked):\n  ${said.join('\n  ')}`);
+}
+fixImpossibleDates();
+
 module.exports = db;

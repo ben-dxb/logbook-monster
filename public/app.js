@@ -11,7 +11,8 @@ const wdOf=s=>(parse(s).getDay()+6)%7; /* 0 = Monday */
 const todayStr=()=>ymd(new Date());
 /* a real date (not 2026-02-31) from 2000 to a year from today – what the server stores (server/dates.js) */
 const lastDate=()=>{const d=new Date();d.setFullYear(d.getFullYear()+1);return ymd(d);};
-const isDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||'')&&ymd(parse(s))===s&&s>='2000-01-01'&&s<=lastDate();
+const realDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||'')&&ymd(parse(s))===s;
+const isDate=s=>realDate(s)&&s>='2000-01-01'&&s<=lastDate();
 const fmtLong=s=>parse(s).toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 const fmtShort=s=>parse(s).toLocaleDateString(undefined,{day:'numeric',month:'short'});
 const fmtMonth=s=>parse(s).toLocaleDateString(undefined,{month:'long',year:'numeric'});
@@ -118,7 +119,11 @@ function migrate(D,date){
 }
 const pending=new Map(), SENDING=new Map(); let saveTimer=null, saveState='idle', saveErr='', inFlight=false;
 const settingsJson=()=>JSON.stringify({pud:S.pud,snackOv:S.snackOv||{},pBasis:S.pBasis||'total'});
-function summaryOf(date,D){useDefs(date);const t=dayTotals(D),type=D.type||typeOn(date);return {...t,targets:{...D.targets},type,tname:templateName(type)};}
+/* a save runs in the background, maybe for a day under another plan: the plan in use goes back after, or the day on screen
+   would be left with that day's foods (a food picked there then did nothing) */
+function summaryOf(date,D){const was=DEFS_ON;useDefs(date);
+  try{const t=dayTotals(D),type=D.type||typeOn(date);return {...t,targets:{...D.targets},type,tname:templateName(type)};}
+  finally{if(DEFS_ON!==was){DEFS_ON=was;applyDefaults(was);libRegister();}}}
 
 /* Called after every render: anything that differs from what the server has gets queued. */
 function persist(){
@@ -198,6 +203,8 @@ async function unlogDay(){
 
 /* ---------- rendering helpers ---------- */
 const $=s=>document.querySelector(s);
+/* a message as one sentence: its own ? or . kept, a stop added only when it has none (no "still running?.") */
+const endStop=s=>{s=String(s).trim();return /[.?!…]$/.test(s)?s:s+'.';};
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const r0=x=>Math.round(x), r1=x=>(Math.round(x*10)/10).toFixed(1);
 /* the day on the Daily Tracker; a saved day is never started again from the plan before it has loaded (openDay loads it) */
@@ -231,6 +238,15 @@ document.addEventListener('input',e=>{const el=e.target;if(!numBox(el))return;
 document.addEventListener('change',e=>{const el=e.target;if(!numBox(el))return;
   if(numRefuse(el))e.stopImmediatePropagation();else{NUM_WAS.set(el,el.value);NUM_LIVE.delete(el);}},true);
 document.addEventListener('focusout',e=>{const el=e.target;if(numBox(el)&&el.validity.badInput)numRefuse(el);},true);   /* "abc" typed into an empty box fires no change */
+/* Chromium drops letters typed into a number box but still replaces the selection with nothing, so "abc" typed over a saved value
+   left a really empty box (badInput false) – read as "delete". Text that can't be part of a number is refused before it lands. */
+const NUM_CH=/^[0-9.,+\-eE]*$/;
+function numBlock(e,el){e.preventDefault();numNote(`That isn’t a number – ${el.value===''?'left it empty':'kept '+el.value}.`);}
+document.addEventListener('keydown',e=>{const el=e.target;
+  if(numBox(el)&&e.key.length===1&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!NUM_CH.test(e.key))numBlock(e,el);},true);
+document.addEventListener('beforeinput',e=>{const el=e.target;if(!numBox(el)||!/^insert/.test(e.inputType||''))return;
+  const t=e.data!=null?e.data:e.dataTransfer?e.dataTransfer.getData('text/plain'):'';
+  if(!NUM_CH.test(String(t).trim()))numBlock(e,el);},true);
 
 /* One tap, one save: while a button's (or form's) request runs, more clicks on it are ignored and its buttons are disabled; for a
    moment after, a second click still counts as the same tap (a double-click adds once). */
@@ -494,6 +510,22 @@ function renderHistory(){
     ['Avg protein',ds.length?r0(avg('p'))+'g':'–',''],
     ['Weight change',wch!=null?`${wch>=0?'+':'−'}${Math.abs(wch).toFixed(1)} kg`:'–',ws.length?`${ws.length} weigh-in${ws.length>1?'s':''}`:''],
   ].map(([l,v,s])=>`<div class="stat"><span class="lbl">${l}</span><span class="num">${v}</span>${s?`<span class="sub">${s}</span>`:''}</div>`).join('');
+  renderBadDates();
+}
+/* a day or weight saved under a date that doesn't exist (2026-02-31, before dates were checked) whose real date already had one:
+   no calendar cell can show it, so it is listed here to delete (the server moved the others to their real date) */
+function renderBadDates(){
+  const ds=[...new Set([...Object.keys(SUMS),...Object.keys(WEIGHTS)])].filter(d=>!realDate(d)).sort(), el=$('#hbad');
+  el.hidden=!ds.length;if(!ds.length){el.innerHTML='';return;}
+  el.innerHTML=`<p><b>Saved under dates that don’t exist</b> – from before dates were checked. Nothing can open them; delete them when you’ve looked.</p><ul>${ds.map(d=>{
+    const s=SUMS[d],w=WEIGHTS[d];return `<li>${esc(d)}: ${[s?`a day of ${r0(s.k)} kcal`:'',w!=null?`a weight of ${w} kg`:''].filter(Boolean).join(' and ')}
+      <button class="ghost" type="button" data-act="baddel" data-d="${esc(d)}">This date doesn’t exist – delete</button></li>`;}).join('')}</ul>`;
+}
+async function delBadDate(d){
+  if(!confirm(`Delete what was saved under ${d}? This can’t be undone.`))return;
+  try{if(SUMS[d])await api('DELETE','/api/days/'+d);if(WEIGHTS[d]!=null)await api('DELETE','/api/weights/'+d);}
+  catch(e){if(!e.signedOut)alert(e.message);return;}
+  delete SUMS[d];delete WEIGHTS[d];LOGGED.delete(d);renderBadDates();
 }
 
 /* ---------- weight ---------- */
@@ -515,6 +547,14 @@ function rollToday(){const t=todayStr(),was=TODAY;if(t===was)return;TODAY=t;
   if(typeof sDate==='string'&&sDate===was)sDate=t;   /* Supplements log day, photo upload date */
   if(typeof pDate==='string'&&pDate===was)pDate=t;
 }
+/* a page left open past midnight moves on at midnight, or – if the computer slept through it – at the next tap, key or return
+   to the tab, not only when you go to another page: the Daily Tracker's "Today" (and the Dashboard) show the new day before
+   anything is added to the old one (a tap that moves it on only moves it on) */
+function newDay(){const cur=S.cur;if(todayStr()===TODAY)return;rollToday();
+  if((view==='day'&&S.cur!==cur)||view==='dash'){numNote(`It’s ${fmtLong(TODAY)} now – showing the new day.`);route();}}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)newDay();});
+['pointerdown','keydown'].forEach(t=>document.addEventListener(t,newDay,true));
+(function atMidnight(){const n=new Date(),m=new Date(n.getFullYear(),n.getMonth(),n.getDate()+1,0,0,1);setTimeout(()=>{newDay();atMidnight();},m-n);})();
 function route(){
   rollToday();
   if(/^#weight(\/|$)/.test(location.hash))history.replaceState(null,'','#history/timeline');
@@ -529,7 +569,11 @@ function route(){
   $('#acct').open=false;
   if(view==='dash'){renderDash(arg?[arg]:[]);}
   else if(view==='day'){openDay(isDate(arg)?arg:S.cur);}
-  else if(view==='history'){if(/^\d{4}-\d{2}$/.test(arg||''))month=arg+'-01';renderHistory();}
+  else if(view==='history'){if(/^\d{4}-\d{2}$/.test(arg||'')){
+      if(isDate(arg+'-01'))month=arg+'-01';
+      else{month=todayStr().slice(0,7)+'-01';history.replaceState(null,'','#history');   /* 2026-13 never rolls over into another month */
+        numNote(realDate(arg+'-01')?'Pick a month from 2000 to a year from now – showing this month.':`There’s no such month as ${arg} – showing this month.`);}}
+    renderHistory();}
   else if(view==='account'||view==='admin'){adRoute(arg);}
   else if(view==='gym'){renderGym(arg?[arg,...more]:[]);}
   else if(view==='foods'){renderFoods(arg?[arg]:[]);}
@@ -586,6 +630,7 @@ document.addEventListener('click',e=>{
   else if(a==='today'){go('day/'+todayStr());}
   else if(a==='mprev'||a==='mnext'){const d=parse(month);d.setMonth(d.getMonth()+(a==='mprev'?-1:1));go('history/'+ymd(d).slice(0,7));}
   else if(a==='mtoday'){go('history/'+todayStr().slice(0,7));}
+  else if(a==='baddel'){delBadDate(b.dataset.d);}
   else if(a==='savenow'){saveNow();}
   else if(a==='unlog'){unlogDay();}
   else if(a==='retry'){clearTimeout(saveTimer);saveState='pending';flush();}
@@ -673,6 +718,7 @@ $('#coach').addEventListener('click',()=>act(D=>{const t=hasTemplate(D.type)?D.t
 
 /* ---------- account ---------- */
 window.addEventListener('hashchange',route);
+$('#exportlink').addEventListener('click',e=>{e.currentTarget.href='/api/export?date='+todayStr();});   /* the file is named by your date, not the server's */
 $('#logout').addEventListener('click',async()=>{
   if(pending.size){clearTimeout(saveTimer);await flush();}
   const keep=[];try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k.startsWith(STASH))keep.push([k,localStorage.getItem(k)]);}}catch{}
