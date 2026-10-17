@@ -40,8 +40,9 @@ const q = {
   put: db.prepare('UPDATE photos SET date = ?, pose = ?, style = ?, pose_ai = ?, note = ?, updated_at = ? WHERE user_id = ? AND id = ?'),
   /* the AI's pose: only while the pose is still the one the request was asked about, or still the AI's – never over a hand edit made meanwhile */
   aiPose: db.prepare('UPDATE photos SET pose = ?, style = ?, pose_ai = 2, updated_at = ? WHERE user_id = ? AND id = ? AND (pose_ai > 0 OR (pose = ? AND style = ?))'),
-  thumb: db.prepare('UPDATE photos SET thumb = ?, thumb_size = ? WHERE user_id = ? AND id = ?'),
-  mid: db.prepare('UPDATE photos SET mid = ?, mid_size = ? WHERE user_id = ? AND id = ?'),
+  /* only while the version is still the one read: of replacements made at the same time one wins, the others delete their own file */
+  thumb: db.prepare('UPDATE photos SET thumb = ?, thumb_size = ? WHERE user_id = ? AND id = ? AND thumb IS ?'),
+  mid: db.prepare('UPDATE photos SET mid = ?, mid_size = ? WHERE user_id = ? AND id = ? AND mid IS ?'),
   /* photos stored before their size was kept (filled in from their files at start-up; 0 × 0 when a file can't be read) */
   noSize: db.prepare('SELECT id, file FROM photos WHERE width IS NULL AND id > ? ORDER BY id LIMIT 200'),
   size: db.prepare('UPDATE photos SET width = ?, height = ? WHERE id = ?'),
@@ -264,20 +265,24 @@ router.post('/', uploadLimit, rawImage(MAX_BYTES), async (req, res) => {
 
 /* The smaller versions, made in the browser from the picture picked; JPEGs. thumb: the catalog's tile (480 px). mid: the photo and
    Compare pages and the coach's day card (1000 px) – the full file only when zoomed in or opened. Both count toward the account's room. */
-function smaller(which, max) {
+function smaller(which) {
   return async (req, res) => {
     try {
       const id = idOf(req.params.id), row = q.files.get(req.user.id, id);
       if (!row) throw fail('No such photo', 404);
       if (sniff(req.body) !== 'image/jpeg') throw fail(`The ${which === 'mid' ? 'middle size' : 'thumbnail'} must be a JPEG`);
       const file = newName('.jpg'), bytes = cleanJpeg(req.body);
-      const release = reserve(req.user.id, 0, bytes.length - row[which + '_size']);
+      /* the old file stays on disk until the swap, so the new one counts in full while it is written */
+      const release = reserve(req.user.id, 0, bytes.length);
+      let swapped = false;
       try {
         await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 });
-        if (!q[which].run(file, bytes.length, req.user.id, id).changes) { unlink(file); throw fail('No such photo', 404); }   /* deleted meanwhile */
-      } finally { release(); }
-      unlink(row[which]);
-      res.json(view(q.get.get(req.user.id, id)));
+        swapped = q[which].run(file, bytes.length, req.user.id, id, row[which]).changes > 0;
+      } catch (e) { unlink(file); throw e; } finally { release(); }
+      unlink(swapped ? row[which] : file);      /* whichever lost */
+      const now = q.get.get(req.user.id, id);
+      if (!now) throw fail('No such photo', 404);   /* deleted meanwhile */
+      res.json(view(now));                        /* not swapped: another replacement got there first, and its version stands */
     } catch (e) { send(res, e); }
   };
 }
@@ -317,7 +322,10 @@ router.delete('/', (req, res) => {
 
 router.delete('/:id', (req, res) => {
   const id = idOf(req.params.id), row = q.files.get(req.user.id, id);
-  if (row) { q.del.run(req.user.id, id); unlink(row.file); unlink(row.thumb); unlink(row.mid); }
+  if (row && q.del.run(req.user.id, id).changes) {
+    unlink(row.file); unlink(row.thumb); unlink(row.mid);
+    audit.log(req, 'photo.deleted', { id });
+  }
   res.json({ ok: true });
 });
 

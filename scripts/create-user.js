@@ -23,7 +23,7 @@ function askHidden(prompt) {
 
 (async () => {
   const pw = process.env.NEW_PASSWORD || await askHidden('Password (10+ characters): ');
-  const problem = passwordProblem(pw);
+  const problem = passwordProblem(pw, email);
   if (problem) { console.error(problem); process.exit(1); }
   const hash = await hashPassword(pw);
   const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);

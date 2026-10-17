@@ -175,8 +175,13 @@ test('photos stored before sizes were kept get theirs at start-up', async () => 
   const ann = await signIn('ann@example.com');
   const p = (await ann('POST', '/api/photos?date=2026-07-01&pose=back', jpeg(1200, 1600, 'older'))).body;
   const gone = (await ann('POST', '/api/photos?date=2026-07-02&pose=back', jpeg(1200, 1600, 'gone'))).body;
+  await ann('PUT', `/api/photos/${p.id}/mid`, jpeg(600, 800, 'oldmid'));
   await stop();
   const db = new DatabaseSync(DB);
+  /* every file older than the sweep's hour: the middle size is a photo's file, not an orphan (server/upkeep.js) */
+  const midFile = path.join(PHOTO_DIR, db.prepare('SELECT mid FROM photos WHERE id = ?').get(p.id).mid);
+  const old = new Date(Date.now() - 3 * 3600 * 1000);
+  for (const f of fs.readdirSync(PHOTO_DIR)) fs.utimesSync(path.join(PHOTO_DIR, f), old, old);
   db.prepare('UPDATE photos SET width = NULL, height = NULL WHERE id IN (?, ?)').run(p.id, gone.id);
   fs.unlinkSync(path.join(PHOTO_DIR, db.prepare('SELECT file FROM photos WHERE id = ?').get(gone.id).file));
   db.close();
@@ -190,6 +195,8 @@ test('photos stored before sizes were kept get theirs at start-up', async () => 
   }
   const by = id => list.find(x => x.id === id);
   assert.deepStrictEqual([by(p.id).w, by(p.id).h], [1200, 1600]);
+  assert.ok(fs.existsSync(midFile), 'the start-up sweep keeps middle sizes');
+  assert.strictEqual((await again('GET', `/api/photos/${p.id}/mid`)).status, 200);
   assert.deepStrictEqual([by(gone.id).w, by(gone.id).h], [null, null], 'a missing file: size unknown (and not looked for again)');
   const check = new DatabaseSync(DB, { readOnly: true });
   assert.strictEqual(check.prepare('SELECT COUNT(*) AS n FROM photos WHERE width IS NULL').get().n, 0);

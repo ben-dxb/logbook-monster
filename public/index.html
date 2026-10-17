@@ -34,7 +34,7 @@
           <form id="pwform" class="pwform">
             <label class="f" id="pwcur"><span class="lbl">Current password</span><input id="pw-cur" type="password" autocomplete="current-password"></label>
             <label class="f"><span class="lbl">New password (10+ characters)</span><input id="pw-new" type="password" autocomplete="new-password" minlength="10"></label>
-            <label class="tog"><input type="checkbox" id="pw-links" checked> Also switch off my coach links</label>
+            <label class="tog" id="pw-linksf" hidden><input type="checkbox" id="pw-links"> <span id="pw-linkst">Also switch off my coach links</span></label>
             <button class="btn" type="submit">Update password</button>
             <p id="pwmsg" class="sub" role="status"></p>
           </form>
@@ -43,6 +43,7 @@
           <div id="tfbody" class="pwform"></div>
         </details>
         <button class="btn" id="logout" type="button">Sign out</button>
+        <p class="acctfoot"><a href="/privacy">Privacy</a><a id="contactlink" hidden>Contact</a></p>
       </div>
     </details>
   </header>
@@ -328,6 +329,18 @@
       </form>
       <p><a class="ghost" id="ad-pd-dl" href="/api/photos/zip" download>Download all my photos</a></p>
       <p id="ad-pdmsg" class="sub" role="status"></p>
+    </section>
+    <section class="panel admine" aria-labelledby="ad-delh">
+      <h2 id="ad-delh">Delete my account</h2>
+      <p>Deletes your account and everything in it, for good: days, history, weights, your meal plan, gym sets and workouts, foods, supplements, checklist,
+        progress photos (the files too), coach links (they stop working) and every place you’re signed in. Foods and supplements you shared with everyone
+        leave every other account’s library too. It can’t be undone.</p>
+      <p><a class="ghost" href="/api/export" id="ad-del-export" download>Download my data</a> first if you want a copy.</p>
+      <form id="ad-del" class="adpdel">
+        <label class="f"><span class="lbl">Type your email to confirm</span><input id="ad-del-email" type="email" autocomplete="off" spellcheck="false" required></label>
+        <button class="btn danger" type="submit" id="ad-del-btn">Delete my account</button>
+      </form>
+      <p id="ad-delmsg" class="sub" role="status"></p>
     </section>
     <section class="panel adsuper" id="ad-aipanel" aria-labelledby="ad-aih2" data-adtab="ai">
       <h2 id="ad-aih2">AI</h2>

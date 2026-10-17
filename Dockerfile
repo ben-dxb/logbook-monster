@@ -11,8 +11,8 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY server ./server
 COPY public ./public
-# only create-user.js: the browser smoke test stays out of the image
-COPY scripts/create-user.js ./scripts/
+# create-user.js and the backup scripts: the browser smoke test stays out of the image
+COPY scripts/create-user.js scripts/backup.js scripts/restore-check.js ./scripts/
 RUN mkdir -p /app/data && chown -R node:node /app/data
 USER node
 ENV PORT=3000
