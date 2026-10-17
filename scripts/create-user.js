@@ -26,7 +26,10 @@ function askHidden(prompt) {
   const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
   if (existing) {
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, existing.id);
-    console.log(`Password updated for ${email}.`);
+    /* a reset signs the account out everywhere, and an old invite link can't replace the new password */
+    const ended = db.prepare('DELETE FROM sessions WHERE user_id = ?').run(existing.id).changes;
+    db.prepare('DELETE FROM invites WHERE user_id = ?').run(existing.id);
+    console.log(`Password updated for ${email}${ended ? ` – signed out of ${ended} session${ended > 1 ? 's' : ''}` : ''}.`);
   } else {
     db.prepare('INSERT INTO users (email, password_hash) VALUES (?, ?)').run(email, hash);
     console.log(`Account created for ${email}.`);

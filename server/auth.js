@@ -17,6 +17,11 @@ const q = {
   setPassword: db.prepare('UPDATE users SET password_hash = ? WHERE id = ?'),
   setName: db.prepare('UPDATE users SET name = ? WHERE id = ?'),
   touchLogin: db.prepare("UPDATE users SET last_login_at = datetime('now') WHERE id = ?"),
+  endShares: db.prepare('DELETE FROM shares WHERE user_id = ? AND expires_at > ?'),
+  failCount: db.prepare('SELECT COUNT(*) AS n FROM login_failures WHERE email = ? AND at > ?'),
+  failAdd: db.prepare('INSERT INTO login_failures (email, at) VALUES (?, ?)'),
+  failPrune: db.prepare('DELETE FROM login_failures WHERE at <= ?'),
+  failClear: db.prepare('DELETE FROM login_failures WHERE email = ?'),
 };
 
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
@@ -27,15 +32,29 @@ const safeEqual = (a, b) => {
   return x.length === y.length && x.length > 0 && crypto.timingSafeEqual(x, y);
 };
 
-function csrfToken(req) {
-  if (!req.session.csrf) req.session.csrf = randomToken();
-  return req.session.csrf;
+/* Signed out, the CSRF token is an HMAC of a random cookie (signed double-submit), so visiting the
+   sign-in page stores nothing on the server. Signed in, it lives in the session. */
+const PRE = 'logbookmonster.pre';
+const preCookie = req => { const m = /(?:^|;\s*)logbookmonster\.pre=([A-Za-z0-9_-]{43})(?:;|$)/.exec(req.headers.cookie || ''); return m ? m[1] : ''; };
+const preToken = v => (v ? b64url(crypto.createHmac('sha256', config.sessionSecret).update('csrf:' + v).digest()) : '');
+function csrfToken(req, res) {
+  if (req.session.userId || req.session.csrf) {
+    if (!req.session.csrf) req.session.csrf = randomToken();
+    return req.session.csrf;
+  }
+  let v = preCookie(req);
+  if (!v) {
+    v = randomToken();
+    res.cookie(PRE, v, { httpOnly: true, sameSite: 'lax', secure: config.cookieSecure, path: '/' });
+  }
+  return preToken(v);
 }
 
-/* Every state-changing request must echo the session's CSRF token in a header. */
+/* Every state-changing request must echo the CSRF token in a header. */
 function csrfProtect(req, res, next) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
-  if (!safeEqual(req.get('x-csrf-token'), req.session && req.session.csrf)) {
+  const want = req.session && req.session.csrf ? req.session.csrf : preToken(preCookie(req));
+  if (!safeEqual(req.get('x-csrf-token'), want)) {
     return res.status(403).json({ error: 'Your session expired. Reload the page and try again.' });
   }
   next();
@@ -59,6 +78,7 @@ function logIn(req, user) {
       if (err) return reject(err);
       req.session.userId = user.id;
       req.session.csrf = randomToken();
+      req.session.at = Date.now();
       q.touchLogin.run(user.id);
       users.clearInvites(user.id);
       req.session.save(e => (e ? reject(e) : resolve()));
@@ -73,6 +93,32 @@ const limiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many attempts. Wait a few minutes and try again.' },
 });
+
+/* A new session id for the same sign-in (after a password change). */
+function renew(req) {
+  const { userId, csrf, at } = req.session;
+  return new Promise((resolve, reject) => {
+    req.session.regenerate(err => {
+      if (err) return reject(err);
+      Object.assign(req.session, { userId, csrf, at });
+      req.session.save(e => (e ? reject(e) : resolve()));
+    });
+  });
+}
+
+/* On top of the per-IP limit: ACCOUNT_FAIL_LIMIT wrong passwords for one email every 15 minutes, kept in
+   SQLite so a restart doesn't reset it. While it's reached even the right password gets the usual answer. */
+const FAIL_WINDOW = 15 * 60 * 1000;
+const lockedOut = email => q.failCount.get(email, Date.now() - FAIL_WINDOW).n >= config.accountFailLimit;
+function noteFailure(email) {
+  const now = Date.now();
+  q.failPrune.run(now - FAIL_WINDOW);
+  q.failAdd.run(email, now);
+}
+
+/* A body-less or non-JSON POST is a bad request, not a crash. */
+const needBody = (req, res, next) => (req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+  ? next() : res.status(400).json({ error: 'Send the form as JSON.' }));
 
 /* Invite links get their own budget so opening one doesn't use up sign-in attempts (and the reverse). */
 const inviteLimiter = rateLimit({
@@ -90,24 +136,28 @@ router.get('/config', (req, res) => {
   res.json({
     google: config.google.enabled,
     registration: config.allowRegistration || config.allowedEmails.length > 0,
-    csrf: csrfToken(req),
+    csrf: csrfToken(req, res),
     signedIn: !!req.session.userId,
   });
 });
 
-router.post('/login', limiter, csrfProtect, async (req, res) => {
+router.post('/login', limiter, csrfProtect, needBody, async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
-  const user = EMAIL_RE.test(email) ? q.byEmail.get(email) : null;
+  const valid = EMAIL_RE.test(email);
+  const locked = valid && lockedOut(email);
+  const user = valid ? q.byEmail.get(email) : null;
   const ok = user && user.password_hash ? await verifyPassword(password, user.password_hash) : await dummyVerify(password);
-  if (!ok || !accountAllowed(user)) {
+  if (!ok || locked || !accountAllowed(user)) {
+    if (!ok && valid && !locked) noteFailure(email);
     return res.status(401).json({ error: 'That email and password don’t match an account.' });
   }
+  q.failClear.run(email);
   await logIn(req, user);
   res.json({ ok: true });
 });
 
-router.post('/register', limiter, csrfProtect, async (req, res) => {
+router.post('/register', limiter, csrfProtect, needBody, async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
   const name = String(req.body.name || '').trim().slice(0, 100) || null;
@@ -122,14 +172,21 @@ router.post('/register', limiter, csrfProtect, async (req, res) => {
 });
 
 /* ---------- accepting an invite: the link is /invite#<token> ---------- */
-router.post('/invite/check', inviteLimiter, csrfProtect, (req, res) => {
-  const inv = users.findInvite(String(req.body.token || ''));
+/* An invite only works while its account is still waiting: no password, no Google link, never signed in. */
+function liveInvite(token) {
+  const inv = users.findInvite(String(token || ''));
+  if (inv && !users.isPending(inv.user_id)) { users.clearInvites(inv.user_id); return null; }
+  return inv;
+}
+
+router.post('/invite/check', inviteLimiter, csrfProtect, needBody, (req, res) => {
+  const inv = liveInvite(req.body.token);
   if (!inv) return res.status(404).json({ error: 'This invite link has expired or was already used. Ask for a new one.' });
   res.json({ email: inv.email, name: inv.name, google: config.google.enabled });
 });
 
-router.post('/invite/accept', inviteLimiter, csrfProtect, async (req, res) => {
-  const inv = users.findInvite(String(req.body.token || ''));
+router.post('/invite/accept', inviteLimiter, csrfProtect, needBody, async (req, res) => {
+  const inv = liveInvite(req.body.token);
   if (!inv) return res.status(404).json({ error: 'This invite link has expired or was already used. Ask for a new one.' });
   const password = String(req.body.password || '');
   const problem = passwordProblem(password);
@@ -147,20 +204,32 @@ router.post('/invite/accept', inviteLimiter, csrfProtect, async (req, res) => {
 
 router.post('/logout', csrfProtect, (req, res) => {
   req.session.destroy(() => {
+    /* Drops cached photos and pages; the app puts back its unsaved-changes stash itself (app.js). */
+    res.set('Clear-Site-Data', '"cache", "storage"');
     res.clearCookie('logbookmonster.sid', { path: '/' });
     res.json({ ok: true });
   });
 });
 
+/* Changing the password signs the account out everywhere else and, unless endLinks is false, switches off
+   its live coach links. A Google-only account adding a first password must have signed in in the last 10 minutes. */
+const FRESH = 10 * 60 * 1000;
 router.post('/password', csrfProtect, requireAuth, limiter, async (req, res) => {
-  const { current, next } = req.body || {};
-  if (req.user.password_hash && !(await verifyPassword(String(current || ''), req.user.password_hash))) {
-    return res.status(400).json({ error: 'Current password is wrong.' });
+  const { current, next, endLinks } = req.body || {};
+  if (req.user.password_hash) {
+    if (!(await verifyPassword(String(current || ''), req.user.password_hash))) {
+      return res.status(400).json({ error: 'Current password is wrong.' });
+    }
+  } else if (!(Date.now() - (req.session.at || 0) < FRESH)) {
+    return res.status(403).json({ error: 'To add a password, sign out, sign in with Google again and add it within 10 minutes.' });
   }
   const problem = passwordProblem(next);
   if (problem) return res.status(400).json({ error: problem });
   q.setPassword.run(await hashPassword(next), req.user.id);
-  res.json({ ok: true });
+  const signedOut = users.endSessions(req.user.id, req.sessionID);
+  const linksOff = endLinks === false ? 0 : q.endShares.run(req.user.id, new Date().toISOString()).changes;
+  await renew(req);
+  res.json({ ok: true, signedOut, linksOff });
 });
 
 /* ---------- Google sign-in (OpenID Connect authorization-code flow with PKCE) ---------- */

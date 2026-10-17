@@ -21,6 +21,7 @@ const q = {
   remove: db.prepare('DELETE FROM users WHERE id = ?'),
   addInvite: db.prepare("INSERT INTO invites (token_hash, user_id, created_by, expires_at) VALUES (?, ?, ?, datetime('now', ?))"),
   clearInvites: db.prepare('DELETE FROM invites WHERE user_id = ?'),
+  endSessions: db.prepare('DELETE FROM sessions WHERE user_id = ? AND sid IS NOT ?'),
   findInvite: db.prepare(`SELECT i.user_id, i.created_by, u.email, u.name FROM invites i JOIN users u ON u.id = i.user_id
     WHERE i.token_hash = ? AND i.expires_at > datetime('now')`),
 };
@@ -92,11 +93,15 @@ function remove(id, admin, isAdmin) {
   /* ADMIN_EMAILS can't be turned off from here, so an admin account stays; take them out of ADMIN_EMAILS first. */
   if (isAdmin(user)) { const e = new Error('That account is an admin. Take it out of ADMIN_EMAILS first.'); e.status = 400; throw e; }
   q.remove.run(user.id);
-  db.prepare("DELETE FROM sessions WHERE json_extract(sess, '$.userId') = ?").run(user.id);
+  endSessions(user.id);
   return { ok: true };
 }
 
 const findInvite = token => (token ? q.findInvite.get(hash(token)) : null);
 const clearInvites = userId => q.clearInvites.run(userId);
+/* Signs the account out everywhere, except the session keepSid (the browser that asked). */
+const endSessions = (userId, keepSid = null) => q.endSessions.run(userId, keepSid).changes;
+/* Still waiting on an invite: no password, no Google link, never signed in. */
+const isPending = id => { const u = q.byId.get(id); return !!u && pending(u); };
 
-module.exports = { list, invite, resend, remove, findInvite, clearInvites };
+module.exports = { list, invite, resend, remove, findInvite, clearInvites, endSessions, isPending };

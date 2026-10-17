@@ -76,7 +76,7 @@ router.use(csrfProtect);
 
 router.get('/me', (req, res) => {
   res.json({ email: req.user.email, name: req.user.name, hasPassword: !!req.user.password_hash,
-    google: !!req.user.google_sub, admin: defaults.isAdmin(req.user), ai: ai.status().configured, ...options(), csrf: csrfToken(req) });
+    google: !!req.user.google_sub, admin: defaults.isAdmin(req.user), ai: ai.status().configured, ...options(), csrf: csrfToken(req, res) });
 });
 
 /* Each account's own meal plan (foods, day templates, week, targets), as dated changes. There are no app-wide defaults. */

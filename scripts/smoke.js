@@ -732,7 +732,11 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
         expect(/Skittles/.test(await pg.textContent('#offlist')), 'change made while signed out should be saved after sign-in');
       }
+      /* sign-out sends Clear-Site-Data: another account's unsaved changes waiting in this browser must survive it */
+      const stash = JSON.stringify({ email: 'other@example.com', at: Date.now(), jobs: [] });
+      await pg.evaluate(v => localStorage.setItem('logbook-monster-unsaved', v), stash);
       await pg.click('#acct summary'); await pg.click('#logout'); await pg.waitForURL(/\/login/);
+      expect(await pg.evaluate(() => localStorage.getItem('logbook-monster-unsaved')) === stash, 'unsaved-changes stash should survive sign-out');
       await ctx.close();
     }
     console.log('smoke: ok (desktop + phone)');
