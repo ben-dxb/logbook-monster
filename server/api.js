@@ -141,7 +141,7 @@ router.use((req, res, next) => { req.today = todayIn(req.get('x-time-zone') || (
 /* Every account's saves, whatever the route: the tracker saves a changed day 0.6 s after the last edit, so even nonstop
    editing stays far below this; a script hammering saves doesn't. Photo uploads have their own byte, count and rate caps. */
 const SAFE = new Set(['GET', 'HEAD', 'OPTIONS']);
-const photoUpload = req => (req.method === 'POST' && req.path === '/photos') || (req.method === 'PUT' && /^\/photos\/\d+\/thumb$/.test(req.path));
+const photoUpload = req => (req.method === 'POST' && req.path === '/photos') || (req.method === 'PUT' && /^\/photos\/\d+\/(thumb|mid)$/.test(req.path));
 router.use(rateLimit({
   windowMs: 10 * 60 * 1000, limit: config.writeRateLimit, standardHeaders: 'draft-7', legacyHeaders: false,
   keyGenerator: req => 'u' + req.user.id, skip: req => SAFE.has(req.method) || photoUpload(req),
@@ -151,12 +151,12 @@ router.use(rateLimit({
 /* Carries the CSRF token: never echo request text into this answer (with proxy compression that would open it to BREACH). */
 router.get('/me', (req, res) => {
   res.json({ id: req.user.id, email: req.user.email, name: req.user.name, hasPassword: !!req.user.password_hash,
-    google: !!req.user.google_sub, totp: twostep.isOn(req.user.id), admin: defaults.isAdmin(req.user), ai: ai.status().configured, ...options(), csrf: csrfToken(req, res) });
+    google: !!req.user.google_sub, totp: twostep.isOn(req.user.id), admin: defaults.isAdmin(req.user), contact: config.contact, ai: ai.status().configured, ...options(), csrf: csrfToken(req, res) });
 });
 
 /* Each account's own meal plan (foods, day templates, week, targets), as dated changes. There are no app-wide defaults. */
 const planFail = (res, e, code = 400) => { if (!e.status && code === 500) console.error(e); res.status(e.status || code).json({ error: e.status || code !== 500 ? e.message : 'Something went wrong' }); };
-router.get('/defaults', (req, res) => { try { res.json(defaults.forUser(req.user, req.today)); } catch (e) { planFail(res, e, 500); } });
+router.get('/defaults', (req, res) => { try { res.json(defaults.forUser(req.user)); } catch (e) { planFail(res, e, 500); } });
 /* Account admin: anyone keeps their own plan. */
 /* a change to one dated plan change is checked against that change's updatedAt (server/version.js) */
 router.put('/my/defaults', (req, res) => {
@@ -166,12 +166,12 @@ router.put('/my/defaults', (req, res) => {
       const cur = defaults.myVersions(req.user).find(v => (v.from || null) === from);
       version.check(req, (cur && cur.updatedAt) || null);
     }
-    res.json(defaults.putMine(req.body, req.user, req.today));
+    res.json(defaults.putMine(req.body, req.user));
   } catch (e) { planFail(res, e); }
 });
-router.delete('/my/defaults', (req, res) => { try { res.json(defaults.delMine(req.user, undefined, req.today)); } catch (e) { planFail(res, e); } });
+router.delete('/my/defaults', (req, res) => { try { res.json(defaults.delMine(req.user)); } catch (e) { planFail(res, e); } });
 router.delete('/my/defaults/:from', (req, res) => {
-  try { res.json(defaults.delMine(req.user, req.params.from, req.today)); } catch (e) { planFail(res, e); }
+  try { res.json(defaults.delMine(req.user, req.params.from)); } catch (e) { planFail(res, e); }
 });
 
 /* AI: the OpenRouter key and models (super admin), and reading a plan PDF into an account's plan format. */
@@ -274,6 +274,26 @@ router.delete('/admin/users/:id', adminOnly, fresh, (req, res) => {
     audit.log(req, 'account.removed', { email: target && target.email }, id);
     res.json(out);
     try { photos.removeFiles(files); } catch (e) { console.error('Removing the photo files of account #' + id + ' failed:', e.message); }
+  } catch (e) { fail(res, e); }
+});
+
+/* Deleting your own account (Account admin › Delete my account): password or code again, and the email typed to confirm.
+   Signs this browser out the way /auth/logout does; the photo files go after the rows. */
+router.delete('/my/account', fresh, (req, res) => {
+  const user = req.user;
+  if (!isObj(req.body) || String(req.body.email || '').trim().toLowerCase() !== String(user.email).toLowerCase()) {
+    return bad(res, 'Type your email address exactly as shown to confirm.');
+  }
+  try {
+    const files = photos.filesOf(user.id);
+    users.removeOwn(user, defaults.isAdmin);
+    audit.log(req, 'account.deleted', { email: user.email }, user.id);
+    req.session.destroy(() => {
+      res.set('Clear-Site-Data', '"cache", "storage"');
+      res.clearCookie(config.sessionCookie, { path: '/', secure: config.cookieSecure });
+      res.json({ ok: true });
+      try { photos.removeFiles(files); } catch (e) { console.error('Removing the photo files of account #' + user.id + ' failed:', e.message); }
+    });
   } catch (e) { fail(res, e); }
 });
 

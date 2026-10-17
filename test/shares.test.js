@@ -90,7 +90,7 @@ test('a coach link shows the account’s data read only, with no sign-in', async
   assert.match(await page.text(), /coach\.js/);
   const info = await open(api + '/info');
   assert.strictEqual(info.status, 200);
-  assert.strictEqual(info.body.name, 'ann');
+  assert.strictEqual(info.body.name, '', 'no name set: the page says "Logbook", not a piece of the email');
   assert.strictEqual(info.body.label, 'Coach Sam');
   assert.strictEqual(info.headers.get('cache-control'), 'no-store');
   assert.ok((await ann('GET', '/api/shares')).body.shares[0].used, 'opening it is shown to the owner');

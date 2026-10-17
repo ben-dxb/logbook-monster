@@ -6,16 +6,20 @@
    Pictures are shrunk to a JPEG in the browser before upload (which also drops the EXIF data, location
    included) and a small thumbnail is sent after it for the catalog. Many can go at once (up to P_MAX_TOTAL picked),
    each dated from its own data (ExifDate, exifdate.js) unless the person turns that off; the date picked is used for
-   any without one. Uses helpers from app.js and gym.js (gHead, gEmpty). */
+   any without one. A middle size (P_MID) goes up too, for the photo and Compare pages – the full picture only when zoomed in or opened.
+   Uses helpers from app.js and gym.js (gEmpty). */
 
 let PHOTOS=null, PPOSES=[], PSTYLES=[], pReadAt=0;
 let pPose='all', pDate=todayStr(), pUpPose='other', pMsg='', pTok=0, pBusy=false;
 let pUpSay='', pUpErr='';   /* an upload's progress line and its error: kept here so leaving Photos and coming back still shows them */
 let pSel=false, pPick=[];                          /* picking photos to compare, and the ones picked (up to 2) */
-let pAi=false, pAiBusy=false;                     /* AI set up (an admin's OpenRouter key), and a "Tag with AI" run going */
+let pAi=false, pAiBusy=false, pAiSay='';         /* AI set up (an admin's OpenRouter key), a "Tag with AI" run going and how far it is */
+let pStopUp=false, pStopAi=false;                 /* Stop pressed: the upload / AI run finishes the photos in flight, then stops */
+let pAddOpen=null;                                /* the upload form shown ("Add photos"); null: shown while there are no photos */
+let pDirty=false;                                 /* the photo page's form changed and not saved */
 let pUseExif=true;                                /* date each photo from its own data (the date picked for any without one) */
 let pNear=false, pNearKg='', pTol=1;              /* only days when you weighed about the same: around pNearKg (blank = your latest weigh-in), ± pTol kg */
-const P_MAX=2000, P_THUMB=480;                     /* longest side in pixels: the photo, the thumbnail */
+const P_MAX=2000, P_MID=1000, P_THUMB=480;         /* longest side in pixels: the photo, its middle size, the thumbnail */
 const P_MAX_TOTAL=5*1024**3, P_MAX_PHOTOS=3000;     /* most picked in one go (the originals; they're shrunk before upload), most an account keeps */
 const P_PARALLEL=3;                                /* photos shrunk and uploaded at a time */
 const P_NAME={front:'Front',left:'Side – Left',right:'Side – Right',side:'Side',back:'Back',other:'Other'}, P_TOLS=[0.5,1,2,3];
@@ -25,7 +29,10 @@ const P_NEAR_DAYS=3;                               /* a day without a weigh-in t
 
 const pById=id=>PHOTOS&&PHOTOS.find(p=>p.id===id);
 const pSrc=p=>`/api/photos/${p.id}/file?v=${encodeURIComponent(p.v)}`;
-const pThumb=p=>p.tv?`/api/photos/${p.id}/thumb?v=${encodeURIComponent(p.tv)}`:pSrc(p);
+const pMid=p=>p.mv?`/api/photos/${p.id}/mid?v=${encodeURIComponent(p.mv)}`:pSrc(p);
+const pThumb=p=>p.tv?`/api/photos/${p.id}/thumb?v=${encodeURIComponent(p.tv)}`:pMid(p);
+/* a sentence's full stop, unless it ends with one already: a German short date is "17. Okt." (p5-photos S4) */
+const pDot=t=>/[.!?…]$/.test(t)?t:t+'.';
 const pPoseName=p=>P_NAME[p]||p;
 const pStyleName=s=>P_STYLE[s]||s;
 /* the pose type without the way the body faces when the pose already says it: Back · Double biceps, not Back · Back double biceps */
@@ -85,9 +92,12 @@ async function renderPhotos(args){
     if(/^\d+$/.test(a||'')){
       let p=pById(+a);
       if(!p){await pLoad();if(tok!==pTok||view!=='photos')return;p=pById(+a);}   /* uploaded in another tab since? */
-      box.innerHTML=p?pOnePage(p):gHead('#photos','Photo')+gEmpty('That photo isn’t here any more.');return;
+      pDirty=false;pDraft=null;
+      box.innerHTML=p?pOnePage(p):pHead('Photo')+gEmpty('That photo isn’t here any more.');
+      if(p){pSize(box);pMakeMid(p);}
+      return;
     }
-    if(cmp){box.innerHTML=tabs+pCmpPage(+x||0,+y||0);return;}
+    if(cmp){box.innerHTML=tabs+pCmpPage(+x||0,+y||0);pSize(box);return;}
     box.innerHTML=tabs+pCatalogPage();renderPhotoList();
   }catch(e){if(!e.signedOut&&tok===pTok)box.innerHTML=tabs+gEmpty('Couldn’t load your photos: '+e.message);}
 }
@@ -121,12 +131,15 @@ async function pAskAi(id,save,seen){
   return api('POST',`/api/photos/${id}/ai-pose`,{save,...(seen?{if:{pose:seen.pose,style:seen.style||''}}:{})});
 }
 const P_AI_NOTE='The AI looks at the small version of each photo, sent to the AI service set up for this app; nothing else about you goes with it.';
+/* the upload form is behind "Add photos" (so on a phone the first photos are on the first screen), open while there are none
+   yet, or an upload is running or stopped short */
+const pFormOpen=()=>pBusy||(pAddOpen==null?!PHOTOS.length||!!pUpErr:pAddOpen);
 function pCatalogPage(){
   const seg=[['all','All'],...[...PPOSES,...(PHOTOS.some(p=>p.pose==='side')?['side']:[])].map(v=>[v,pPoseName(v)])].map(([v,l])=>`<button type="button" data-pa="filter" data-v="${esc(v)}" aria-pressed="${pPose===v}">${esc(l)}</button>`).join('');
-  const days=[...new Set(PHOTOS.map(p=>p.date))], latest=pLatest();
+  const days=[...new Set(PHOTOS.map(p=>p.date))], latest=pLatest(), open=pFormOpen();
   const tols=P_TOLS.map(t=>`<option value="${t}"${t===pTol?' selected':''}>± ${t} kg</option>`).join('');
-  return `<div class="gbar"><h2>Progress photos</h2></div>
-    <form id="p-form" class="panel sform">
+  return `<div class="gbar"><h2>Progress photos</h2><button class="btn" type="button" id="p-addbtn" data-pa="add" aria-expanded="${open}" aria-controls="p-form">Add photos</button></div>
+    <form id="p-form" class="panel sform"${open?'':' hidden'}>
       <label class="f swide"><span class="lbl">Photos</span><input id="p-file" type="file" accept="image/*" multiple required></label>
       <label class="f"><span class="lbl">${pUseExif?'Date if a photo has none':'Date taken'}</span><input id="p-date" type="date" required value="${pDate}" max="${todayStr()}"></label>
       ${pAi?`<label class="f"><span class="lbl">Pose</span><select id="p-pose">${pPoseOptions(pUpPose,true)}</select></label>`:''}
@@ -134,7 +147,8 @@ function pCatalogPage(){
       <label class="f swide"><span class="lbl">Note (optional)</span><input id="p-note" maxlength="200" placeholder="e.g. morning, fasted, after the cut"></label>
       <p id="p-pick" class="sub swide" role="status"></p>
       <p id="p-err" class="aderr swide" role="alert"${pUpErr?'':' hidden'}>${esc(pUpErr)}</p>
-      <div class="factions swide"><button class="btn" type="submit"${pBusy?' disabled':''}>Upload</button><span id="p-state" class="sub" role="status">${pBusy?esc(pUpSay):''}</span></div>
+      <div class="factions swide"><button class="btn" type="submit"${pBusy?' disabled':''}>Upload</button>
+        <button class="ghost" type="button" data-pa="upstop" id="p-upstop"${pBusy?'':' hidden'}${pStopUp?' disabled':''}>Stop</button><span id="p-state" class="sub" role="status">${pBusy?esc(pUpSay):''}</span></div>
       <p class="sub swide">Pick as many as you like, up to 5 GB at a time. Only you can see your photos. They’re made smaller before upload and the camera’s details, location included, are left out.${pAi?' With “Let AI tell”, the small version of each photo goes to the AI service set up for this app to pick the pose.':' They go in under Other – open a photo to set its pose.'}</p>
     </form>
     <div class="ptools">
@@ -142,18 +156,28 @@ function pCatalogPage(){
       <div class="prow">
         <label class="f pjump"><span class="lbl">Jump to date</span><input id="p-jump" type="date"${days.length?` min="${days[days.length-1]}" max="${days[0]}"`:' disabled'}></label>
         <button class="ghost" type="button" data-pa="select" id="p-selbtn" aria-pressed="${pSel}"${PHOTOS.length<2?' disabled':''}>Compare two photos</button>
-        ${pAi?`<button class="ghost" type="button" data-pa="aitag" id="p-aibtn"${PHOTOS.length&&!pAiBusy?'':' disabled'} title="Let the AI set the pose of the photos shown">${pAiBusy?'Tagging…':'Tag poses with AI'}</button>
-        <button class="ghost" type="button" data-pa="aiuntag" id="p-aiuntag"${PHOTOS.some(pUntagged)&&!pAiBusy?'':' disabled'} title="Let the AI set the pose of the photos shown that have none yet (or say only Side, not which side), leaving tagged ones as they are">Tag only untagged</button>`:''}
+        ${pAi?`<button class="ghost" type="button" data-pa="aitag" id="p-aibtn"${PHOTOS.length&&!pAiBusy?'':' disabled'} title="Let the AI set the pose of the photos shown">Tag poses with AI</button>
+        <button class="ghost" type="button" data-pa="aiuntag" id="p-aiuntag"${PHOTOS.some(pUntagged)&&!pAiBusy?'':' disabled'} title="Let the AI set the pose of the photos shown that have none yet (or say only Side, not which side), leaving tagged ones as they are">Tag only untagged</button>
+        <button class="ghost" type="button" data-pa="aistop" id="p-aistop"${pAiBusy?'':' hidden'}${pStopAi?' disabled':''}>Stop</button>`:''}
+        <a class="ghost" href="/api/photos/zip" download id="p-zip"${PHOTOS.length?'':' hidden'}>Download all</a>
       </div>
+      ${pAi?`<p id="p-aistate" class="sub" role="status">${pAiBusy?esc(pAiSay):''}</p>`:''}
       <div class="prow pweight">
         <label class="tog"><input type="checkbox" id="p-near"${pNear?' checked':''}${latest?'':' disabled'}> Same weight as</label>
         <label class="f"><span class="lbl">Weight kg</span><input id="p-nearkg" type="number" inputmode="decimal" min="20" max="400" step="0.1" value="${esc(pNearKg)}" placeholder="${latest?latest.kg:''}"${latest?'':' disabled'}></label>
         <label class="f"><span class="lbl">Within</span><select id="p-tol"${latest?'':' disabled'}>${tols}</select></label>
-        <span class="sub">${latest?`Your latest weigh-in: <b>${esc(latest.kg)} kg</b> on ${esc(fmtShort(latest.date))}.`:'Log your weight on the <a href="#day">Daily Tracker</a> to filter photos by bodyweight.'}</span>
+        <span class="sub">${latest?`Your latest weigh-in: <b>${esc(latest.kg)} kg</b> on ${esc(pDot(fmtShort(latest.date)))}`:'Log your weight on the <a href="#day">Daily Tracker</a> to filter photos by bodyweight.'}</span>
       </div>
     </div>
     <div id="p-selbar" class="psel" role="status"${pSel?'':' hidden'}></div>
     <div id="p-list" class="pdays"></div>`;
+}
+/* "Add photos" shows and hides the form */
+function pAddToggle(){
+  const f=$('#p-form'), b=$('#p-addbtn');if(!f||!b)return;
+  if(pBusy){f.hidden=false;b.setAttribute('aria-expanded','true');$('#p-file').focus();return;}
+  pAddOpen=f.hidden;f.hidden=!pAddOpen;b.setAttribute('aria-expanded',String(pAddOpen));
+  if(pAddOpen)$('#p-file').focus();
 }
 function renderPhotoList(){
   const el=$('#p-list');if(!el)return;
@@ -168,11 +192,12 @@ function renderPhotoList(){
       <h3><span>${esc(fmtLong(d))}</span>${pKg(d)?`<span class="chip">${esc(pKg(d))}</span>`:''}</h3>
       <div class="pgrid">${days[d].map(pTile).join('')}</div></section>`).join('');
   el.innerHTML=h;
+  const z=$('#p-zip');if(z)z.hidden=!PHOTOS.length;
   renderSelBar();
 }
 function pTile(p){
   const what=`${pLabel(p)}, ${fmtShort(p.date)}`, on=pSel&&pPick.includes(p.id);
-  return `<a class="ptile${on?' on':''}" href="#photos/${p.id}" data-pid="${p.id}" title="${esc(p.note||what)}"${pSel?` role="button" aria-pressed="${on}"`:''}><img src="${pThumb(p)}" alt="${esc(what)}" loading="lazy" decoding="async"><span>${esc(pLabel(p))}</span>${on?`<b class="pnum">${pPick.indexOf(p.id)+1}</b>`:''}</a>`;
+  return `<a class="ptile${on?' on':''}" href="#photos/${p.id}" data-pid="${p.id}" title="${esc(p.note||what)}"${pSel?` role="button" aria-pressed="${on}"`:''}><img src="${pThumb(p)}" data-full="${pThumb(p)===pMid(p)?pSrc(p):pMid(p)}" alt="${esc(what)}" loading="lazy" decoding="async"><span>${esc(pLabel(p))}</span>${on?`<b class="pnum">${pPick.indexOf(p.id)+1}</b>`:''}</a>`;
 }
 function renderSelBar(){
   const el=$('#p-selbar');if(!el)return;
@@ -202,25 +227,31 @@ function pJump(d){
   const secs=[...document.querySelectorAll('#p-list .pday')];if(!secs.length||!isDate(d))return;
   let best=null,gap=Infinity;
   secs.forEach(s=>{const g=Math.abs(pDayGap(d,s.id.slice(4)));if(g<gap){gap=g;best=s;}});
-  best.scrollIntoView({block:'start',behavior:'smooth'});
+  best.scrollIntoView({block:'start',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
   document.querySelectorAll('.pday.hit').forEach(s=>s.classList.remove('hit'));
   best.classList.add('hit');setTimeout(()=>best.classList.remove('hit'),1600);
 }
 
 
-/* Draw a picture smaller as a JPEG; createImageBitmap turns phone photos the right way up. */
-async function pShrink(file,max,quality){
+/* Draw a picture smaller as JPEGs, one per longest side asked for (decoded once); createImageBitmap turns phone photos the right way up. */
+async function pShrinkAll(file,sizes){
   let bmp;
   try{bmp=await createImageBitmap(file,{imageOrientation:'from-image'});}
   catch{throw new Error(`Couldn’t read “${file.name}” – is it a picture this browser can open (JPEG, PNG, WebP)?`);}
-  const k=Math.min(1,max/Math.max(bmp.width,bmp.height)), c=document.createElement('canvas');
-  c.width=Math.max(1,Math.round(bmp.width*k));c.height=Math.max(1,Math.round(bmp.height*k));
-  const g=c.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,c.width,c.height);g.drawImage(bmp,0,0,c.width,c.height);
-  if(bmp.close)bmp.close();
-  const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',quality));
-  if(!blob)throw new Error(`Couldn’t shrink “${file.name}”`);
-  return blob;
+  try{
+    const out=[];
+    for(const [max,quality] of sizes){
+      const k=Math.min(1,max/Math.max(bmp.width,bmp.height)), c=document.createElement('canvas');
+      c.width=Math.max(1,Math.round(bmp.width*k));c.height=Math.max(1,Math.round(bmp.height*k));
+      const g=c.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,c.width,c.height);g.drawImage(bmp,0,0,c.width,c.height);
+      const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',quality));
+      if(!blob)throw new Error(`Couldn’t shrink “${file.name}”`);
+      out.push(blob);
+    }
+    return out;
+  }finally{if(bmp.close)bmp.close();}
 }
+const pShrink=async(file,max,quality)=>(await pShrinkAll(file,[[max,quality]]))[0];
 /* api() sends JSON; the pictures go as they are */
 async function pSend(method,url,blob,more={}){
   wrote();try{return await pSend2(method,url,blob,more);}finally{wrote();}
@@ -250,21 +281,37 @@ async function pDates(files,fallback,useExif){
     return d&&d<=today?{date:d,own:true}:{date:fallback,own:false};
   }));
 }
+/* The files of an upload that stopped short (the network went, Stop, a reload): name|size|last modified → {k: the key the upload goes
+   with (x-photo-key – sent again, the server hands back the photo it made instead of storing it twice), id: the photo once stored,
+   t: its thumbnail and middle size are in too}. Kept for this tab in sessionStorage, so Upload sends only the rest, even after a
+   reload; dropped once a batch has all gone up. */
+const P_SENT='logbook-monster-photo-sent';
+let pSent=new Map();
+try{pSent=new Map(JSON.parse(sessionStorage.getItem(P_SENT)||'[]'));}catch{}
+function pSentKeep(){try{if(pSent.size)sessionStorage.setItem(P_SENT,JSON.stringify([...pSent].slice(-P_MAX_PHOTOS)));else sessionStorage.removeItem(P_SENT);}catch{}}
+const pSig=f=>`${f.name}|${f.size}|${f.lastModified}`;
+const pKeyNew=()=>crypto.randomUUID?crypto.randomUUID():[...crypto.getRandomValues(new Uint8Array(16))].map(b=>b.toString(16).padStart(2,'0')).join('');
+/* gone up already (and still here): its record, else null */
+const pWent=f=>{const e=pSent.get(pSig(f));return e&&e.id&&(!PHOTOS||pById(e.id))?e:null;};
+/* the Upload button says "Upload the rest" while some of the files picked went up already */
+function pUpLabel(){const b=$('#p-form button[type=submit]'), inp=$('#p-file');if(!b||!inp)return;
+  const files=[...inp.files];b.textContent=files.length&&files.some(f=>pWent(f))&&!files.every(f=>{const e=pWent(f);return e&&e.t;})?'Upload the rest':'Upload';}
+
 /* on picking files: how many, how big, how many have their own date */
 let pPickTok=0;
 async function pPicked(){
   const el=$('#p-pick'), inp=$('#p-file');if(!el||!inp)return;
-  const files=[...inp.files], tok=++pPickTok;
+  const files=[...inp.files], tok=++pPickTok;pUpLabel();
   if(!files.length){el.textContent='';return;}
-  const size=files.reduce((t,f)=>t+f.size,0), bad=pTooMany(files);
-  let txt=`${files.length} photo${files.length===1?'':'s'}, ${pGB(size)}.`;
+  const size=files.reduce((t,f)=>t+f.size,0), bad=pTooMany(files.filter(f=>!pWent(f))), went=files.filter(pWent).length;
+  let txt=`${files.length} photo${files.length===1?'':'s'}, ${pGB(size)}.`+(went?` ${went===files.length?(went===1?'It':'All of them'):went} went up already – ${went===1?'it':'they'} won’t be sent again.`:'');
   if(bad){el.textContent=txt+' '+bad;return;}
   if(pUseExif){
     el.textContent=txt+' Reading their dates…';
     const ds=await pDates(files,'',true);if(tok!==pPickTok)return;
     const own=ds.filter(d=>d.own), days=new Set(own.map(d=>d.date)).size, none=files.length-own.length;
     if(own.length){const sorted=own.map(d=>d.date).sort();
-      txt+=` ${own.length===files.length?(files.length===1?'Taken':'All taken'):own.length+' taken'} ${days===1?'on '+fmtShort(sorted[0]):`over ${days} days, ${fmtShort(sorted[0])} to ${fmtShort(sorted[sorted.length-1])}`}.`;}
+      txt+=' '+pDot(`${own.length===files.length?(files.length===1?'Taken':'All taken'):own.length+' taken'} ${days===1?'on '+fmtShort(sorted[0]):`over ${days} days, ${fmtShort(sorted[0])} to ${fmtShort(sorted[sorted.length-1])}`}`);}
     if(none)txt+=` ${none===files.length?(none===1?'It has':'None have'):none+(none===1?' has':' have')} no date of ${none===1?'its':'their'} own – ${none===1?'it':'they'}’ll get the date picked.`;
   }
   el.textContent=txt;
@@ -273,69 +320,124 @@ async function pUpload(form){
   /* the page can be drawn again while this runs (leave Photos and come back): always write to the form on screen now */
   const showErr=t=>{pUpErr=t;const e=$('#p-err');if(e){e.textContent=t;e.hidden=!t;}};
   if(pBusy){showErr('An upload is still running – wait for it to finish, then upload these.');return;}
-  const err={set textContent(t){showErr(t);},set hidden(h){if(h)showErr('');},get hidden(){return !pUpErr;}}, btn=form.querySelector('button[type=submit]');
   const files=[...$('#p-file').files], date=$('#p-date').value, pick=$('#p-pose')?$('#p-pose').value:'other', note=$('#p-note').value.trim();
   const byAi=pick==='ai', pose=byAi?'other':pick, useExif=pUseExif;
   const unset=byAi||pick==='other';                 /* left as Other (the default, and all there is with AI off) – not set by hand, so "Tag poses with AI" takes them later */
-  err.hidden=true;
-  if(!files.length){err.textContent='Pick one or more photos.';err.hidden=false;return;}
-  if(!isDate(date)){err.textContent=useExif?'Pick a date for any photos without one of their own.':'Pick the date the photos were taken.';err.hidden=false;return;}
-  const bad=pTooMany(files);if(bad){err.textContent=bad;err.hidden=false;return;}
-  pBusy=true;btn.disabled=true;pDate=date;if(pAi)pUpPose=pick;
+  showErr('');
+  if(!files.length){showErr('Pick one or more photos.');return;}
+  if(!isDate(date)){showErr(useExif?'Pick a date for any photos without one of their own.':'Pick the date the photos were taken.');return;}
+  const bad=pTooMany(files.filter(f=>!pWent(f)));if(bad){showErr(bad);return;}
+  pBusy=true;pStopUp=false;pDate=date;if(pAi)pUpPose=pick;
+  const btn=()=>$('#p-form button[type=submit]'), stopBtn=()=>$('#p-upstop');
+  {const b=btn();if(b)b.disabled=true;const s=stopBtn();if(s){s.hidden=false;s.disabled=false;}}
   const n=files.length, many=n>1, fails=[], dates=new Set();
-  let done=0, started=0, aiMiss=0, own=0, stop=null;
+  let added=0, before=0, started=0, aiMiss=0, own=0, stop=null;
+  const done=()=>added+before;
   const say=t=>{pUpSay=t;const s=$('#p-state');if(s)s.textContent=t;};
   try{
     say(useExif?'Reading the photos’ dates…':'Uploading…');
     const when=await pDates(files,date,useExif);
-    /* a few at a time; one bad picture is skipped, but signing out, a lost server or a full account stops the lot */
+    /* a few at a time; one bad picture is skipped, but signing out, a lost server or a full account stops the lot, and Stop
+       lets the ones in flight finish */
     const one=async i=>{
-      const f=files[i], d=when[i].date;
+      const f=files[i], d=when[i].date, sig=pSig(f);
       try{
-        const big=await pShrink(f,P_MAX,0.86), small=await pShrink(f,P_THUMB,0.8);
+        let e=pWent(f);
+        if(e&&e.t){before++;dates.add(PHOTOS&&pById(e.id)?pById(e.id).date:d);return;}   /* went up in full before: not sent again */
+        if(!e||!e.k){e={k:(pSent.get(sig)||{}).k||pKeyNew()};pSent.set(sig,e);pSentKeep();}
+        const [big,mid,small]=await pShrinkAll(f,[[P_MAX,0.86],[P_MID,0.82],[P_THUMB,0.8]]);
         if(stop)return;
-        let p=await pSend('POST',`/api/photos?${new URLSearchParams({date:d,pose,...(unset?{ai:'1'}:{})})}`,big,note?{'x-photo-note':encodeURIComponent(note)}:{});   /* the note in a header: never in a logged URL */
-        try{p=await pSend('PUT',`/api/photos/${p.id}/thumb`,small);}catch(e){if(e.signedOut)throw e;}   /* the catalog falls back to the full picture */
-        if(PHOTOS)PHOTOS.push(p);done++;   /* null: the list was dropped meanwhile (a range delete) and loads again */dates.add(d);if(when[i].own)own++;
-        if(byAi){
-          try{const a=await pAskAi(p.id,true,p);const k=(PHOTOS||[]).findIndex(x=>x.id===p.id);if(k>=0)PHOTOS[k]=a.photo;}
-          catch(e){if(e.signedOut)throw e;aiMiss++;}   /* stays "other", not counted as set by hand */
+        let p=e.id?pById(e.id):null, again=!!p;
+        if(!p){
+          p=await pSend('POST',`/api/photos?${new URLSearchParams({date:d,pose,...(unset?{ai:'1'}:{})})}`,big,
+            {'x-photo-key':e.k,...(note?{'x-photo-note':encodeURIComponent(note)}:{})});   /* the note in a header: never in a logged URL */
+          again=!!p.again;delete p.again;
+          e.id=p.id;pSentKeep();
         }
-      }catch(e){
-        if(e.signedOut||/reach the server|most photos/.test(e.message))stop=stop||e;
-        else fails.push(`${f.name}: ${e.message}`);
+        /* the smaller versions: the catalog and the photo page fall back to the full picture while one is missing; a lost
+           server stops the batch, and Upload sends what's missing */
+        for(const [kind,blob,has] of [['thumb',small,'tv'],['mid',mid,'mv']]){
+          if(p[has])continue;
+          try{p=await pSend('PUT',`/api/photos/${p.id}/${kind}`,blob);}
+          catch(x){if(x.signedOut||/reach the server/.test(x.message))throw x;}
+        }
+        e.t=!!(p.tv&&p.mv);pSentKeep();
+        if(PHOTOS){const k=PHOTOS.findIndex(x=>x.id===p.id);if(k>=0)PHOTOS[k]=p;else PHOTOS.push(p);}   /* null: the list was dropped meanwhile (a range delete) and loads again */
+        if(again)before++;else{added++;if(when[i].own)own++;}
+        dates.add(p.date);
+        if(byAi&&!again){
+          try{const a=await pAskAi(p.id,true,p);const k=(PHOTOS||[]).findIndex(x=>x.id===p.id);if(k>=0)PHOTOS[k]=a.photo;}
+          catch(x){if(x.signedOut)throw x;aiMiss++;}   /* stays "other", not counted as set by hand */
+        }
+      }catch(x){
+        if(x.signedOut||/reach the server|most photos|reached the/.test(x.message))stop=stop||x;
+        else fails.push(`${f.name}: ${x.message}`);
+      }finally{
+        if(many&&!stop)say(`${byAi?'Uploading and tagging':'Uploading'} ${done()+fails.length} of ${n} done…${pStopUp?' Stopping after the photos on their way…':''}`);
       }
-      if(many&&!stop)say(`${byAi?'Uploading and tagging':'Uploading'} ${done+fails.length} of ${n} done…`);
     };
-    const worker=async()=>{while(!stop&&started<n)await one(started++);};
+    const worker=async()=>{while(!stop&&!pStopUp&&started<n)await one(started++);};
     await Promise.all(Array.from({length:Math.min(P_PARALLEL,n)},worker));
     if(stop&&stop.signedOut)return;
+    const left=files.filter(f=>{const e=pWent(f);return !(e&&e.t);}).length;
+    if(!left){files.forEach(f=>pSent.delete(pSig(f)));pSentKeep();}
     const ds=[...dates].sort();
-    pMsg=!done?'':`Added ${done} photo${done===1?'':'s'} `+(ds.length===1?`for ${fmtLong(ds[0])}`:`over ${ds.length} days, ${fmtShort(ds[0])} to ${fmtShort(ds[ds.length-1])}`)+
-      (useExif&&many&&own?` (${own===done?'all':own} dated from the photo${own===1?'':'s'}${own<done?`, ${done-own} on ${fmtShort(date)}`:''})`:'')+'.'+
-      (aiMiss?` The AI couldn’t tag ${aiMiss===done?(done===1?'it':'them'):aiMiss} – ${aiMiss===1?'it’s':'they’re'} under Other; try “Tag poses with AI” again later or change the pose on the photo.`:'');
-    if(stop||fails.length){
-      err.textContent=(done?`Added ${done} of ${n}. `:'')+(stop?stop.message+' ':'')+(fails.length?`${fails.length} couldn’t be added – ${fails.slice(0,3).join('; ')}${fails.length>3?'; …':''}`:'');
-      err.hidden=false;
+    pMsg=!added?'':pDot(`Added ${added} photo${added===1?'':'s'} `+(ds.length===1?`for ${fmtLong(ds[0])}`:`over ${ds.length} days, ${fmtShort(ds[0])} to ${fmtShort(ds[ds.length-1])}`)+
+      (useExif&&many&&own?` (${own===added?'all':own} dated from the photo${own===1?'':'s'}${own<added?`, ${added-own} on ${fmtShort(date)}`:''})`:''))+
+      (before?` ${before} had gone up already.`:'')+
+      (aiMiss?` The AI couldn’t tag ${aiMiss===added?(added===1?'it':'them'):aiMiss} – ${aiMiss===1?'it’s':'they’re'} under Other; try “Tag poses with AI” again later or change the pose on the photo.`:'');
+    if(!added&&before&&!left)pMsg=`All ${n===1?'of it':n} had gone up already – nothing sent again.`;
+    if(stop||fails.length||left){
+      showErr((done()?`Added ${done()} of ${n}. `:'')+(stop?stop.message+' ':pStopUp&&!fails.length?'Stopped. ':'')+
+        (fails.length?`${fails.length} couldn’t be added – ${fails.slice(0,3).join('; ')}${fails.length>3?'; …':''} `:'')+
+        (left&&left>fails.length?`${left} not sent yet – tap “Upload the rest”.`:''));
     }
-  }catch(e){
-    if(e.signedOut)return;
-    err.textContent=(done?`Added ${done} of ${n}. `:'')+e.message;err.hidden=false;
-  }finally{pBusy=false;pUpSay='';}
+  }catch(x){
+    if(x.signedOut)return;
+    showErr((done()?`Added ${done()} of ${n}. `:'')+x.message);
+  }finally{pBusy=false;pUpSay='';pStopUp=false;}
+  /* after anything short of the whole batch, the list again from the server, so what's shown is what's there */
+  if(pUpErr){try{await pLoad();}catch(x){if(x.signedOut)return;}}
   pSort();
   if(view!=='photos'||location.hash.replace(/^#/,'').split('/')[1])return;
   const f=$('#p-form');if(!f)return;
-  if(err.hidden){f.reset();$('#p-date').value=pDate;if($('#p-pose'))$('#p-pose').value=pUpPose;$('#p-exif').checked=pUseExif;$('#p-pick').textContent='';}
-  $('#p-state').textContent='';f.querySelector('button[type=submit]').disabled=false;renderPhotoList();
+  if(!pUpErr){f.reset();$('#p-date').value=pDate;if($('#p-pose'))$('#p-pose').value=pUpPose;$('#p-exif').checked=pUseExif;$('#p-pick').textContent='';
+    if(PHOTOS&&PHOTOS.length){pAddOpen=false;f.hidden=true;const a=$('#p-addbtn');if(a)a.setAttribute('aria-expanded','false');}}
+  $('#p-state').textContent='';const b=btn();if(b)b.disabled=false;const s=stopBtn();if(s)s.hidden=true;
+  pUpLabel();renderPhotoList();
 }
 
 /* ---------- one photo ---------- */
+/* the page head: back to the catalog in words, so it isn't the same ‹ as "Older photo" beside it */
+const pHead=(title,extra)=>`<div class="gbar"><a class="ghost pback" href="#photos">← Photos</a><h2>${esc(title)}</h2>${extra||''}</div>`;
+/* A photo in a zoom frame: its width and height go on the frame (pSize), so the page keeps the photo's room before it loads, and
+   the middle size is picked (srcset) unless the slot needs more – the full picture loads only once zoomed in (pZoomSet). */
+const P_ZHINT='Zoom with + and − or the mouse wheel; drag to move around, double-click to fit.';
+function pFigure(p,href,cls,more,hint=true){
+  const sized=p.w>0&&p.h>0, k=sized?Math.min(1,P_MID/Math.max(p.w,p.h)):1;
+  const set=sized&&p.mv?`${pMid(p)} ${Math.round(p.w*k)}w, ${pSrc(p)} ${p.w}w`:'';
+  return `<a class="pzoom${cls?' '+cls:''}" href="${href}"${href.startsWith('#')?'':' target="_blank" rel="noopener"'}${sized?` data-w="${p.w}" data-h="${p.h}"`:''}>`+
+    `<img src="${pMid(p)}"${set?` data-srcset="${esc(set)}"`:''} data-full="${pSrc(p)}"${sized?` width="${p.w}" height="${p.h}"`:''} alt="${esc(pLabel(p)+' photo, '+fmtLong(p.date))}"${more||''}></a>
+    <div class="pzbar"><button class="ghost" type="button" data-pa="zout" aria-label="Zoom out" disabled>−</button><button class="ghost" type="button" data-pa="zin" aria-label="Zoom in">+</button><button class="ghost" type="button" data-pa="zfit" disabled>Fit</button>
+      ${hint?`<span class="sub">${P_ZHINT}</span>`:''}</div>`;
+}
+/* each frame's shape from its photo's size, and the size to load for the room it has (before the pictures are asked for) */
+function pSize(root){
+  root.querySelectorAll('.pzoom[data-w]').forEach(z=>{
+    const w=+z.dataset.w, h=+z.dataset.h;
+    z.style.setProperty('--ar',String(w/h));z.style.setProperty('--nw',String(w));z.classList.add('sized');
+  });
+  root.querySelectorAll('.pzoom img[data-srcset]').forEach(i=>{
+    const slot=Math.max(1,Math.round(i.closest('.pzoom').clientWidth||i.closest('figure').clientWidth||P_MID));
+    i.sizes=slot+'px';i.srcset=i.dataset.srcset;
+  });
+}
 function pOnePage(p){
   const list=pShown(), i=list.indexOf(p);
   const newer=i>0?list[i-1]:null, older=i>=0&&i<list.length-1?list[i+1]:null;
   const nav=`<span class="pnav">${older?`<a class="nav" href="#photos/${older.id}" aria-label="Older photo">‹</a>`:''}${newer?`<a class="nav" href="#photos/${newer.id}" aria-label="Newer photo">›</a>`:''}</span>`;
-  return gHead('#photos',`${pLabel(p)} · ${fmtShort(p.date)}`,nav)+`
-    <figure class="pbig"><a class="pzoom" href="${pSrc(p)}" target="_blank" rel="noopener" title="Scroll to zoom, drag to move around, double-click to reset"><img src="${pSrc(p)}" alt="${esc(pLabel(p)+' photo, '+fmtLong(p.date))}"></a>
+  return pHead(`${pLabel(p)} · ${fmtShort(p.date)}`,nav)+`
+    <figure class="pbig">${pFigure(p,pSrc(p),'',' fetchpriority="high"')}
       <figcaption>${esc(fmtLong(p.date))}${pKg(p.date)?' · '+esc(pKg(p.date)):''}${p.note?' · '+esc(p.note):''}</figcaption></figure>
     <form id="p-eform" class="panel sform" data-id="${p.id}" data-ver="${esc(p.updated||'')}">
       <label class="f"><span class="lbl">Date taken</span><input id="p-edate" type="date" required value="${esc(p.date)}" max="${todayStr()}"></label>
@@ -350,6 +452,21 @@ function pOnePage(p){
         <button class="ghost fdel" type="button" data-pa="del" data-id="${p.id}">Delete</button></div>
     </form>`;
 }
+/* A photo from before middle sizes (or one whose middle size didn't go up): made from the full picture once it's on screen, so the
+   next look – and the coach's day card – loads the smaller one. Quietly: a failure leaves it as it was. */
+const pMidBusy=new Set();
+async function pMakeMid(p){
+  if(p.mv&&p.tv||pMidBusy.has(p.id)||!p.v)return;
+  pMidBusy.add(p.id);
+  try{
+    const b=await(await fetch(pSrc(p),{credentials:'same-origin'})).blob();
+    const [mid,small]=await pShrinkAll(b,[[P_MID,0.82],[P_THUMB,0.8]]);
+    let q=p;
+    if(!q.mv)q=await pSend('PUT',`/api/photos/${p.id}/mid`,mid);
+    if(!q.tv)q=await pSend('PUT',`/api/photos/${p.id}/thumb`,small);
+    const k=(PHOTOS||[]).findIndex(x=>x.id===p.id);if(k>=0)PHOTOS[k]={...PHOTOS[k],mv:q.mv,tv:q.tv};
+  }catch{}finally{pMidBusy.delete(p.id);}
+}
 async function pSave(form){
   const err=$('#p-eerr'), id=+form.dataset.id, btn=form.querySelector('button[type=submit]');
   btn.disabled=true;err.hidden=true;
@@ -358,14 +475,14 @@ async function pSave(form){
     const p=await api('PUT','/api/photos/'+id,{date:$('#p-edate').value,pose,style,note:$('#p-enote').value,   /* the AI's answer, kept: still the AI's */
       ...(said&&said.pose===pose&&said.style===style?{ai:true}:{})},form.dataset.ver||undefined);
     PHOTOS=PHOTOS.filter(x=>x.id!==id);PHOTOS.push(p);pSort();
-    pMsg='Saved.';go('photos');
+    pDirty=false;pMsg='Saved.';go('photos');
   }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message;err.hidden=false;if(e.conflict||/No such/.test(e.message))pLoad().catch(()=>{});}}
 }
 async function pDelete(id){
   const p=pById(id);if(!p)return;
   if(!confirm(`Delete this ${(pPoseName(p.pose)).toLowerCase()} photo from ${fmtLong(p.date)}? This can’t be undone.`))return;
   try{await api('DELETE','/api/photos/'+id);}catch(e){if(!e.signedOut)alert(e.message);return;}
-  PHOTOS=PHOTOS.filter(x=>x.id!==id);pPick=pPick.filter(x=>x!==id);pMsg='Deleted the photo.';go('photos');
+  PHOTOS=PHOTOS.filter(x=>x.id!==id);pPick=pPick.filter(x=>x!==id);pDirty=false;pMsg='Deleted the photo.';go('photos');
 }
 
 
@@ -388,12 +505,15 @@ async function pAiTagAll(onlyNew){
     if(!list.length){pMsg='Every photo shown has a pose you set yourself, so there’s nothing for the AI to tag.';renderPhotoList();return;}
   }
   if(!confirm(`Let the AI look at ${list.length===1?'this photo':`these ${list.length} photos`} and set ${list.length===1?'its':'their'} pose (front, left or right side, back or other) and pose type (relaxed, double biceps, most muscular…)?\n\n${P_AI_NOTE}`))return;
-  pAiBusy=true;pMsg='';
-  const btn=()=>$(onlyNew?'#p-aiuntag':'#p-aibtn'), other=$(onlyNew?'#p-aibtn':'#p-aiuntag');if(other)other.disabled=true;
+  pAiBusy=true;pStopAi=false;pMsg='';
+  /* the page can be drawn again meanwhile: the buttons and the status line are looked up each time */
+  const show=()=>{['#p-aibtn','#p-aiuntag'].forEach(x=>{const b=$(x);if(b)b.disabled=true;});
+    const st=$('#p-aistop');if(st){st.hidden=false;st.disabled=pStopAi;}const l=$('#p-aistate');if(l)l.textContent=pAiSay;};
   let done=0, changed=0, miss=0, kept=0, why='';
   try{
     for(const p of list){
-      const b=btn();if(b){b.disabled=true;b.textContent=`Tagging ${done+1} of ${list.length}…`;}
+      if(pStopAi)break;
+      pAiSay=`Tagging ${done+1} of ${list.length}…`;show();
       /* a photo edited (or deleted) here since the run started is left as it is now; the server checks edits from other tabs */
       const cur=pById(p.id);
       if(!cur||cur.pose!==p.pose||(cur.style||'')!==(p.style||'')){kept++;done++;continue;}
@@ -405,12 +525,14 @@ async function pAiTagAll(onlyNew){
       }catch(e){if(e.signedOut)return;miss++;why=e.message;if(/OpenRouter|API key|wait a while|set up/.test(why))break;}   /* the same for the rest */
       done++;
     }
-    pMsg=`The AI looked at ${done-miss-kept} photo${done-miss-kept===1?'':'s'} and changed the pose of ${changed}.`+(kept?` ${kept} changed by you during the run ${kept===1?'was':'were'} left as you set ${kept===1?'it':'them'}.`:'')+(miss?` ${miss} couldn’t be tagged: ${why}`:'')+(done<list.length?` Stopped before the last ${list.length-done}.`:'');
-  }finally{pAiBusy=false;}
+    pMsg=`The AI looked at ${done-miss-kept} photo${done-miss-kept===1?'':'s'} and changed the pose of ${changed}.`+(kept?` ${kept} changed by you during the run ${kept===1?'was':'were'} left as you set ${kept===1?'it':'them'}.`:'')+(miss?` ${pDot(`${miss} couldn’t be tagged: ${why}`)}`:'')+(done<list.length?` ${pStopAi?'Stopped – ':'Stopped before the last '}${pStopAi?`${list.length-done} not tagged.`:`${list.length-done}.`}`:'');
+  }finally{pAiBusy=false;pStopAi=false;pAiSay='';}
   if(view==='photos'&&!location.hash.replace(/^#/,'').split('/')[1]){
-    const a=$('#p-aibtn'), u=$('#p-aiuntag');
-    if(a){a.disabled=!PHOTOS.length;a.textContent='Tag poses with AI';}
-    if(u){u.disabled=!PHOTOS.some(pUntagged);u.textContent='Tag only untagged';}
+    const a=$('#p-aibtn'), u=$('#p-aiuntag'), st=$('#p-aistop'), l=$('#p-aistate');
+    if(a)a.disabled=!PHOTOS.length;
+    if(u)u.disabled=!PHOTOS.some(pUntagged);
+    if(st)st.hidden=true;
+    if(l)l.textContent='';
     renderPhotoList();
   }
 }
@@ -446,8 +568,9 @@ function pCmpPage(x,y){
   const ws=pWeights(), wa=pWeightOn(a.date,ws), wb=pWeightOn(b.date,ws);
   const opts=sel=>PHOTOS.map(p=>`<option value="${p.id}"${p===sel?' selected':''}>${esc(pYmd(p.date))} · ${esc(pLabel(p))}${pWeightOn(p.date,ws)?' · '+esc(pKgTxt(pWeightOn(p.date,ws))):''}</option>`).join('');
   const side=(p,w,k,other,ow)=>`<figure class="pside">
-      <label class="f"><span class="lbl">${k==='a'?'Before':'After'}</span><select id="p-c${k}" data-other="${other.id}">${opts(p)}</select></label>
-      <a class="pzoom" href="#photos/${p.id}" title="Scroll to zoom, drag to move around, double-click to reset"><img src="${pSrc(p)}" alt="${esc(pLabel(p)+' photo, '+fmtLong(p.date))}"></a>
+      <div class="pcpick"><label class="f"><span class="lbl">${k==='a'?'Before':'After'}</span><select id="p-c${k}" data-other="${other.id}">${opts(p)}</select></label>
+        <button class="ghost" type="button" data-pa="cmpshow" data-for="p-c${k}" hidden>Show</button></div>
+      ${pFigure(p,'#photos/'+p.id,'','',false)}
       <figcaption><b>${esc(pYmd(p.date))}</b> · ${esc(pLabel(p))}${w?' · '+esc(pKgTxt(w)):''}${p.note?`<br>${esc(p.note)}`:''}</figcaption>
       <button class="ghost" type="button" data-pa="match" data-keep="${other.id}" data-drop="${p.id}"${ow?'':' disabled'} title="Swap this side for the ${esc(pPoseName(other.pose).toLowerCase())} photo from another day when you weighed closest to that">${ow?`Find one at ${esc(ow.kg)} kg`:'No weigh-in to match'}</button></figure>`;
   const gap=pDayGap(a.date,b.date), sum=[gap?`${gap} day${gap===1?'':'s'} apart`:'Same day'];
@@ -455,7 +578,21 @@ function pCmpPage(x,y){
   return `<div class="gbar"><h2>Compare</h2><button class="ghost" type="button" data-pa="repick">Pick in the catalog</button></div>
     <p class="note" id="p-cmpsum">${esc(sum.join(' · '))}</p>
     <div class="pcmp" id="p-cmp">${side(a,wa,'a',b,wb)}${side(b,wb,'b',a,wa)}</div>
+    <p class="sub pzhint">${P_ZHINT}</p>
     ${pMsg?`<p class="note fmsg" role="status">${esc(pMsg)}</p>`:''}`;
+}
+/* Picking another photo in a Before / After list: with the mouse or a finger it shows at once; from the keyboard (arrow keys move
+   through the list) only on Enter or "Show", so each arrow press doesn't load a photo and redraw the page (WCAG 3.2.2). The page
+   is drawn again in place, focus back on the list that was used. */
+let pCmpPtr=null;   /* the list last pressed with a pointer */
+async function pCmpApply(sel){
+  const keep=+sel.dataset.other, pickId=+sel.value;
+  if(!pickId)return;
+  pMsg='';
+  history.replaceState(null,'',`#photos/compare/${pickId}/${keep}`);
+  await renderPhotos(['compare',pickId,keep]);
+  const again=[...document.querySelectorAll('#p-cmp select')].find(x=>+x.value===pickId);
+  if(again)again.focus();
 }
 /* the photo, of the same pose and from another day, whose day's weight is closest to the kept photo's */
 function pMatch(keepId,dropId){
@@ -474,8 +611,9 @@ function pMatch(keepId,dropId){
 }
 
 /* ---------- zoom on a photo (one photo, and each side of Compare) ----------
-   The mouse wheel zooms in and out around the pointer (1× to 8×); while zoomed in, dragging moves the view and
-   a double-click goes back to the whole photo. Clicking the photo opens it only when it isn't zoomed. */
+   The mouse wheel, or the + and − buttons under the photo, zoom in and out (around the pointer, or the middle) from 1× to 8×; while
+   zoomed in, dragging moves the view and a double-click (or Fit) goes back to the whole photo. Clicking the photo opens it only when
+   it isn't zoomed. Zoomed in, the full picture takes the place of the middle size. */
 const pZs=new WeakMap();   /* frame → {box, img, s, x, y}; a new page makes new frames */
 let pZ=null;               /* the one being dragged */
 const P_ZMAX=8;
@@ -490,6 +628,16 @@ function pZoomSet(z,s,x,y){
   z.s=s;z.x=Math.min(0,Math.max(w-w*s,x));z.y=Math.min(0,Math.max(h-h*s,y));   /* the photo always fills the frame */
   z.img.style.transform=s===1?'':`translate(${z.x}px,${z.y}px) scale(${s})`;
   z.box.classList.toggle('zoomed',s>1);
+  if(s>1&&z.img.dataset.full&&!z.img.dataset.big){z.img.dataset.big='1';z.img.removeAttribute('srcset');z.img.src=z.img.dataset.full;}
+  const bar=z.box.nextElementSibling;
+  if(bar&&bar.classList.contains('pzbar')){
+    bar.querySelector('[data-pa=zout]').disabled=s<=1;bar.querySelector('[data-pa=zfit]').disabled=s<=1;bar.querySelector('[data-pa=zin]').disabled=s>=P_ZMAX;
+  }
+}
+/* the + and − buttons: 1.5× in or out around the middle of the frame */
+function pZoomBy(box,f){
+  const z=pZoomOf(box), cx=box.clientWidth/2, cy=box.clientHeight/2, s=f?Math.min(P_ZMAX,Math.max(1,z.s*f)):1;
+  pZoomSet(z,s,f?cx-(cx-z.x)*s/z.s:0,f?cy-(cy-z.y)*s/z.s:0);
 }
 document.addEventListener('wheel',e=>{
   const box=view==='photos'&&e.target.closest('.pzoom');if(!box||e.ctrlKey)return;   /* ctrl+wheel stays the browser's page zoom */
@@ -532,7 +680,7 @@ document.addEventListener('click',e=>{
   const b=e.target.closest('[data-pa]');if(!b)return;
   const a=b.dataset.pa;
   if(a==='filter'){pPose=b.dataset.v;pMsg='';document.querySelectorAll('[data-pa=filter]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderPhotoList();}
-  else if(a==='del')pDelete(+b.dataset.id);
+  else if(a==='del')once(b,()=>pDelete(+b.dataset.id));
   else if(a==='select'){pMsg='';pSetSel(!pSel);}
   else if(a==='selcancel')pSetSel(false);
   else if(a==='cmpgo'&&pPick.length===2){const [x,y]=pPick;pSel=false;pPick=[];pMsg='';go(`photos/compare/${x}/${y}`);}
@@ -542,11 +690,28 @@ document.addEventListener('click',e=>{
   else if(a==='aitag')pAiTagAll(false);
   else if(a==='aiuntag')pAiTagAll(true);
   else if(a==='aione')pAiOne(b);
+  else if(a==='add')pAddToggle();
+  else if(a==='upstop'){pStopUp=true;b.disabled=true;const s=$('#p-state');if(s)s.textContent=pUpSay=(pUpSay||'Uploading…').replace(/ Stopping.*$/,'')+' Stopping after the photos on their way…';}
+  else if(a==='aistop'){pStopAi=true;b.disabled=true;const s=$('#p-aistate');if(s)s.textContent=pAiSay=pAiSay+' Stopping after this one…';}
+  else if(a==='zin'||a==='zout'||a==='zfit'){const box=b.closest('.pzbar').previousElementSibling;if(box&&box.classList.contains('pzoom'))pZoomBy(box,a==='zin'?1.5:a==='zout'?1/1.5:0);}
+  else if(a==='cmpshow'){const sel=document.getElementById(b.dataset.for);if(sel)pCmpApply(sel);}
 });
+/* keys: Space (as well as Enter) picks a photo while picking two to compare – the tiles are links; Enter on a Before / After list
+   shows the photo picked */
+document.addEventListener('keydown',e=>{
+  if(view!=='photos')return;
+  const t=e.target;
+  if(pSel&&(e.key===' '||e.key==='Spacebar')&&t.matches&&t.matches('#p-list .ptile')){e.preventDefault();pToggle(+t.dataset.pid);return;}
+  if((t.id==='p-ca'||t.id==='p-cb')){pCmpPtr=null;if(e.key==='Enter'){e.preventDefault();pCmpApply(t);}}
+});
+document.addEventListener('pointerdown',e=>{if(view==='photos'&&(e.target.id==='p-ca'||e.target.id==='p-cb'))pCmpPtr=e.target;},true);
 document.addEventListener('change',e=>{
   if(view!=='photos')return;
   const id=e.target.id;
-  if(id==='p-ca'||id==='p-cb'){pMsg='';go(`photos/compare/${e.target.value}/${e.target.dataset.other}`);}
+  if(id==='p-ca'||id==='p-cb'){
+    if(pCmpPtr===e.target){pCmpPtr=null;pCmpApply(e.target);return;}
+    const b=document.querySelector(`[data-pa=cmpshow][data-for="${id}"]`);if(b)b.hidden=false;
+  }
   else if(id==='p-jump')pJump(e.target.value);
   else if(id==='p-file')pPicked();
   else if(id==='p-exif'){pUseExif=e.target.checked;const l=$('#p-date').closest('label').querySelector('.lbl');l.textContent=pUseExif?'Date if a photo has none':'Date taken';pPicked();}
@@ -555,7 +720,35 @@ document.addEventListener('change',e=>{
 });
 document.addEventListener('input',e=>{
   if(view==='photos'&&e.target.id==='p-nearkg'){pNearKg=e.target.value;if(pNear)renderPhotoList();}
+  if(view==='photos'&&e.target.closest&&e.target.closest('#p-eform')){pDirty=true;pKeepDraft();}
 });
+/* An unsaved change to a photo's details isn't dropped by leaving the page (p5-photos-11): a link away asks first; Back, Forward or
+   anything else that changes the address puts the photo page back, with the changes, and asks there; closing or reloading the tab
+   asks too. pDraft: the form as changed, for putting it back. */
+let pDraft=null;
+const pAsk=t=>Promise.resolve(confirm(t));   /* the browser's confirm until the shared ask() dialog is in */
+const P_LEAVE='You changed this photo’s details without saving. Leave without saving them?';
+function pKeepDraft(){const f=$('#p-eform');if(f)pDraft={id:+f.dataset.id,hash:location.hash,ai:f.dataset.ai||'',v:['#p-edate','#p-epose','#p-estyle','#p-enote'].map(x=>$(x).value)};}
+document.addEventListener('click',e=>{
+  if(!pDirty||view!=='photos'||e.defaultPrevented||e.button!==0||e.ctrlKey||e.metaKey||e.shiftKey)return;
+  const a=e.target.closest&&e.target.closest('a[href^="#"]');
+  if(!a||!$('#p-eform')||a.getAttribute('href')===location.hash||a.closest('.pzoom'))return;
+  e.preventDefault();e.stopImmediatePropagation();
+  pAsk(P_LEAVE).then(yes=>{if(yes){pDirty=false;location.hash=a.getAttribute('href');}});
+},true);
+window.addEventListener('hashchange',async e=>{
+  if(!pDirty||!pDraft||!e.oldURL)return;
+  const from=new URL(e.oldURL).hash, to=location.hash;
+  if(from===to||from!==pDraft.hash)return;
+  pDirty=false;const d=pDraft;
+  history.replaceState(null,'',from);route();
+  for(let i=0;i<100&&!$(`#p-eform[data-id="${d.id}"]`);i++)await new Promise(r=>setTimeout(r,20));
+  const f=$(`#p-eform[data-id="${d.id}"]`);if(!f)return;
+  ['#p-edate','#p-epose','#p-estyle','#p-enote'].forEach((x,i)=>{$(x).value=d.v[i];});if(d.ai)f.dataset.ai=d.ai;
+  pDirty=true;pDraft=d;
+  if(await pAsk(P_LEAVE)){pDirty=false;location.hash=to;}
+});
+window.addEventListener('beforeunload',e=>{if(pDirty&&view==='photos'&&$('#p-eform')){e.preventDefault();e.returnValue='';}});
 document.addEventListener('submit',e=>{
   if(e.target.id==='p-form'){e.preventDefault();pMsg='';pUpload(e.target);}
   else if(e.target.id==='p-eform'){e.preventDefault();pSave(e.target);}

@@ -24,13 +24,14 @@ function sSort(){SUPPS.sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensit
 async function sLoad(){const r=await api('GET','/api/supps');sReadAt=Date.now();SUPPS=(r&&r.supplements)||[];if(r&&r.units)SUNITS=r.units;SAI=!!(r&&r.ai);sTrends(r&&r.trends);sSort();}
 function sTrends(list){STREND=new Set((list||[]).map(n=>n.toLowerCase()));}
 const sTrendBox=name=>`<label class="tog strend" title="Follow it on the Timeline’s trend chart"><input type="checkbox" data-st="${esc(name)}"${STREND.has(name.toLowerCase())?' checked':''}> Trend</label>`;
-async function sSetTrend(el){
-  const name=el.dataset.st, on=el.checked;
-  const sync=v=>document.querySelectorAll('input[data-st]').forEach(x=>{if(x.dataset.st.toLowerCase()===name.toLowerCase())x.checked=v;});
-  sync(on);
-  try{const r=await api('PUT','/api/supps/trend',{name,on});sTrends(r.trends);}
-  catch(e){sync(!on);if(!e.signedOut)alert(e.message);}
-}
+/* shown at once on every box of that name, saved one request at a time per name (optToggle, app.js) */
+const sBoxOf=k=>[...document.querySelectorAll('input[data-st]')].filter(x=>x.dataset.st.toLowerCase()===k);
+const sTrendSet=optToggle({
+  send:async(k,on)=>{const b=sBoxOf(k)[0], r=await api('PUT','/api/supps/trend',{name:b?b.dataset.st:k,on});sTrends(r.trends);},
+  show:(k,on)=>{if(on)STREND.add(k);else STREND.delete(k);sBoxOf(k).forEach(x=>{x.checked=on;});},
+  fail:(k,e)=>noteBy(sBoxOf(k)[0],'Couldn’t change Trend: '+endStop(e.message),()=>sTrendSet(k,!STREND.has(k))),
+});
+function sSetTrend(el){sTrendSet(el.dataset.st.toLowerCase(),el.checked);}
 /* back to this tab: the library and the day's log again, in case another tab or device changed them (forms being filled in stay) */
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden||!SUPPS)return;
@@ -98,7 +99,7 @@ function renderSuppLog(){
   const el=$('#s-log');if(!el)return;
   const list=SLOG[sDate]||[];
   el.innerHTML=(sMsg?`<p class="note fmsg" role="status">${esc(sMsg)}</p>`:'')+(list.length
-    ?list.map(e=>`<div class="orow"><span>${esc(e.name)}</span><b class="sdose">${esc(sDose(e.amount,e.unit))}</b>${e.note?`<span class="ml">${esc(e.note)}</span>`:''}${sTrendBox(e.name)}<button class="x" type="button" data-sa="del" data-id="${e.id}" aria-label="Remove ${esc(e.name)}">×</button></div>`).join('')
+    ?list.map(e=>`<div class="orow"${e.tmp?' aria-busy="true"':''} data-sl="${e.id}"><span>${esc(e.name)}</span><b class="sdose">${esc(sDose(e.amount,e.unit))}</b>${e.note?`<span class="ml">${esc(e.note)}</span>`:''}${e.tmp?'<span class="sub">Saving…</span>':`${sTrendBox(e.name)}<button class="x" type="button" data-sa="del" data-id="${e.id}" aria-label="Remove ${esc(e.name)}">×</button>`}</div>`).join('')
     :gEmpty('Nothing logged for this day.'));
 }
 async function sAdd(body){
@@ -106,6 +107,35 @@ async function sAdd(body){
   (SLOG[e.date]=SLOG[e.date]||[]).push(e);sMsg='';
   if(e.date===sDate)renderSuppLog();
   return e;
+}
+/* Quick add: the row shows at once ("Saving…") and becomes the server's when it lands; a failure takes it out and says so.
+   A second tap on the same supplement while it saves is the same tap. */
+const sQuickBusy=new Set();let sTmpN=0;
+function sQuickLog(s){
+  const date=sDate;if(sQuickBusy.has(s.id+'|'+date))return;sQuickBusy.add(s.id+'|'+date);
+  const t={id:-(++sTmpN),date,sid:s.id,name:s.name,amount:s.amount,unit:s.unit,note:'',tmp:true};
+  (SLOG[date]=SLOG[date]||[]).push(t);sMsg='';if(date===sDate)renderSuppLog();
+  const drop=()=>{if(SLOG[date])SLOG[date]=SLOG[date].filter(x=>x!==t);};
+  api('POST','/api/supps/log',{date,supplement:s.id,amount:s.amount,unit:s.unit}).then(e=>{
+    drop();const l=SLOG[e.date]=SLOG[e.date]||[];if(!l.some(x=>x.id===e.id))l.push(e);
+    if(view==='supps'&&e.date===sDate)renderSuppLog();
+  },err=>{drop();if(view==='supps'&&date===sDate)renderSuppLog();
+    if(!err.signedOut)noteBy(view==='supps'?$(`[data-sa=quick][data-id="${s.id}"]`):null,`Couldn’t log ${s.name}: ${endStop(err.message)}`,()=>sQuickLog(s));
+  }).finally(()=>sQuickBusy.delete(s.id+'|'+date));
+}
+/* ×: the row goes at once, with Undo for a moment; a failure puts it back where it was and says so */
+async function sLogDel(id){
+  const d=Object.keys(SLOG).find(k=>SLOG[k].some(x=>x.id===id));if(!d)return;
+  const ix=SLOG[d].findIndex(x=>x.id===id), e=SLOG[d][ix];
+  SLOG[d].splice(ix,1);if(view==='supps'&&d===sDate)renderSuppLog();
+  try{await api('DELETE','/api/supps/log/'+id);}
+  catch(err){if(err.signedOut)return;
+    const l=SLOG[d]=SLOG[d]||[];if(!l.some(x=>x.id===id))l.splice(Math.min(ix,l.length),0,e);
+    if(view==='supps'&&d===sDate){renderSuppLog();noteBy($(`#s-log [data-sl="${id}"]`),'Couldn’t remove it – it’s back. '+endStop(err.message));}
+    return;}
+  if(view==='supps'&&d===sDate)noteBy($('#s-log'),`Removed ${e.name}.`,()=>{
+    const body={date:e.date,name:e.name,amount:e.amount,unit:e.unit,note:e.note||''};if(e.sid&&sById(e.sid))body.supplement=e.sid;
+    sAdd(body).catch(err=>{if(!err.signedOut)noteBy($('#s-log'),`Couldn’t put ${e.name} back: ${endStop(err.message)}`);});},'Undo');
 }
 function sPickChanged(){
   sPick=$('#s-pick').value;const s=sById(+sPick);
@@ -275,12 +305,8 @@ document.addEventListener('click',async e=>{
   else if(a==='sdel')sDeleteLib(id);
   else if(a==='aiadd'&&sAi)sAiAdd(b);
   else if(a==='aidrop'){sAi=null;jobSeen('supps');renderSuppAi();}
-  else if(a==='quick'){const s=sById(id);if(!s)return;b.disabled=true;
-    try{await sAdd({date:sDate,supplement:s.id,amount:s.amount,unit:s.unit});}catch(err){if(!err.signedOut)alert(err.message);}b.disabled=false;}
-  else if(a==='del'){
-    try{await api('DELETE','/api/supps/log/'+id);}catch(err){if(!err.signedOut)alert(err.message);return;}
-    Object.keys(SLOG).forEach(d=>{SLOG[d]=SLOG[d].filter(x=>x.id!==id);});renderSuppLog();
-  }
+  else if(a==='quick'){const s=sById(id);if(s)sQuickLog(s);}
+  else if(a==='del')sLogDel(id);
 });
 document.addEventListener('change',e=>{
   if(view!=='supps')return;

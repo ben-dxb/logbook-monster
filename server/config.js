@@ -80,6 +80,15 @@ const config = {
     clientSecret: envSecret('GOOGLE_CLIENT_SECRET').value,
   },
 };
+/* Who runs this app, for the privacy page and the Contact line: PRIVACY_CONTACT (an email) and OPERATOR_NAME. Without
+   PRIVACY_CONTACT, SHOW_ADMIN_CONTACT=true offers the first ADMIN_EMAILS address instead; otherwise there is no contact. */
+{
+  const want = (process.env.PRIVACY_CONTACT || '').trim();
+  const ok = /^[^\s@<>"'`]+@[^\s@<>"'`]+\.[^\s@<>"'`]+$/.test(want);
+  if (want && !ok) console.error('PRIVACY_CONTACT must be an email address – it is ignored.');
+  config.contact = ok ? want : bool(process.env.SHOW_ADMIN_CONTACT) ? config.adminEmails[0] || '' : '';
+  config.operatorName = (process.env.OPERATOR_NAME || '').trim().slice(0, 100);
+}
 config.photoDir = require('path').resolve(config.photoDir || require('path').join(require('path').dirname(config.dbPath), 'photos'));
 config.google.enabled = !!(config.google.clientId && config.google.clientSecret);
 /* Over https the session cookie is __Host- (Secure, whole site, this host only); the http laptop setup can't use the prefix. */

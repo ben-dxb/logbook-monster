@@ -33,14 +33,14 @@ async function renderTimeline(args){
   else if(!isDate(d||''))renderTrends();
   if(view==='timeline'&&isDate(d||''))tOpen(d);
 }
-async function tLoad(){
+async function tLoad(quiet){   /* quiet: the chart stays as it is until the new numbers are in */
   const tok=++tTok, key=tKeyNow();
-  $('#t-chart').innerHTML='<p class="emptyc">Loading…</p>';
+  if(!quiet)$('#t-chart').innerHTML='<p class="emptyc">Loading…</p>';
   try{
     const from=tRange?addDays(todayStr(),-tRange+1):'';
     const r=await api('GET',`/api/timeline/trends?to=${todayStr()}${from?'&from='+from:''}`);
     if(tok!==tTok||view!=='timeline')return;
-    TL=r;tReadKey=key;renderTrends();
+    TL=r;tReadKey=key;tExKept={};renderTrends();
   }catch(e){if(!e.signedOut&&tok===tTok)$('#t-chart').innerHTML=`<p class="emptyc">Couldn’t load your trends: ${esc(e.message)}</p>`;}
 }
 
@@ -71,13 +71,15 @@ function tPage(){
 /* ---------- metrics and chart ---------- */
 function renderTrends(){
   if(!TL||!$('#t-metrics'))return;
-  const col=tColours(), groups=[];
+  const col=tColours(), groups=[], pk=$('#t-expick'), open=pk&&pk.open, find=$('#t-exfind')?$('#t-exfind').value:'', fx=document.activeElement&&document.activeElement.dataset.tx;
   TL.series.forEach(s=>{let g=groups.find(x=>x.name===s.group);if(!g)groups.push(g={name:s.group,list:[]});g.list.push(s);});
   if(!groups.some(g=>g.name==='Supplements'))groups.push({name:'Supplements',list:[]});
   $('#t-metrics').innerHTML=groups.map(g=>`<div class="tgroup"><span class="lbl">${esc(g.name)}</span><div class="tchips">${g.list.map(s=>{
       const on=tOn.has(s.key), none=!s.points.length;
       return `<button type="button" class="tm tc${col[s.key]}${none?' none':''}" data-ta="metric" data-k="${esc(s.key)}" aria-pressed="${on}" title="${none?'No data in this range':esc(s.name)}${s.left?esc(` – ${s.left} dose${s.left===1?'':'s'} in a unit that can’t be turned into ${s.unit} left out`):''}"><i class="tsw tc${col[s.key]}"></i>${esc(s.name)}${s.left?` <small>(${s.left} left out)</small>`:''}</button>`;}).join('')
     ||(g.name==='Supplements'?tRO?'<span class="sub">No supplements followed.</span>':'<span class="sub">Tick “Trend” on a supplement in the <a href="#supps/lib">supplement library</a> to follow it here.</span>':'')}${g.name==='Gym'?tExPicker():''}</div></div>`).join('');
+  if(open&&$('#t-expick')){$('#t-expick').open=true;const f=$('#t-exfind');if(f&&find){f.value=find;f.dispatchEvent(new Event('input',{bubbles:true}));}
+    const x=fx&&document.querySelector(`#t-exlist input[data-tx="${fx}"]`);if(x)x.focus();}   /* a pick redraws the metrics: the picker stays open, on the box you ticked */
   if($('#t-aibtn'))$('#t-aibtn').disabled=!TL.ai||tAiBusy;
   renderAi();
   drawTrends();
@@ -88,18 +90,29 @@ function tExPicker(){
   const n=xs.filter(x=>x.trend).length;
   return `<details class="texpick" id="t-expick"><summary class="tm">＋ Exercises${n?` (${n})`:''}</summary>
     <div class="texbox">${xs.length>8?'<input type="search" id="t-exfind" placeholder="Find an exercise" aria-label="Find an exercise" autocomplete="off">':''}
-      <div class="texlist" id="t-exlist">${xs.map(x=>`<label class="tog" data-n="${esc(x.name.toLowerCase())}"><input type="checkbox" value="${x.id}"${x.trend?' checked':''}> ${esc(x.name)} <span class="sub">${x.days?`${x.days} day${x.days===1?'':'s'}`:'none in range'}</span></label>`).join('')}</div>
-      <div class="gactions"><button class="btn" type="button" data-ta="exsave">Show e1RM</button><button class="ghost" type="button" data-ta="exnone">Clear</button></div>
-      <p class="sub" id="t-exmsg" role="status"></p></div></details>`;
+      <p class="sub">Tick an exercise to chart its estimated 1RM.</p>
+      <div class="texlist" id="t-exlist">${xs.map(x=>`<label class="tog" data-n="${esc(x.name.toLowerCase())}"><input type="checkbox" value="${x.id}" data-tx="${x.id}"${x.trend?' checked':''}> ${esc(x.name)} <span class="sub">${x.days?`${x.days} day${x.days===1?'':'s'}`:'none in range'}</span></label>`).join('')}</div>
+      <div class="gactions"><button class="ghost" type="button" data-ta="exnone">Clear</button></div></div></details>`;
 }
-async function tExSave(){
-  const ids=[...document.querySelectorAll('#t-exlist input:checked')].map(i=>+i.value), msg=$('#t-exmsg');
-  try{
-    const r=await api('PUT','/api/gym/trends',{ids});const on=new Set(r.ids);
-    (TL.exercises||[]).forEach(x=>{const k='ex:'+x.id;if(on.has(x.id)&&!x.trend)tOn.add(k);else if(!on.has(x.id))tOn.delete(k);});
-    if(typeof GY!=='undefined'&&GY)GY.exercises.forEach(x=>{x.trend=on.has(x.id)?1:0;});
-    tKeep();tLoad();
-  }catch(e){if(!e.signedOut&&msg)msg.textContent=e.message;}
+/* A tick in the picker (or "Trend" on the exercise in the Gym) goes through gTrendSet (gym.js): its line shows or hides at once.
+   A line the chart doesn't have yet is read once the server has the tick – that exercise says "loading…" meanwhile. */
+const tExWait=new Set();let tExT=0, tExKept={};   /* key -> an unticked exercise's line, to put back at once */
+function tExShown(id,on){
+  const k='ex:'+id;if(on)tOn.add(k);else tOn.delete(k);tKeep();
+  if(!TL)return;
+  const x=(TL.exercises||[]).find(x=>x.id===id);if(x)x.trend=on;
+  const box=document.querySelector(`#t-exlist input[data-tx="${id}"]`);if(box)box.checked=on;
+  const ix=TL.series.findIndex(s=>s.key===k);
+  if(!on&&ix>=0){tExKept[k]=TL.series.splice(ix,1)[0];}
+  else if(on&&ix<0&&tExKept[k]){TL.series.push(tExKept[k]);delete tExKept[k];}
+  const have=TL.series.some(s=>s.key===k);
+  if(on&&!have){if(view!=='timeline'){TL=null;return;}
+    tExWait.add(id);const l=box&&box.closest('label'),sub=l&&l.querySelector('.sub');if(l)l.setAttribute('aria-busy','true');if(sub)sub.textContent='loading…';}
+  else{tExWait.delete(id);if(view==='timeline')renderTrends();}
+}
+function tExSaved(id,on){
+  if(!on||!tExWait.has(id))return;
+  clearTimeout(tExT);tExT=setTimeout(()=>{tExWait.clear();if(view==='timeline')tLoad(true);else TL=null;},150);   /* several ticks in a row: read once */
 }
 /* 7-day trailing average; for supplements a missing day counts as none */
 function tSmoothed(s,from,to){
@@ -199,21 +212,39 @@ async function tSummarise(){
 }
 
 /* ---------- the day card ---------- */
-function tOpen(d){
+/* Opening the card, and ‹ › (n: -1 / 1), draw its head again: focus goes to the day's heading – or stays on the ‹ or › that was
+   used – instead of dropping to the page behind (p5-photos-04). When the day's details come, focus stays on the same control. */
+function tOpen(d,n){
   const dlg=$('#t-card');tCardDate=d;const tok=++tCardTok;
-  $('#t-cbody').innerHTML=tCardHead(d)+'<p class="note">Loading…</p>';
-  if(!dlg.open)dlg.showModal();
-  api('GET','/api/timeline/day/'+d).then(r=>{if(tok===tCardTok&&dlg.open)$('#t-cbody').innerHTML=tCardHead(d,r)+tCardBody(r);},
-    e=>{if(tok===tCardTok&&!e.signedOut)$('#t-cbody').innerHTML=tCardHead(d)+gEmpty('Couldn’t load that day: '+e.message);});
+  tPaint(tCardHead(d)+'<p class="note">Loading…</p>',n?`[data-ta=cmove][data-n="${n}"]`:'#t-ctitle');
+  if(!dlg.open){dlg.showModal();tPaint(null,n?`[data-ta=cmove][data-n="${n}"]`:'#t-ctitle');}
+  api('GET','/api/timeline/day/'+d).then(r=>{if(tok===tCardTok&&dlg.open)tPaint(tCardHead(d,r)+tCardBody(r));},
+    e=>{if(tok===tCardTok&&!e.signedOut)tPaint(tCardHead(d)+gEmpty('Couldn’t load that day: '+e.message));});
+}
+/* the card's contents (html; null: as they are), then focus on `want` – or, when focus was on a control in the card, that control again */
+function tPaint(html,want){
+  const body=$('#t-cbody'), a=document.activeElement, inside=a&&body.contains(a);
+  const same=inside&&a.dataset&&a.dataset.ta?`[data-ta="${a.dataset.ta}"]${a.dataset.n?`[data-n="${a.dataset.n}"]`:''}`:null;
+  if(html!=null)body.innerHTML=html;
+  const lost=!body.contains(document.activeElement);
+  const el=want?body.querySelector(want):lost&&(same&&body.querySelector(same)||body.querySelector('#t-ctitle'));
+  if(el&&(want||lost))el.focus({preventScroll:true});
 }
 function tCloseCard(quiet){const dlg=$('#t-card');tCardDate=null;tCardTok++;if(dlg&&dlg.open){if(quiet)dlg.dataset.quiet='1';dlg.close();}}
 function tCardHead(d,r){
   const s=r&&r.food&&r.food.summary, type=(s&&s.type)||typeOn(d), tn=(s&&s.tname)||tnameOn(d,type);
   const t=todayStr(), rel=d===t?'Today':d===addDays(t,-1)?'Yesterday':'';
   return `<header class="tchead"><button class="nav" type="button" data-ta="cmove" data-n="-1" aria-label="Previous day">‹</button>
-    <div class="dt"><h2 id="t-ctitle">${esc(fmtLong(d))}</h2><span class="sub">${esc([rel,tn].filter(Boolean).join(' · '))}</span></div>
+    <div class="dt"><h2 id="t-ctitle" tabindex="-1">${esc(fmtLong(d))}</h2><span class="sub">${esc([rel,tn].filter(Boolean).join(' · '))}</span></div>
     <button class="nav" type="button" data-ta="cmove" data-n="1" aria-label="Next day">›</button>
     <button class="x tclose" type="button" data-ta="close" aria-label="Close">×</button></header>`;
+}
+/* a photo tile's sizes: the thumbnail (480 px) where it's enough, the middle size (1000 px) on a wide card at a high pixel ratio –
+   never the full picture (p5-photos-13) */
+function tSet(p){
+  if(!(p.w>0&&p.h>0)||!p.tv||!p.mv)return '';
+  const long=Math.max(p.w,p.h), tw=Math.round(p.w*Math.min(1,480/long)), mw=Math.round(p.w*Math.min(1,1000/long));
+  return mw>tw?` srcset="${esc(pThumb(p))} ${tw}w, ${esc(pMid(p))} ${mw}w" sizes="(max-width: 700px) 45vw, 200px"`:'';
 }
 /* a food on a saved day: the plan in effect on its date, the day's own copy, the food now, then any other plan change */
 function tFoodRec(D,f,d){
@@ -240,7 +271,7 @@ function tCardBody(r){
   const weight=w?`<p class="tbig">${w.kg.toFixed(1)}<i>kg</i></p><p class="sub">${w.ago?`Last weigh-in, ${esc(fmtShort(w.date))} (${tAgo(w.ago)})`:'Weighed in that day'}${w.avg7!=null&&!w.ago?` · 7-day average ${w.avg7.toFixed(1)} kg`:''}</p>`
     :gEmpty('No weigh-ins up to this day.');
   /* photos: the latest of each pose up to this day */
-  const photos=r.photos.length?`<div class="tcphotos">${r.photos.map(p=>`<a class="ptile" href="${tRO?pSrc(p):'#photos/'+p.id}"${tRO?' target="_blank" rel="noopener"':''}><img src="${pThumb(p)}" alt="${esc(pLabel(p)+' photo, '+fmtLong(p.date))}" loading="lazy" decoding="async"><span>${esc(pLabel(p))} · ${esc(p.ago?fmtShort(p.date):'that day')}</span></a>`).join('')}</div>`
+  const photos=r.photos.length?`<div class="tcphotos">${r.photos.map(p=>`<a class="ptile" href="${tRO?pMid(p):'#photos/'+p.id}"${tRO?' target="_blank" rel="noopener"':''}><img src="${pThumb(p)}"${tSet(p)} data-full="${pThumb(p)===pMid(p)?pSrc(p):pMid(p)}" alt="${esc(pLabel(p)+' photo, '+fmtLong(p.date))}" loading="lazy" decoding="async"><span>${esc(pLabel(p))} · ${esc(p.ago?fmtShort(p.date):'that day')}</span></a>`).join('')}</div>`
     :gEmpty('No progress photos up to this day.');
   /* supplements */
   const sp=r.supps;
@@ -264,15 +295,15 @@ document.addEventListener('click',e=>{
   if(a==='range'){tRange=+b.dataset.r;tKeep();document.querySelectorAll('[data-ta=range]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));tLoad();}
   else if(a==='metric'){const k=b.dataset.k;if(tOn.has(k))tOn.delete(k);else tOn.add(k);tKeep();b.setAttribute('aria-pressed',String(tOn.has(k)));drawTrends();}
   else if(a==='ai')tSummarise();
-  else if(a==='exsave')tExSave();
-  else if(a==='exnone')document.querySelectorAll('#t-exlist input').forEach(i=>{i.checked=false;});
+  else if(a==='exnone')document.querySelectorAll('#t-exlist input:checked').forEach(i=>gTrendSet(+i.dataset.tx,false));
   else if(a==='go')go('history/timeline/'+addDays(todayStr(),+b.dataset.n));   /* today when clicked, not when drawn */
   else if(a==='close')tCloseCard();
-  else if(a==='cmove'&&tCardDate){const d=addDays(tCardDate,+b.dataset.n);history.replaceState(null,'','#history/timeline/'+d);tOpen(d);}
+  else if(a==='cmove'&&tCardDate){const d=addDays(tCardDate,+b.dataset.n);history.replaceState(null,'','#history/timeline/'+d);tOpen(d,+b.dataset.n);}
 });
 document.addEventListener('change',e=>{
   if(view!=='timeline')return;
   if(e.target.id==='t-smooth'){tSmooth=e.target.checked;tKeep();drawTrends();}
+  else if(e.target.dataset.tx!=null&&!tRO)gTrendSet(+e.target.dataset.tx,e.target.checked);
 });
 document.addEventListener('input',e=>{
   if(e.target.id!=='t-exfind')return;const t=e.target.value.trim().toLowerCase();
@@ -287,4 +318,6 @@ $('#t-card').addEventListener('close',()=>{const dlg=$('#t-card');const quiet=dl
   if(!quiet&&/^#history\/timeline\//.test(location.hash))history.replaceState(null,'','#history/timeline');});
 $('#t-card').addEventListener('click',e=>{if(e.target===e.currentTarget)tCloseCard();});
 window.addEventListener('hashchange',()=>{if(view!=='timeline')tCloseCard(true);});
+/* a tile whose small version won't load falls back to the next size up (data-full), once */
+document.addEventListener('error',e=>{const i=e.target;if(i&&i.tagName==='IMG'&&i.dataset.full&&!i.dataset.fell){i.dataset.fell='1';i.removeAttribute('srcset');i.src=i.dataset.full;}},true);
 let tRz;window.addEventListener('resize',()=>{clearTimeout(tRz);tRz=setTimeout(()=>{if(view==='timeline')drawTrends();},150);});

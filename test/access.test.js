@@ -200,6 +200,7 @@ const ROUTES = [
   { key: 'GET /healthz', scope: 'public' },
   { key: 'GET /login', scope: 'public' },
   { key: 'GET /invite', scope: 'public' },
+  { key: 'GET /privacy', scope: 'public' },
   { key: 'GET /coach/:token', scope: 'public' },
   { key: 'GET /', scope: 'page' },
   { key: 'GET /index.html', scope: 'page' },
@@ -227,6 +228,9 @@ const ROUTES = [
   { key: 'POST /api/admin/users', scope: 'admin', body: () => ({ email: 'invited@example.com' }) },
   { key: 'POST /api/admin/users/:id/invite', scope: 'admin', u: () => `/api/admin/users/${A_ID}/invite` },
   { key: 'DELETE /api/admin/users/:id', scope: 'admin', u: () => `/api/admin/users/${A_ID}` },
+  /* only ever the signed-in account (no id in the request; the email must be the caller's own), CSRF and a re-check
+     (test/account.test.js) required */
+  { key: 'DELETE /api/my/account', body: () => ({ email: 'ann@example.com' }), own: [{ body: () => ({ email: 'ann@example.com' }), expect: [400] }] },
   { key: 'GET /api/admin/log', scope: 'admin' },
   { key: 'GET /api/my/log', own: [{ check: r => {
     const db = new DatabaseSync(DB, { readOnly: true });
@@ -276,7 +280,7 @@ const ROUTES = [
   { key: 'PUT /api/gym/workouts/:id', u: () => `/api/gym/workouts/${c.w1}`, body: () => ({ name: 'hijack', items: [] }), own: [{ expect: [404, 403] }] },
   { key: 'DELETE /api/gym/workouts/:id', u: () => `/api/gym/workouts/${c.w1}`, own: NOOP },
   { key: 'PUT /api/gym/order', body: () => ({ ids: [c.w2, c.w1] }), made: () => ({ ids: [999998, 999999] }), own: NOOP },
-  { key: 'GET /api/gym/sets', u: () => `/api/gym/sets?exercise=${c.ex1}`, own: [{ check: r => assert.deepStrictEqual(r.body, []) },
+  { key: 'GET /api/gym/sets', u: () => `/api/gym/sets?exercise=${c.ex1}`, own: [{ check: r => assert.deepStrictEqual([r.body.sets, r.body.stats.n], [[], 0]) },
     { u: () => `/api/gym/sets?date=${DATE}`, check: r => assert.deepStrictEqual(r.body, []) }] },
   { key: 'GET /api/gym/sets/:id', u: () => `/api/gym/sets/${c.set}`, own: [{ expect: [404] }] },
   { key: 'POST /api/gym/sets', body: () => ({ exercise: c.ex1, reps: 1, kg: 1, at: `${DATE}T09:00` }), own: [{ expect: [400, 404] }] },
@@ -339,6 +343,10 @@ const ROUTES = [
   { key: 'POST /api/photos/:id/ai-pose', u: () => `/api/photos/${c.p1}/ai-pose`, body: () => ({ save: true }), own: [{ expect: [404] }] },
   { key: 'GET /api/photos/:id/file', u: () => `/api/photos/${c.p1}/file`, own: [{ expect: [404] }] },
   { key: 'GET /api/photos/:id/thumb', u: () => `/api/photos/${c.p2}/thumb`, own: [{ expect: [404] }] },
+  { key: 'PUT /api/photos/:id/mid', u: () => `/api/photos/${c.p2}/mid`, body: () => jpeg('hijackmid'), own: [{ expect: [404] }] },
+  { key: 'GET /api/photos/:id/mid', u: () => `/api/photos/${c.p2}/mid`, own: [{ expect: [404] }] },
+  /* the ZIP of the caller's own pictures: bob's, never ann's */
+  { key: 'GET /api/photos/zip', own: [{ check: r => { assert.ok(r.text.includes('access-jpeg-bob') && !/access-jpeg-p[12]/.test(r.text)); } }] },
   /* server/timeline.js */
   /* (bob has by now made his own exercise and supplement log entry under ann's names, so these look for ann's own values) */
   { key: 'GET /api/timeline/day/:date', own: [{ check: r => {
@@ -364,8 +372,8 @@ const ROUTES = [
   { key: 'POST /api/jobs/:id/seen', u: () => `/api/jobs/${c.job}/seen`, own: [{ expect: [404] }] },
   { key: 'POST /api/jobs/away', own: SELF },
   /* server/shares.js – the coach's side, and the timeline and photo routers mounted under it */
-  { key: 'GET /coach/:token/api/info', scope: 'coach', check: r => assert.strictEqual(r.body.name, 'ann') },
-  { key: 'GET /coach/:token/api/defaults', scope: 'coach', check: r => assert.strictEqual(r.body.mine.plan.R[0].name, 'annmark later bowl') },
+  { key: 'GET /coach/:token/api/info', scope: 'coach', check: r => assert.strictEqual(r.body.name, '', 'no name set: not a piece of the email either') },
+  { key: 'GET /coach/:token/api/defaults', scope: 'coach', check: r => assert.deepStrictEqual(r.body.myVersions.map(v => [v.from, v.plan.R[0].name]), [[null, 'annmark bowl'], [FROM, 'annmark later bowl']]) },
   { key: 'GET /coach/:token/api/days', scope: 'coach', check: r => assert.deepStrictEqual(r.body.map(d => d.tname), ['annmark day']) },
   { key: 'GET /coach/:token/api/weights', scope: 'coach', check: r => assert.deepStrictEqual(r.body, [{ date: DATE, kg: 81.37 }]) },
   { key: 'GET /coach/:token/api/timeline/day/:date', scope: 'coach', check: r => {
@@ -380,6 +388,8 @@ const ROUTES = [
     extra: [{ name: 'the latest of each pose', u: () => `/coach/${c.token}/api/photos?latest=1`, expect: 404 }] },
   { key: 'POST /coach/:token/api/photos', scope: 'coach', u: () => `/coach/${c.token}/api/photos?date=${DATE}&pose=back`, body: () => jpeg('coach') },
   { key: 'PUT /coach/:token/api/photos/:id/thumb', scope: 'coach', u: () => `/coach/${c.token}/api/photos/${c.p2}/thumb`, body: () => jpeg('coachthumb') },
+  { key: 'PUT /coach/:token/api/photos/:id/mid', scope: 'coach', u: () => `/coach/${c.token}/api/photos/${c.p2}/mid`, body: () => jpeg('coachmid') },
+  { key: 'GET /coach/:token/api/photos/zip', scope: 'coach', expect: 404 },
   { key: 'PUT /coach/:token/api/photos/:id', scope: 'coach', u: () => `/coach/${c.token}/api/photos/${c.p1}`, body: () => ({ date: DATE, pose: 'back', note: 'coach' }) },
   { key: 'DELETE /coach/:token/api/photos', scope: 'coach', u: () => `/coach/${c.token}/api/photos?from=2000-01-01&to=2100-01-01` },
   { key: 'DELETE /coach/:token/api/photos/:id', scope: 'coach', u: () => `/coach/${c.token}/api/photos/${c.p1}` },
@@ -394,6 +404,11 @@ const ROUTES = [
     extra: [
       { name: 'another account’s photo', u: () => `/coach/${c.token}/api/photos/${c.bobPhoto}/thumb`, expect: 404 },
       { name: 'a photo the Timeline never shows', u: () => `/coach/${c.token}/api/photos/${c.p1}/thumb`, expect: 404 },
+    ] },
+  { key: 'GET /coach/:token/api/photos/:id/mid', scope: 'coach', u: () => `/coach/${c.token}/api/photos/${c.p2}/mid`,
+    extra: [
+      { name: 'another account’s photo', u: () => `/coach/${c.token}/api/photos/${c.bobPhoto}/mid`, expect: 404 },
+      { name: 'a photo the Timeline never shows', u: () => `/coach/${c.token}/api/photos/${c.p1}/mid`, expect: 404 },
     ] },
 ];
 for (const r of ROUTES) {
@@ -585,11 +600,11 @@ test('coach links: refused when wrong, off or expired; a live one reads only its
 });
 
 /* ---------- sessions and links after a password change ---------- */
-test('a password change ends the account’s other sessions and (unless unticked) its coach links', async t => {
+test('a password change ends the account’s other sessions and (only when ticked) its coach links', async t => {
   const s1 = await signIn('cat@example.com'), s2 = await signIn('cat@example.com');
   const link = (await s1('POST', '/api/shares', { label: 'cat', expires: inDays(7) })).body.url;
   assert.strictEqual((await call('GET', link + '/api/info')).status, 200);
-  assert.strictEqual((await s1('POST', '/auth/password', { current: PASSWORD, next: 'brand-new-password-3' })).status, 200);
+  assert.strictEqual((await s1('POST', '/auth/password', { current: PASSWORD, next: 'brand-new-password-3', endLinks: true })).status, 200);
   await t.test('the old password no longer signs in', async () => {
     const cfg = await call('GET', '/auth/config');
     const r = await call('POST', '/auth/login', { cookie: cfg.headers.get('set-cookie').split(';')[0], csrf: cfg.body.csrf,
@@ -600,12 +615,15 @@ test('a password change ends the account’s other sessions and (unless unticked
     assert.strictEqual((await s2('GET', '/api/me')).status, 401);
     assert.strictEqual((await s1('GET', '/api/me')).status, 200);
   });
-  await t.test('the account’s coach links stop working ("Also switch off my coach links" is ticked by default)', async () => {
+  await t.test('with "Also switch off my coach links" ticked, the account’s coach links stop working', async () => {
     assert.strictEqual((await call('GET', link + '/api/info')).status, 404);
   });
-  await t.test('with the box unticked, coach links keep working', async () => {
+  await t.test('with the box unticked (the default) or the field left out, coach links keep working', async () => {
     const l2 = (await s1('POST', '/api/shares', { label: 'cat 2', expires: inDays(7) })).body.url;
-    const r = await s1('POST', '/auth/password', { current: 'brand-new-password-3', next: 'brand-new-password-4', endLinks: false });
+    let r = await s1('POST', '/auth/password', { current: 'brand-new-password-3', next: 'brand-new-password-4', endLinks: false });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.body.linksOff, 0);
+    r = await s1('POST', '/auth/password', { current: 'brand-new-password-4', next: 'brand-new-password-5' });
     assert.strictEqual(r.status, 200);
     assert.strictEqual(r.body.linksOff, 0);
     assert.strictEqual((await call('GET', l2 + '/api/info')).status, 200);

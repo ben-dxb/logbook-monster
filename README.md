@@ -156,6 +156,7 @@ password is saved on the Super admin page. Nothing secret is ever sent to the br
 | `ALLOWED_EMAILS` | Comma-separated. If set, **only** these emails can sign in, and they can create their own account the first time. |
 | `ALLOW_REGISTRATION` | `true` lets anyone sign up. Default `false`. |
 | `ADMIN_EMAILS` | Comma-separated. Who can open the Super admin page. **Required in production** (the server won't start without it); empty on a local setup = the first account created. |
+| `PRIVACY_CONTACT` / `OPERATOR_NAME` / `SHOW_ADMIN_CONTACT` | Who runs the app, for the privacy page (`/privacy`) and the Contact link on the sign-in page and account menu. Without `PRIVACY_CONTACT` the page says to ask the person who runs the app and there is no Contact link, unless `SHOW_ADMIN_CONTACT=true` offers the first `ADMIN_EMAILS` address. |
 | `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | Optional. Powers every AI feature (plan, workout and supplement reads, food values, photo poses, exercise body parts, Timeline summary). A key saved on the Super admin page wins over this one. |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` / `MAIL_FROM_NAME` / `SMTP_SECURE` | Optional. `SMTP_SECURE` forces TLS from the start on or off (default: on for port 465). The email account invites and notifications are sent from. Easier to fill in on the Super admin page (Email); a value saved there wins over .env field by field – Save stores only the fields you changed, and the page says which values come from .env. The server must be on the internet (no private, loopback or link-local addresses), and on a port other than 465 it must offer STARTTLS. |
 | `SMTP_ALLOW_HOSTS` | Comma-separated mail servers allowed on internal addresses anyway, e.g. a relay on `127.0.0.1` (plain SMTP is allowed to a loopback one). |
@@ -254,15 +255,29 @@ progress photos folder (`PHOTO_DIR`, default `data/photos/` next to the database
 photos, the pictures are files). Copying the `.db` file alone loses every photo, and copying it while the app runs
 can give a broken copy (recent changes sit in the `-wal` file beside it).
 
-Without Docker (needs the `sqlite3` command-line tool; `VACUUM INTO` gives a safe copy while the app runs):
+`npm run backup` makes a safe copy of both while the app runs, with Node alone – no `sqlite3` tool, and the same on
+Windows, macOS and Linux. Run it from the app's folder (it reads `DB_PATH` / `PHOTO_DIR` from `.env` like the app):
 
 ```bash
-mkdir -p backup
-sqlite3 data/logbook-monster.db "VACUUM INTO 'backup/logbook-monster.db'"
-cp -a data/photos backup/                     # photos added after the database copy are only extra files
+npm run backup -- ../logbook-backups              # Windows: npm run backup -- D:\logbook-backups
+npm run restore-check -- ../logbook-backups       # checks the newest backup in that folder
 ```
 
-With Docker, stop the app for a moment and copy the whole volume (database and photos):
+Each run makes a new folder, `logbook-monster-<date>T<time>/`, with the database (`VACUUM INTO`: one consistent file,
+no `-wal`), the `photos` folder and – when `SESSION_SECRET` isn't set – the `.session-secret` file the app made beside
+the database. Only your user can open it (folders 0700, files 0600; on Windows the folder's own permissions apply). It
+prints the sizes and how long it took. The photos are copied first, then the database, then any photos added
+meanwhile, and the copy is then checked: the app writes a photo's file before its row and deletes the row before the
+file, so every photo in the database copy has its file in the backup (a photo deleted while the backup ran is left out).
+`npm run restore-check` opens a backup read-only and reports the database's own check, rows per table and photo rows
+against files – it exits with an error if a photo's file is missing. Copy the backup off the machine.
+
+**Keep your secrets with it.** The saved AI key, email password and authenticator keys are sealed with `SEAL_KEY` (or
+`SESSION_SECRET` while `SEAL_KEY` isn't set). Without the same value a restored database can't open them. When
+`SESSION_SECRET` / `SEAL_KEY` are set in `.env` they are not in the backup – keep a copy of `.env` somewhere as safe as
+the backup itself.
+
+With Docker, stop the app for a moment and copy the whole volume (database, photos and `.session-secret`):
 
 ```bash
 docker compose stop
@@ -270,10 +285,29 @@ docker run --rm -v mealswap_mealswap-data:/data -v "$PWD":/out alpine tar czf /o
 docker compose start
 ```
 
-To restore, stop the app, put the database and the `photos` folder back where they were (Docker: `docker run --rm
--v mealswap_mealswap-data:/data -v "$PWD":/out alpine sh -c "rm -rf /data/* && tar xzf /out/logbook-monster-backup.tgz -C /data"`),
-remove any `logbook-monster.db-wal` / `-shm` files left beside the restored database, and start it again. Keep the
-same `SEAL_KEY` (or session secret without one): the saved AI key, SMTP password and authenticator keys are sealed with it.
+Or, without stopping it: `docker compose exec logbook-monster npm run backup -- /app/data/backups`, then
+`docker compose cp logbook-monster:/app/data/backups ./logbook-backups` and delete the folder from the volume
+(`docker compose exec logbook-monster rm -rf /app/data/backups`) so it doesn't fill it.
+
+To restore, stop the app and put the backup's database file back as `DB_PATH` (default `data/logbook-monster.db`),
+its `photos` folder as `PHOTO_DIR` (default `data/photos`) and, if the backup has one, `.session-secret` beside the
+database. Remove any `logbook-monster.db-wal` / `-shm` files left beside the restored database, and start the app.
+On Windows (PowerShell, app stopped):
+
+```powershell
+$b = "D:\logbook-backups\logbook-monster-2026-10-17T09-30-00"
+Remove-Item data\logbook-monster.db-wal, data\logbook-monster.db-shm -ErrorAction SilentlyContinue
+Copy-Item "$b\logbook-monster.db" data\ -Force
+Remove-Item data\photos -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item "$b\photos" data\photos -Recurse
+if (Test-Path "$b\.session-secret") { Copy-Item "$b\.session-secret" data\ -Force }
+```
+
+Docker: `docker run --rm -v mealswap_mealswap-data:/data -v "$PWD":/out alpine sh -c "rm -rf /data/* && tar xzf /out/logbook-monster-backup.tgz -C /data"`.
+Keep the same `SEAL_KEY` (or session secret without one) in `.env`: the saved AI key, SMTP password and authenticator keys are sealed under it (docs/rotation.md › Backups).
+
+The app looks after the files itself: at start and once a day it hands the database's free pages back to the disk
+(the file shrinks after big deletes), deletes photo files no photo refers to once they are an hour old, and makes the
+data folder and files readable by its own user only.
 
 Each user can also download their own data from the account menu (photo details only, not the pictures).
 

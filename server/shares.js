@@ -147,7 +147,8 @@ const linkLimit = rateLimit({
 coach.use(badLimit, resolve, linkLimit, readOnly);
 coach.get('/info', (req, res) => {
   q.used.run(req.share.id);
-  res.json({ name: req.user.name || req.user.email.split('@')[0], label: req.share.label, expires: req.share.expires_at });
+  /* the account's own name, or '' (the page says "Logbook") – never a piece of its email */
+  res.json({ name: req.user.name || '', label: req.share.label, expires: req.share.expires_at });
 });
 coach.get('/defaults', (req, res) => res.json(defaults.forUser(req.user)));
 coach.get('/days', (req, res) => res.json(q.sums.all(req.user.id, ...range(req.query)).map(r => ({ date: r.date, ...JSON.parse(r.summary) }))));
