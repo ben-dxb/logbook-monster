@@ -165,3 +165,23 @@ test('passwords: characters not UTF-16 units, trimmed for the common check, the 
   assert.match(passwordProblem('jo.hn_smith-rocks', 'john-smith@example.com'), /email/);
   assert.strictEqual(passwordProblem('quiet harbour lamp', 'john.smith@example.com'), null);
 });
+
+test('Keys tab wording: the session secret under the name .env uses, no "Move to", "1 in use", no "Test old" once it tested dead', () => {
+  const list = () => creds.list();
+  const ss = list().find(c => c.label === 'Session secret');
+  assert.strictEqual(ss.name, 'SESSION_SECRET', 'named as the owner’s .env names it');
+  assert.doesNotMatch(ss.next, /Move to/);
+  assert.match(ss.next, /To rotate:/);
+  assert.strictEqual(list().find(c => c.name === 'AUDIT_HASH_KEY').slots, '1 in use');
+  ai.saveNext('sk-test-key-next1');
+  ai.promote();
+  assert.match(list().find(c => c.name === 'OPENROUTER').next, /Test old – it must fail/);
+  creds.mark('OPENROUTER', { old_dead_at: new Date().toISOString() });
+  const or = list().find(c => c.name === 'OPENROUTER');
+  assert.match(or.slots, /old \(until/);
+  assert.doesNotMatch(or.next, /Revoke the old one at the provider, then Test old/, 'already tested dead');
+  ai.saveNext('sk-test-key-next2');
+  ai.promote();
+  assert.ok(!creds.recorded('OPENROUTER').old_dead_at, 'a new key: the old one has not been tested yet');
+  assert.match(list().find(c => c.name === 'OPENROUTER').next, /Test old – it must fail/);
+});
