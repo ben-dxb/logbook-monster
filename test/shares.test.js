@@ -158,6 +158,38 @@ test('a link runs out at the time picked, and the owner picks it within limits',
   assert.strictEqual((await open(`${BASE}/coach/nope/api/days`)).status, 404);
 });
 
+test('switching off from a stale tab leaves a newer link that took the same id alone', async () => {
+  const ann = await signIn('ann@example.com');
+  const sam = (await ann('POST', '/api/shares', { label: 'Sam', expires: inDays(7) })).body;
+  assert.match(sam.key, /^[0-9a-f]{12}$/);
+  assert.strictEqual((await ann('DELETE', `/api/shares/${sam.id}?key=${sam.key}`)).status, 200);
+  const alex = (await ann('POST', '/api/shares', { label: 'Alex', expires: inDays(7) })).body;
+  /* the stale tab still has Sam: same id when SQLite reuses it, and Sam's key either way */
+  const stale = await ann('DELETE', `/api/shares/${alex.id}?key=${sam.key}`);
+  assert.strictEqual(stale.status, 404);
+  assert.match(stale.body.error, /switched off already/);
+  assert.strictEqual((await open(alex.url + '/api/info')).status, 200, 'Alex’s link still works');
+  assert.strictEqual((await ann('DELETE', `/api/shares/${alex.id}?key=${alex.key}`)).status, 200);
+  assert.strictEqual((await open(alex.url + '/api/info')).status, 404);
+});
+
+test('a coach link serves only the photos the Timeline shows: the latest of each pose on each day', async () => {
+  const ann = await signIn('ann@example.com');
+  const up = async (date, pose) => (await ann('POST', `/api/photos?date=${date}&pose=${pose}&note=private%20note`, jpeg, 'image/jpeg')).body.id;
+  const early = await up('2026-08-01', 'back'), late = await up('2026-08-01', 'back'), side = await up('2026-08-01', 'left');
+  const link = (await ann('POST', '/api/shares', { expires: inDays(1) })).body.url, api = link + '/api';
+  const code = async (id, w = 'thumb') => (await open(`${api}/photos/${id}/${w}`)).status;
+  assert.deepStrictEqual([await code(early), await code(late), await code(side), await code(early, 'file')], [404, 200, 200, 404]);
+  const card = await open(api + '/timeline/day/2026-08-01');
+  assert.ok(card.body.photos.some(p => p.id === late) && !card.body.photos.some(p => p.id === early));
+  assert.ok(card.body.photos.every(p => !('note' in p)), 'photo notes stay private');
+  assert.strictEqual((await open(api + '/photos')).status, 404, 'no list of every photo');
+  /* moved to another day, the earlier one is the latest of its own day and shows again */
+  await ann('PUT', `/api/photos/${late}`, { date: '2026-08-02', pose: 'back' });
+  assert.strictEqual(await code(early), 200);
+  assert.strictEqual((await ann('GET', `/api/photos/${early}/thumb`)).status, 200, 'the owner gets every one');
+});
+
 test('making links needs a signed-in account and its CSRF token', async () => {
   assert.strictEqual((await open(BASE + '/api/shares', 'POST', { expires: inDays(1) })).status, 401);
   assert.strictEqual((await open(BASE + '/api/shares')).status, 401);

@@ -2,8 +2,8 @@
 /* Progress photos: each account uploads its own pictures, dated and tagged with a pose (which way the body
    faces: front, left side, right side, back, other) and a pose type (relaxed, front double biceps…), and only
    ever sees its own. The browser shrinks a picture to a JPEG before upload (which
-   also drops its EXIF data, location included) and sends a small thumbnail after it; the server only
-   checks the bytes really are a JPEG, PNG or WebP and stores them on disk under random names. */
+   also drops its EXIF data, location included) and sends a small thumbnail after it; the server
+   checks the bytes really are a JPEG, PNG or WebP, strips any camera data left in them (clean) and stores them on disk under random names. */
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -20,6 +20,9 @@ const q = {
   list: db.prepare(`SELECT ${COLS} FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date DESC, id DESC`),
   get: db.prepare(`SELECT ${COLS} FROM photos WHERE user_id = ? AND id = ?`),
   files: db.prepare('SELECT file, type, thumb FROM photos WHERE user_id = ? AND id = ?'),
+  /* through a coach link: only a photo some Timeline day card shows – the latest (highest id) of its pose on its date */
+  shown: db.prepare(`SELECT file, type, thumb FROM photos p WHERE user_id = ? AND id = ?
+    AND NOT EXISTS (SELECT 1 FROM photos o WHERE o.user_id = p.user_id AND o.pose = p.pose AND o.date = p.date AND o.id > p.id)`),
   allFiles: db.prepare('SELECT file, thumb FROM photos WHERE user_id = ?'),
   count: db.prepare('SELECT COUNT(*) AS n FROM photos WHERE user_id = ?'),
   add: db.prepare('INSERT INTO photos (user_id, date, pose, style, pose_ai, note, file, type, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
@@ -50,6 +53,54 @@ function sniff(b) {
   if (b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') return 'image/webp';
   return null;
 }
+/* Camera data (EXIF with GPS, XMP, IPTC, text chunks) taken out, whatever the client did. Segments are walked by their
+   lengths; anything that doesn't parse is left as it is from that point (a decoder walking it would stop there too). */
+const JPEG_DROP = new Set([0xe1, 0xed]);                  /* APP1 (EXIF, XMP), APP13 (IPTC) */
+function cleanJpeg(b) {
+  const out = [b.subarray(0, 2)];
+  let i = 2;
+  while (i + 4 <= b.length && b[i] === 0xff) {
+    const m = b[i + 1];
+    if (m === 0xff) { i++; continue; }                    /* fill byte */
+    if (m === 0xda || m === 0xd9) break;                  /* image data (or the end) from here on */
+    const len = b.readUInt16BE(i + 2);
+    if (len < 2 || i + 2 + len > b.length) break;
+    if (!JPEG_DROP.has(m)) out.push(b.subarray(i, i + 2 + len));
+    i += 2 + len;
+  }
+  out.push(b.subarray(i));
+  return Buffer.concat(out);
+}
+const PNG_DROP = new Set(['eXIf', 'tEXt', 'zTXt', 'iTXt']);
+function cleanPng(b) {
+  const out = [b.subarray(0, 8)];
+  let i = 8;
+  while (i + 12 <= b.length) {
+    const len = b.readUInt32BE(i), type = b.toString('latin1', i + 4, i + 8), end = i + 12 + len;
+    if (end > b.length) break;
+    if (!PNG_DROP.has(type)) out.push(b.subarray(i, end));
+    i = end;
+    if (type === 'IEND') break;
+  }
+  out.push(b.subarray(i));
+  return Buffer.concat(out);
+}
+function cleanWebp(b) {
+  const out = [];
+  let i = 12;
+  while (i + 8 <= b.length) {
+    const type = b.toString('latin1', i, i + 4), len = b.readUInt32LE(i + 4), end = i + 8 + len + (len & 1);
+    if (end > b.length) break;
+    if (type === 'VP8X') { const c = Buffer.from(b.subarray(i, end)); c[8] &= ~0x0c; out.push(c); }   /* no EXIF / XMP flags */
+    else if (type !== 'EXIF' && type !== 'XMP ') out.push(b.subarray(i, end));
+    i = end;
+  }
+  out.push(b.subarray(i));
+  const body = Buffer.concat(out), head = Buffer.from(b.subarray(0, 12));
+  head.writeUInt32LE(body.length + 4, 4);
+  return Buffer.concat([head, body]);
+}
+const clean = (b, type) => (type === 'image/jpeg' ? cleanJpeg(b) : type === 'image/png' ? cleanPng(b) : cleanWebp(b));
 const EXT = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' };
 
 function meta(b) {
@@ -74,6 +125,7 @@ const send = (res, e) => { if (!e.status) console.error(e); res.status(e.status 
 const rawImage = limit => express.raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit });
 
 router.get('/', (req, res) => {
+  if (req.share) return res.status(404).json({ error: 'Not found' });   /* a coach sees only the photos on the Timeline's day cards */
   const from = isDate(req.query.from) ? req.query.from : '0000-01-01', to = isDate(req.query.to) ? req.query.to : '9999-12-31';
   res.json({ photos: q.list.all(req.user.id, from, to).map(view), poses: PICK, styles: STYLES, ai: ai.status().configured });
 });
@@ -86,10 +138,10 @@ router.post('/', rawImage(MAX_BYTES), (req, res) => {
     const type = sniff(req.body);
     if (!type) throw fail('That isn’t a JPEG, PNG or WebP picture');
     if (q.count.get(req.user.id).n >= MAX_PHOTOS) throw fail(`You have the most photos an account can keep (${MAX_PHOTOS})`);
-    const file = newName(EXT[type]);
-    fs.writeFileSync(fileAt(file), req.body, { flag: 'wx' });
+    const file = newName(EXT[type]), bytes = clean(req.body, type);
+    fs.writeFileSync(fileAt(file), bytes, { flag: 'wx' });
     try {
-      const { lastInsertRowid } = q.add.run(req.user.id, m.date, m.pose, m.style, req.query.ai === '1' ? 1 : 0, m.note, file, type, req.body.length);
+      const { lastInsertRowid } = q.add.run(req.user.id, m.date, m.pose, m.style, req.query.ai === '1' ? 1 : 0, m.note, file, type, bytes.length);
       res.json(view(q.get.get(req.user.id, Number(lastInsertRowid))));
     } catch (e) { unlink(file); throw e; }
   } catch (e) { send(res, e); }
@@ -102,7 +154,7 @@ router.put('/:id/thumb', rawImage(MAX_THUMB), (req, res) => {
     if (!row) throw fail('No such photo', 404);
     if (sniff(req.body) !== 'image/jpeg') throw fail('The thumbnail must be a JPEG');
     const file = newName('.jpg');
-    fs.writeFileSync(fileAt(file), req.body, { flag: 'wx' });
+    fs.writeFileSync(fileAt(file), cleanJpeg(req.body), { flag: 'wx' });
     q.thumb.run(file, req.user.id, id);
     unlink(row.thumb);
     res.json(view(q.get.get(req.user.id, id)));
@@ -143,7 +195,7 @@ router.delete('/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-/* Ask the AI which pose a photo shows. It is sent the thumbnail (the full picture if there is none yet), and
+/* Ask the AI which pose a photo shows. It is sent only the thumbnail (the app makes one first for a photo without), and
    only when the person asks: on upload with "Let AI tell", "Tag with AI" in the catalog or "Ask AI" on one photo.
    POST /api/photos/12/ai-pose {save: true} also stores the answer (marked as the AI's); without it the answer is only returned. */
 const POSE_PROMPT = `You sort fitness progress photos. Look at the picture and give two things.
@@ -175,8 +227,9 @@ router.post('/:id/ai-pose', poseLimit, async (req, res) => {
   try {
     const id = idOf(req.params.id), row = q.files.get(req.user.id, id);
     if (!row) throw fail('No such photo', 404);
+    if (!row.thumb) throw fail('That photo has no small version yet – open it and try again', 409);
     let buf;
-    try { buf = await fs.promises.readFile(fileAt(row.thumb || row.file)); } catch { throw fail('That photo’s file is missing', 404); }
+    try { buf = await fs.promises.readFile(fileAt(row.thumb)); } catch { throw fail('That photo’s file is missing', 404); }
     const { reply, model } = await ai.ask(POSE_PROMPT, buf, sniff(buf) || row.type, 'progress photo', { maxTokens: 200, timeout: 60000, task: 'pose' });
     const pose = PICK.includes(reply && reply.pose) ? reply.pose : 'other';
     const style = STYLES.includes(reply && reply.style) ? reply.style : '';
@@ -187,14 +240,15 @@ router.post('/:id/ai-pose', poseLimit, async (req, res) => {
   } catch (e) { send(res, e); }
 });
 
-/* The pictures themselves. Names never change, so the browser can keep them; private, so no shared cache does. */
+/* The pictures themselves: private, so no shared cache keeps them, and checked with the server on every use, so a
+   deleted photo or a signed-out browser can't show one from the cache (an unchanged one comes back as a 304). */
 function serve(which) {
   return (req, res) => {
-    const row = q.files.get(req.user.id, idOf(req.params.id));
+    const row = (req.share ? q.shown : q.files).get(req.user.id, idOf(req.params.id));
     if (!row) return res.status(404).json({ error: 'No such photo' });
     const thumb = which === 'thumb' && row.thumb;
     /* through a coach link (req.share, server/shares.js) nothing is kept, so a switched-off link leaves no pictures behind */
-    res.set({ 'Cache-Control': req.share ? 'no-store' : 'private, max-age=31536000, immutable', 'Content-Type': thumb ? 'image/jpeg' : row.type });
+    res.set({ 'Cache-Control': req.share ? 'no-store' : 'private, no-cache', 'Content-Type': thumb ? 'image/jpeg' : row.type });
     res.sendFile(fileAt(thumb || row.file), { cacheControl: false }, err => {
       if (err && !res.headersSent) res.status(404).json({ error: 'That photo’s file is missing' });
     });
@@ -216,4 +270,4 @@ const exportFor = user => q.all.all(user.id);
 const filesOf = userId => q.allFiles.all(userId);
 const removeFiles = rows => rows.forEach(r => { unlink(r.file); unlink(r.thumb); });
 
-module.exports = { router, exportFor, filesOf, removeFiles, view, POSES, STYLES, sniff };
+module.exports = { router, exportFor, filesOf, removeFiles, view, POSES, STYLES, sniff, clean };
