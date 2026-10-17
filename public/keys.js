@@ -26,7 +26,8 @@ function kyRender(){
 function kyRot(k){
   const el=$(`#ad-rot-${k}`);if(!el)return;
   const R=KY_ROT[k], s=KY&&KY.slots&&KY.slots[k]||{};
-  if(el.contains(document.activeElement)&&el.querySelector('input')===document.activeElement){const m=el.querySelector('[data-ky-msg]');if(m)m.textContent=kyMsg[k];return;}
+  const old=el.querySelector('input');
+  if(old&&old===document.activeElement){const m=el.querySelector('[data-ky-msg]');if(m)m.textContent=kyMsg[k];return;}
   el.innerHTML=`<h3 class="lbl">Rotate the ${R.what}</h3>
     <p class="sub">Make a new ${R.what} at ${R.where}, save it here as next and test it, then promote it. The one it replaces is kept for an hour: revoke it at ${R.where}, then Test old – it must fail. See docs/rotation.md.</p>
     <form class="adkey" data-ky-form="${k}"><label class="f"><span class="lbl">Next ${R.what}</span><input type="password" autocomplete="off" spellcheck="false" data-ky-in="${k}" aria-describedby="ad-rot-${k}-msg"></label>
@@ -35,13 +36,14 @@ function kyRot(k){
       <button class="ghost" type="button" data-ky="promote" data-k="${k}"${s.next?'':' disabled'}>Promote</button>
       <button class="ghost" type="button" data-ky="test" data-k="${k}" data-slot="old"${s.old?'':' disabled'}>Test old</button></div>
     <p class="sub" role="status" id="ad-rot-${k}-msg" data-ky-msg="${k}">${esc(kyMsg[k]||(s.next?`A next ${R.what} is saved.`:'')+(s.old?` The old one is kept until ${new Date(s.oldUntil).toLocaleTimeString()}.`:''))}</p>`;
+  if(old&&old.value)el.querySelector('input').value=old.value;   /* a pasted key not saved yet stays */
 }
 function kySay(k,t){kyMsg[k]=t;const m=document.querySelector(`[data-ky-msg="${k}"]`);if(m)m.textContent=t;}
 /* after a change: the panel, plus the AI / Email tab's own state (admin.js) */
 async function kyAfter(k){
   await kyLoad();
   if(k==='ai'&&typeof adAiLoad==='function')adAiLoad();
-  if(k==='mail'&&typeof amLoad==='function')amLoad();
+  if(k==='mail'&&typeof amLoad==='function')amLoad(true);
 }
 document.addEventListener('submit',e=>{
   const f=e.target.closest('[data-ky-form]');if(!f)return;e.preventDefault();

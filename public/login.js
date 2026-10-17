@@ -102,7 +102,13 @@
       });
       const j = await r.json().catch(() => ({}));
       if (r.ok) {
-        if (j.recovery) alert('You used a recovery code – it won’t work again. If you’ve lost your authenticator app, switch the second step off and set it up again from the account menu.');
+        if (j.recovery) {   /* said on the page, with a link on, rather than lost in the redirect */
+          const p = document.createElement('p'), a = document.createElement('a');
+          p.id = 'recused'; p.className = 'hint'; p.setAttribute('role', 'status');
+          p.textContent = 'You used a recovery code – it won’t work again. If you’ve lost your authenticator app, switch the second step off and set it up again from the account menu.';
+          a.className = 'btn'; a.href = home(); a.textContent = 'Continue';
+          $('second').hidden = true; $('second').after(p, a); a.focus(); return;
+        }
         location.replace(home()); return;
       }
       if (j.restart || (r.status === 403 && /session/i.test(j.error || ''))) { location.reload(); return; }

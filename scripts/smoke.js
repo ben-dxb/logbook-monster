@@ -347,11 +347,12 @@ async function twoStep(browser, w, h) {
   await pg.fill('#code', code(1)); await pg.click('#codebtn');
   await pg.waitForSelector('#v-dash:not([hidden])');
   await pg.click('#acct>summary'); await pg.click('#logout'); await pg.waitForURL(/\/login/);
-  let said = ''; pg.once('dialog', d => { said = d.message(); d.accept(); });
   await login(); await pg.waitForSelector('#second:not([hidden]) #code');
   await pg.fill('#code', recovery); await pg.click('#codebtn');
-  await pg.waitForSelector('#v-dash:not([hidden])');
-  expect(/recovery code/.test(said), 'using a recovery code should say it won’t work again');
+  await pg.waitForSelector('#recused[role=status]', { timeout: 5000 });   /* said on the page (no alert()), with Continue focused */
+  expect(/recovery code – it won’t work again/.test(await pg.textContent('#recused')) && await pg.evaluate(() => document.activeElement.textContent === 'Continue'), 'using a recovery code should say it won’t work again');
+  await overflow('after a recovery code');
+  await pg.click('#recused + a.btn'); await pg.waitForSelector('#v-dash:not([hidden])');
   await pg.click('#acct>summary'); await pg.click('#tfbox>summary');
   await pg.waitForFunction(() => /9 recovery codes left/.test(document.querySelector('#tfbody').textContent), null, { timeout: 5000 });
   expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
@@ -1046,6 +1047,7 @@ async function phase5Library(browser) {
   await pg.evaluate(() => { GY = null; SUPPS = null; });
 
   /* the workout builder: picks, moves and × keep focus where it makes sense, and say what happened */
+  const beforeGym = await pg.evaluate(() => location.hash);
   await hash('#gym/new', '#g-picklist');
   for (const id of ids) { await pg.focus(`#g-picklist [data-g=pick][data-id="${id}"]`); await pg.keyboard.press('Enter'); }
   expect(await on() === `|pick|`, 'a pick should keep focus on the exercise picked, not ' + await on());
@@ -1060,10 +1062,16 @@ async function phase5Library(browser) {
   /* unsaved: a link away asks; Stay keeps the draft, Leave drops it */
   await pg.click('a[data-view=foods]');
   expect(/changed this workout/.test(await answer(pg, false)) && await pg.evaluate(() => location.hash === '#gym/new' && gDraft.items.length === 3), 'Stay keeps the workout being built');
+  const histLen = await pg.evaluate(() => history.length);
   await pg.evaluate(() => history.back()); await pg.waitForSelector('#ask[open]');
   await answer(pg, false);
-  expect(await pg.evaluate(() => location.hash === '#gym/new' && !!$('#g-wname')), 'Back with unsaved changes asks first and stays on the builder');
-  await pg.click('a[data-view=foods]'); await answer(pg, true); await pg.waitForSelector('#v-foods:not([hidden])');
+  await pg.waitForFunction(() => location.hash === '#gym/new', null, { timeout: 3000 });
+  expect(await pg.evaluate(n => location.hash === '#gym/new' && !!$('#g-wname') && gDraft.items.length === 3 && history.length === n, histLen), 'Back with unsaved changes asks first and stays on the builder, history as it was');
+  /* Stay kept the page before in history: Back again (Leave) reaches it */
+  await pg.evaluate(() => history.back()); await pg.waitForSelector('#ask[open]');
+  await answer(pg, true);
+  await pg.waitForFunction(h => location.hash === h, beforeGym, { timeout: 3000 });
+  await hash('#foods', '#v-foods:not([hidden])');
 
   /* an exercise: ▲ and 🏆 in words, Log set keeps focus and is announced, the set bar never covers the focused control */
   await hash('#gym/e/' + ids[0], '#g-quick');
@@ -1949,8 +1957,15 @@ async function formKit(browser) {
         await pg.waitForSelector('#v-admin:not(.mine):not([hidden]) #ad-aipanel:not([hidden])');
         expect(await pg.isHidden('#ad-ph') && await pg.isHidden('.adbar') && await pg.isHidden('#ad-wh') && await pg.isHidden('#ad-fh'), 'super admin should have no plan editor');
         expect(/Not set up/.test(await pg.textContent('#ad-aikeystate')), 'AI should start not set up');
+        await pg.fill('#ad-tm-plan', 'smoke/typed-model');   /* typed, not saved: saving the key keeps it */
         await pg.fill('#ad-key', 'sk-or-v1-smoke-test-key'); await pg.click('#ad-keyform button[type=submit]');
         await pg.waitForFunction(() => /Set up/.test(document.querySelector('#ad-aikeystate').textContent), null, { timeout: 5000 });
+        expect(await pg.inputValue('#ad-tm-plan') === 'smoke/typed-model', 'a typed model should survive saving the key');
+        await pg.fill('#ad-tm-plan', '');
+        await pg.waitForSelector('[data-ky-in=ai]', { timeout: 5000 });
+        await pg.fill('[data-ky-in=ai]', 'sk-or-v1-next-pasted'); await pg.evaluate(() => { document.activeElement.blur(); return kyLoad(); });
+        expect(await pg.inputValue('[data-ky-in=ai]') === 'sk-or-v1-next-pasted', 'a pasted next key should survive a Keys refresh');
+        await pg.fill('[data-ky-in=ai]', '');
         await pg.fill('#ad-tm-food', 'openai/gpt-4o-mini'); await pg.click('#ad-modelform button[type=submit]');
         await pg.waitForFunction(() => /Models saved/.test(document.querySelector('#ad-keymsg').textContent), null, { timeout: 5000 });
         expect(await pg.inputValue('#ad-tm-food') === 'openai/gpt-4o-mini' && await pg.inputValue('#ad-tm-plan') === '', 'each task keeps its own model');
@@ -1959,6 +1974,12 @@ async function formKit(browser) {
         await pg.click('#ad-tabs [data-adt=email]'); await pg.waitForSelector('[data-adtab=email]:not([hidden])');
         expect(/Not set up/.test(await pg.textContent('#ad-mailstate')), 'email should start not set up');
         expect(await pg.inputValue('#ad-m-host') === 'smtp.gmail.com', 'Gmail should be the default email server');
+        /* a key rotation refreshes the state, not fields typed but not saved */
+        await pg.fill('#ad-m-from', 'typed@example.com'); await pg.fill('#ad-m-host', 'smtp.typed.example');
+        await pg.evaluate(() => kyAfter('mail'));
+        expect(await pg.inputValue('#ad-m-from') === 'typed@example.com' && await pg.inputValue('#ad-m-host') === 'smtp.typed.example', 'typed email fields should survive a rotation refresh');
+        await pg.evaluate(() => amFill());
+        expect(await pg.inputValue('#ad-m-host') === 'smtp.gmail.com' && await pg.inputValue('#ad-m-from') === '', 'amFill() puts the settings in use back');
         /* with .env settings, Save sends only what was changed (the rest stays from .env) and says where each value comes from */
         const am = await pg.evaluate(() => {
           const keep = AM;
