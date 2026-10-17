@@ -98,8 +98,17 @@ app.use('/api', api);
 app.use('/coach/:token/api', shares.coach);
 
 const pub = path.join(__dirname, '..', 'public');
+/* the privacy page names who runs the app and how to reach them (PRIVACY_CONTACT, OPERATOR_NAME), or says to ask them */
+const escHtml = v => String(v).replace(/[&<>"']/g, ch => `&#${ch.charCodeAt(0)};`);
+function privacyPage(html) {
+  const who = config.operatorName ? escHtml(config.operatorName) : 'the person who runs this app';
+  const contact = config.contact
+    ? `Email <a href="mailto:${escHtml(config.contact)}">${escHtml(config.contact)}</a>.`
+    : 'Ask the person who runs this app – whoever invited you or gave you its address.';
+  return html.replace(/<!--OPERATOR-->/g, who).replace(/<!--CONTACT-->/g, contact);
+}
 /* the pages point at versioned scripts and styles (server/assets.js): no-cache + ETag, so the route below runs on every load */
-const files = assets.create(pub, { live: !config.isProd });
+const files = assets.create(pub, { live: !config.isProd, fill: { 'privacy.html': privacyPage } });
 const page = file => (req, res) => files.send(res, file);
 const signedIn = req => !!(req.session && req.session.userId);
 
@@ -107,11 +116,12 @@ const signedIn = req => !!(req.session && req.session.userId);
 const gone = (req, res) => req.session.destroy(() => res.redirect('/login?error=gone'));
 app.get('/login', (req, res, next) => (auth.refused(req) ? gone(req, res) : signedIn(req) ? res.redirect('/') : page('login.html')(req, res, next)));
 app.get('/invite', page('invite.html'));
+app.get('/privacy', page('privacy.html'));
 app.get('/coach/:token', (req, res, next) => { res.set('X-Robots-Tag', 'noindex, nofollow'); page('coach.html')(req, res, next); });
 app.get(['/', '/index.html'], (req, res, next) => (auth.refused(req) ? gone(req, res) : signedIn(req) ? page('index.html')(req, res, next) : res.redirect('/login')));
 /* The HTML pages are served only by the routes above (sign-in check, no-cache). A copy reached through the static files –
    /login.html, or /%69ndex.html, which the routes above don't match but the file server decodes – goes to its route instead. */
-const PAGES = { 'index.html': '/', 'login.html': '/login', 'invite.html': '/invite' };
+const PAGES = { 'index.html': '/', 'login.html': '/login', 'invite.html': '/invite', 'privacy.html': '/privacy' };
 app.use((req, res, next) => {
   let p;
   try { p = decodeURIComponent(req.path); } catch { return res.status(400).json({ error: 'Bad path' }); }

@@ -532,7 +532,7 @@ document.addEventListener('click',e=>{
   const b=e.target.closest('[data-pa]');if(!b)return;
   const a=b.dataset.pa;
   if(a==='filter'){pPose=b.dataset.v;pMsg='';document.querySelectorAll('[data-pa=filter]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderPhotoList();}
-  else if(a==='del')pDelete(+b.dataset.id);
+  else if(a==='del')once(b,()=>pDelete(+b.dataset.id));
   else if(a==='select'){pMsg='';pSetSel(!pSel);}
   else if(a==='selcancel')pSetSel(false);
   else if(a==='cmpgo'&&pPick.length===2){const [x,y]=pPick;pSel=false;pPick=[];pMsg='';go(`photos/compare/${x}/${y}`);}

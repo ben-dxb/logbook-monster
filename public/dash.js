@@ -47,6 +47,7 @@ async function renderDash(args){
     const msg=r=>r.e?r.e.message||'Something went wrong':'';
     dErr={checklist:msg(cl)||msg(days),auto:[slog.e&&'supplements',gym.e&&'gym sets'].filter(Boolean).join(' and '),gym:msg(gym),photos:msg(ph),supps:msg(sp)};
     if(cl.v)CL=cl.v;dTicks=(days.v&&days.v.days)||{};
+    for(const [d,q] of Object.entries(dQ))dTicks[d]=dApply(dTicks[d]||[],q.local);   /* ticks still on their way stay */
     dAuto.supps=new Set(((slog.v&&slog.v.entries)||[]).map(e=>e.date));
     dGym=gym.v||[];dAuto.gym=new Set(dGym.map(s=>s.date));
     dPhotos=ph.v?ph.v.photos||[]:null;dPhotoN=ph.v?ph.v.count||0:0;   /* only the newest of each pose, and how many in all */
@@ -83,12 +84,38 @@ function dChecklist(){
     ${dErr.auto?`<p class="sub">Your ${esc(dErr.auto)} couldn’t load, so their automatic ticks may be missing.</p>`:''}
     <p class="sub"><a href="#account">Change the checklist</a></p>`;
 }
-async function dTick(el){
-  const item=el.dataset.dk, done=el.checked, date=dDate;
-  el.disabled=true;
-  try{const r=await api('PUT','/api/checklist/days/'+date,{item,done});dTicks[date]=r.done;}
-  catch(e){el.checked=!done;if(!e.signedOut)alert(e.message);}
-  if(view==='dash'&&date===dDate){const c=$('#d-body .dcheck');if(c)c.innerHTML=dChecklist();}
+/* A tick shows at once. Per day one request is in flight; ticks made meanwhile wait in q.local (item -> wanted) and go when it
+   returns, so a slow reply never undoes a later tick. srv is the day's ticks as the server last said. */
+const dQ={};
+const dApply=(list,local)=>{const s=new Set(list);for(const [k,v] of local){if(v)s.add(k);else s.delete(k);}return [...s];};
+function dRedraw(date){
+  if(view!=='dash'||date!==dDate)return;
+  const c=$('#d-body .dcheck');if(!c)return;
+  const f=document.activeElement&&c.contains(document.activeElement)?document.activeElement.dataset.dk:null;
+  c.innerHTML=dChecklist();
+  if(f!=null){const x=c.querySelector(`[data-dk="${CSS.escape(f)}"]`);if(x)x.focus();}   /* keyboard users stay on the box they ticked */
+}
+function dTick(el){dSet(dDate,el.dataset.dk,el.checked);}
+function dSet(date,item,done){
+  const q=dQ[date]||(dQ[date]={local:new Map(),srv:new Set(dTicks[date]||[]),busy:false});
+  q.local.set(item,done);dTicks[date]=dApply(dTicks[date]||[],[[item,done]]);
+  dRedraw(date);dSend(date);
+}
+async function dSend(date){
+  const q=dQ[date];if(q.busy)return;q.busy=true;
+  try{
+    for(let e;(e=[...q.local].find(([k,v])=>q.srv.has(k)!==v));){
+      const [item,done]=e, r=await api('PUT','/api/checklist/days/'+date,{item,done});
+      q.srv=new Set(r.done);if(q.local.get(item)===done)q.local.delete(item);
+    }
+    delete dQ[date];dTicks[date]=[...q.srv];dRedraw(date);
+  }catch(e){
+    const lost=[...q.local];delete dQ[date];dTicks[date]=[...q.srv];dRedraw(date);
+    if(e.signedOut)return;
+    const [item]=lost[lost.length-1]||[];
+    noteBy(view==='dash'&&date===dDate?$(`#d-body [data-dk="${CSS.escape(item||'')}"]`):null,
+      `Couldn’t save ${lost.length===1?'that tick':'those ticks'}: ${endStop(e.message)}`,()=>lost.forEach(([k,v])=>dSet(date,k,v)));
+  }
 }
 
 /* ---------- the module cards ---------- */
