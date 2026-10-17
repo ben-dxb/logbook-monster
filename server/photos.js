@@ -13,10 +13,12 @@ const config = require('./config');
 const ai = require('./ai');
 const rateLimit = require('express-rate-limit');
 const { isDate, writeError } = require('./dates');
+const version = require('./version');
 
 fs.mkdirSync(config.photoDir, { recursive: true });
 
-const COLS = 'id, date, pose, style, pose_ai, note, size, created_at AS created, file, thumb';
+/* updated: the version a change is checked against (server/version.js) – when it was last changed, or uploaded */
+const COLS = 'id, date, pose, style, pose_ai, note, size, created_at AS created, COALESCE(updated_at, created_at) AS updated, file, thumb';
 const q = {
   list: db.prepare(`SELECT ${COLS} FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date DESC, id DESC`),
   get: db.prepare(`SELECT ${COLS} FROM photos WHERE user_id = ? AND id = ?`),
@@ -28,9 +30,9 @@ const q = {
   count: db.prepare('SELECT COUNT(*) AS n FROM photos WHERE user_id = ?'),
   bytes: db.prepare('SELECT COALESCE(SUM(size + thumb_size), 0) AS n FROM photos WHERE user_id = ?'),
   add: db.prepare('INSERT INTO photos (user_id, date, pose, style, pose_ai, note, file, type, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
-  put: db.prepare('UPDATE photos SET date = ?, pose = ?, style = ?, pose_ai = ?, note = ? WHERE user_id = ? AND id = ?'),
+  put: db.prepare('UPDATE photos SET date = ?, pose = ?, style = ?, pose_ai = ?, note = ?, updated_at = ? WHERE user_id = ? AND id = ?'),
   /* the AI's pose: only while the pose is still the one the request was asked about, or still the AI's – never over a hand edit made meanwhile */
-  aiPose: db.prepare('UPDATE photos SET pose = ?, style = ?, pose_ai = 1 WHERE user_id = ? AND id = ? AND (pose_ai = 1 OR (pose = ? AND style = ?))'),
+  aiPose: db.prepare('UPDATE photos SET pose = ?, style = ?, pose_ai = 1, updated_at = ? WHERE user_id = ? AND id = ? AND (pose_ai = 1 OR (pose = ? AND style = ?))'),
   thumb: db.prepare('UPDATE photos SET thumb = ?, thumb_size = ? WHERE user_id = ? AND id = ?'),
   del: db.prepare('DELETE FROM photos WHERE user_id = ? AND id = ?'),
   delRange: db.prepare('DELETE FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? RETURNING file, thumb'),
@@ -181,11 +183,12 @@ router.put('/:id', (req, res) => {
     const old = q.get.get(req.user.id, id);
     if (!old) throw fail('No such photo', 404);
     const m = meta(req.body);
+    version.check(req, old.updated);
     /* a pose (or pose type) the person changes is theirs; keeping the AI's (e.g. only the note changed) leaves it the AI's.
        An older client that doesn't send a pose type keeps the one there is. */
     if ((req.body || {}).style === undefined) m.style = old.style;
     const same = m.pose === old.pose && m.style === old.style;
-    q.put.run(m.date, m.pose, m.style, same ? old.pose_ai : 0, m.note, req.user.id, id);
+    q.put.run(m.date, m.pose, m.style, same ? old.pose_ai : 0, m.note, version.stamp(), req.user.id, id);
     res.json(view(q.get.get(req.user.id, id)));
   } catch (e) { send(res, e); }
 });
@@ -248,7 +251,7 @@ router.post('/:id/ai-pose', poseLimit, async (req, res) => {
     const style = STYLES.includes(reply && reply.style) ? reply.style : '';
     const now = q.get.get(req.user.id, id);
     if (!now) throw fail('No such photo', 404);                  /* deleted while the AI was looking */
-    const saved = !!(req.body && req.body.save === true) && q.aiPose.run(pose, style, req.user.id, id, from.pose, from.style).changes > 0;
+    const saved = !!(req.body && req.body.save === true) && q.aiPose.run(pose, style, version.stamp(), req.user.id, id, from.pose, from.style).changes > 0;
     res.json({ pose, style, model, saved, photo: view(q.get.get(req.user.id, id)) });
   } catch (e) { send(res, e); }
 });
@@ -273,7 +276,7 @@ router.get('/:id/thumb', serve('thumb'));
 /* v and tv are a piece of each file's random name: the app puts them in the picture URLs, so a replaced
    thumbnail or a reused id is never served from the browser's cache. */
 function view(r) {
-  return { id: r.id, date: r.date, pose: r.pose, style: r.style || '', poseAi: !!r.pose_ai, note: r.note, size: r.size, created: r.created,
+  return { id: r.id, date: r.date, pose: r.pose, style: r.style || '', poseAi: !!r.pose_ai, note: r.note, size: r.size, created: r.created, updated: r.updated,
     v: r.file.slice(0, 8), tv: r.thumb ? r.thumb.slice(0, 8) : null };
 }
 

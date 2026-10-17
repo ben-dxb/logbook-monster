@@ -151,7 +151,7 @@ async function gWorkoutPage(id){
 function gEditPage(id){
   const w=id==null?null:GY.workouts.find(x=>x.id===id);
   if(id!=null&&!w)return gHead('#gym','Workout')+gEmpty('This workout doesn’t exist any more.');
-  if(!gDraft||gDraft.id!==id){gDraft=w?{id,name:w.name,description:w.description,items:w.items.map(i=>({e:i.e,target:i.target||''}))}:{id:null,name:'',description:'',items:[]};gPick.q='';gTagMsg='';}
+  if(!gDraft||gDraft.id!==id){gDraft=w?{id,ver:w.updated,name:w.name,description:w.description,items:w.items.map(i=>({e:i.e,target:i.target||''}))}:{id:null,name:'',description:'',items:[]};gPick.q='';gTagMsg='';}
   const D=gDraft, back=w?`#gym/w/${w.id}`:'#gym';
   return gHead(back,w?'Edit workout':'New workout')+`<section class="panel">
     <label class="f"><span class="lbl">Name</span><input id="g-wname" data-g="wf" data-k="name" value="${esc(D.name)}" maxlength="80" placeholder="e.g. Monday — Upper"></label>
@@ -197,7 +197,7 @@ async function gSaveDraft(){
   try{
     for(const i of D.items){if(!i.e){const e=await api('POST','/api/gym/exercises',{name:i.name});i.e=e.id;delete i.name;}}
     const body={name:D.name,description:D.description,items:D.items.map(i=>({e:i.e,target:i.target}))};
-    const r=D.id==null?await api('POST','/api/gym/workouts',body):await api('PUT','/api/gym/workouts/'+D.id,body);
+    const r=D.id==null?await api('POST','/api/gym/workouts',body):await api('PUT','/api/gym/workouts/'+D.id,body,D.ver);
     gDraft=null;await gLoad();go('gym/w/'+r.id);
   }catch(e){if(!e.signedOut){await gLoad().catch(()=>{});msg.textContent=e.message;}}
 }

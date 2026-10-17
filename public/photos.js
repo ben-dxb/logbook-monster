@@ -321,7 +321,7 @@ function pOnePage(p){
   return gHead('#photos',`${pLabel(p)} · ${fmtShort(p.date)}`,nav)+`
     <figure class="pbig"><a class="pzoom" href="${pSrc(p)}" target="_blank" rel="noopener" title="Scroll to zoom, drag to move around, double-click to reset"><img src="${pSrc(p)}" alt="${esc(pLabel(p)+' photo, '+fmtLong(p.date))}"></a>
       <figcaption>${esc(fmtLong(p.date))}${pKg(p.date)?' · '+esc(pKg(p.date)):''}${p.note?' · '+esc(p.note):''}</figcaption></figure>
-    <form id="p-eform" class="panel sform" data-id="${p.id}">
+    <form id="p-eform" class="panel sform" data-id="${p.id}" data-ver="${esc(p.updated||'')}">
       <label class="f"><span class="lbl">Date taken</span><input id="p-edate" type="date" required value="${p.date}"></label>
       <label class="f"><span class="lbl">Pose</span><select id="p-epose">${pPoseOptions(p.pose)}</select></label>
       <label class="f"><span class="lbl">Pose type</span><select id="p-estyle">${pStyleOptions(p.style)}</select></label>
@@ -338,7 +338,7 @@ async function pSave(form){
   const err=$('#p-eerr'), id=+form.dataset.id, btn=form.querySelector('button[type=submit]');
   btn.disabled=true;err.hidden=true;
   try{
-    const p=await api('PUT','/api/photos/'+id,{date:$('#p-edate').value,pose:$('#p-epose').value,style:$('#p-estyle').value,note:$('#p-enote').value});
+    const p=await api('PUT','/api/photos/'+id,{date:$('#p-edate').value,pose:$('#p-epose').value,style:$('#p-estyle').value,note:$('#p-enote').value},form.dataset.ver||undefined);
     PHOTOS=PHOTOS.filter(x=>x.id!==id);PHOTOS.push(p);pSort();
     pMsg='Saved.';go('photos');
   }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message;err.hidden=false;}}

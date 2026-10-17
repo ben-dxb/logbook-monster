@@ -9,6 +9,7 @@
 const express = require('express');
 const db = require('./db');
 const { isDate, writeError } = require('./dates');
+const version = require('./version');
 
 const DEFAULTS = [
   { id: 'weigh', label: 'Weigh in', show: 'all', auto: 'weight' },
@@ -27,9 +28,9 @@ const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 const fail = msg => Object.assign(new Error(msg), { status: 400 });
 
 const q = {
-  get: db.prepare('SELECT items FROM checklists WHERE user_id = ?'),
-  put: db.prepare(`INSERT INTO checklists (user_id, items) VALUES (?, ?)
-    ON CONFLICT(user_id) DO UPDATE SET items = excluded.items, updated_at = datetime('now')`),
+  get: db.prepare('SELECT items, updated_at FROM checklists WHERE user_id = ?'),
+  put: db.prepare(`INSERT INTO checklists (user_id, items, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET items = excluded.items, updated_at = excluded.updated_at`),
   del: db.prepare('DELETE FROM checklists WHERE user_id = ?'),
   range: db.prepare('SELECT date, item FROM checklist_log WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date, item'),
   tick: db.prepare('INSERT OR IGNORE INTO checklist_log (user_id, date, item) VALUES (?, ?, ?)'),
@@ -73,14 +74,25 @@ const send = fn => (req, res) => {
   catch (e) { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); }
 };
 
-router.get('/', send(req => ({ items: itemsOf(req.user), custom: !!q.get.get(req.user.id), defaults: DEFAULTS })));
+/* updated: the list's version (null while it is the default list), sent back as x-version with a change (server/version.js) */
+router.get('/', send(req => {
+  const r = q.get.get(req.user.id);
+  return { items: r ? JSON.parse(r.items) : DEFAULTS, custom: !!r, defaults: DEFAULTS, updated: r ? r.updated_at : null };
+}));
+const versionOf = user => { const r = q.get.get(user.id); return r ? r.updated_at : null; };
 /* Account admin: the list itself. Sending the default list back (or DELETE) goes back to following the defaults. */
 router.put('/', send(req => {
   const items = clean(isObj(req.body) ? req.body.items : null);
-  q.put.run(req.user.id, JSON.stringify(items));
-  return { items, custom: true, defaults: DEFAULTS };
+  version.check(req, versionOf(req.user));
+  const updated = version.stamp();
+  q.put.run(req.user.id, JSON.stringify(items), updated);
+  return { items, custom: true, defaults: DEFAULTS, updated };
 }));
-router.delete('/', send(req => { q.del.run(req.user.id); return { items: DEFAULTS, custom: false, defaults: DEFAULTS }; }));
+router.delete('/', send(req => {
+  version.check(req, versionOf(req.user));
+  q.del.run(req.user.id);
+  return { items: DEFAULTS, custom: false, defaults: DEFAULTS, updated: null };
+}));
 
 /* GET /days?from=…&to=… (at most a year) → { days: { date: [ids] } } */
 router.get('/days', send(req => {
