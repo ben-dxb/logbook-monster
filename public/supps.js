@@ -8,7 +8,7 @@
    then added to the library – and logged for a day – in one go.
    Uses helpers from app.js and gym.js (gHead, gEmpty). */
 
-let SUPPS=null, SUNITS=['g','mg','mcg','IU','ml','drops','capsules','tablets','softgels','scoops','servings'];
+let SUPPS=null, SUNITS=[];   /* units the server takes, from GET /api/supps */
 const SLOG={};                    /* date -> that day's entries */
 let STREND=new Set();             /* names followed on the Timeline chart, lower case */
 let sDate=todayStr(), sPick='', sUnit='mg', sQuery='', sFilter='all', sMsg='', sTok=0;

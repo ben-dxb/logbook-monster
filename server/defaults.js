@@ -16,7 +16,7 @@ const q = {
   appGet: db.prepare("SELECT data FROM app_config WHERE key = 'defaults'"),
   appDel: db.prepare("DELETE FROM app_config WHERE key = 'defaults'"),
   flag: db.prepare("SELECT 1 AS x FROM app_config WHERE key = 'plans_own'"),
-  setFlag: db.prepare("INSERT OR IGNORE INTO app_config (key, data, updated_by) VALUES ('plans_own', '{}', 'migration')"),
+  setFlag: db.prepare("INSERT OR IGNORE INTO app_config (key, data) VALUES ('plans_own', '{}')"),
   users: db.prepare('SELECT id, (SELECT COUNT(*) FROM days WHERE days.user_id = users.id) AS days FROM users'),
   firstUser: db.prepare('SELECT MIN(id) AS id FROM users'),
   mine: db.prepare('SELECT data, updated_at FROM user_defaults WHERE user_id = ?'),

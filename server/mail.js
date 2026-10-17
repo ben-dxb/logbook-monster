@@ -9,8 +9,8 @@ const config = require('./config');
 
 const q = {
   get: db.prepare("SELECT data FROM app_config WHERE key = 'email'"),
-  put: db.prepare(`INSERT INTO app_config (key, data, updated_by) VALUES ('email', ?, ?)
-    ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_by = excluded.updated_by, updated_at = datetime('now')`),
+  put: db.prepare(`INSERT INTO app_config (key, data) VALUES ('email', ?)
+    ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = datetime('now')`),
   reseal: db.prepare("UPDATE app_config SET data = ? WHERE key = 'email'"),
 };
 
@@ -82,7 +82,7 @@ function status() {
     hasPassword: !!c.pass, passwordSource: c.passSource, from: c.from, fromName: c.fromName };
 }
 
-async function save(body, user) {
+async function save(body) {
   const s = stored();
   const str = (k, max) => { if (body[k] === undefined) return; const v = String(body[k] || '').trim().slice(0, max); if (v) s[k] = v; else delete s[k]; };
   str('host', 253); str('user', 254); str('from', 254); str('fromName', 100);
@@ -103,7 +103,7 @@ async function save(body, user) {
   }
   /* Google shows app passwords in groups of four ("abcd efgh ijkl mnop"); the spaces aren't part of it. */
   if (s.pass && /(^|\.)(gmail|googlemail)\.com$/i.test(s.host || fromEnv().host)) s.pass = s.pass.replace(/\s+/g, '');
-  q.put.run(sealed(s), user.email);
+  q.put.run(sealed(s));
   return status();
 }
 

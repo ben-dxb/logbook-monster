@@ -5,9 +5,9 @@
    The checklist's items are the account's own (Account admin › Daily checklist, server/checklist.js). Items with an
    automatic tick count as done on a day the app already has a weight, a supplement or a gym set logged, so the
    supplement regime doesn't need logging dose by dose – "Supplements taken" is enough.
-   Uses helpers from app.js (api, esc, todayStr, addDays…), admin.js (mineOn, typeOn, tnameOn) and supps.js (SUPPS, sLoad, sDose). */
+   Uses helpers from app.js (api, esc, todayStr, addDays…), admin.js (mineOn, typeOn, tnameOn), supps.js (SUPPS, sLoad, sDose) and photos.js (pThumb). */
 
-let CL=null;                     /* {items, custom, defaults} */
+let CL=null;                     /* {items, custom, updated} */
 let dTicks={}, dAuto={supps:new Set(),gym:new Set()}, dGym=[], dPhotos=null, dDate=todayStr(), dTok=0;
 
 /* Is this day template a training one? "T" (what plan imports call training) or a name with "train" in it. */
@@ -112,8 +112,7 @@ function dSupps(){
 function dPhoto(){
   if(!dPhotos||!dPhotos.length)return dCard('#photos','Progress photos','<p>No progress photos yet.</p>');
   const p=dPhotos.reduce((a,b)=>b.date>a.date||(b.date===a.date&&b.id>a.id)?b:a);
-  const src=p.tv?`/api/photos/${p.id}/thumb?v=${encodeURIComponent(p.tv)}`:`/api/photos/${p.id}/file?v=${encodeURIComponent(p.v)}`;
-  return dCard('#photos','Progress photos',`<div class="dphoto"><img src="${src}" alt="Latest progress photo, ${esc(p.pose)}" loading="lazy"><p>Latest: ${esc(fmtLong(p.date))}<br>${dPhotos.length} photo${dPhotos.length===1?'':'s'} in all</p></div>`);
+  return dCard('#photos','Progress photos',`<div class="dphoto"><img src="${pThumb(p)}" alt="Latest progress photo, ${esc(p.pose)}" loading="lazy"><p>Latest: ${esc(fmtLong(p.date))}<br>${dPhotos.length} photo${dPhotos.length===1?'':'s'} in all</p></div>`);
 }
 
 document.addEventListener('change',e=>{if(view==='dash'&&e.target.dataset.dk!=null)dTick(e.target);});

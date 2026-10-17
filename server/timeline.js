@@ -294,4 +294,4 @@ router.post('/summary', aiLimit, async (req, res) => {
   } catch (e) { send(res, e); }
 });
 
-module.exports = { router, series, dayCard, summaryText, e1rm };
+module.exports = { router, summaryText };

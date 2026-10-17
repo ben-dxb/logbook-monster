@@ -40,8 +40,7 @@ function idle(user) {
   if (kind) throw Object.assign(new Error(`The AI is still reading your ${KINDS[kind] ? KINDS[kind].name : 'last file'} – wait for that one first`), { status: 409 });
 }
 
-const view = r => ({ id: r.id, kind: r.kind, label: r.label, status: r.status, error: r.error || null, seen: !!r.seen,
-  created: r.created_at, finished: r.finished_at || null });
+const view = r => ({ id: r.id, kind: r.kind, label: r.label, status: r.status, error: r.error || null, seen: !!r.seen });
 
 function tell(user, kind, label, error) {
   if (Date.now() - (lastAsked.get(user.id) || 0) < AWAY_MS) return;   /* the app is open and will show it */
@@ -103,4 +102,4 @@ router.post('/:id/seen', (req, res) => {
   res.json({ ok: true });
 });
 
-module.exports = { router, start, respond, KINDS };
+module.exports = { router, respond };

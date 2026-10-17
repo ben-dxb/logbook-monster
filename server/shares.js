@@ -116,12 +116,11 @@ coach.get('/info', (req, res) => {
   q.used.run(req.share.id);
   res.json({ name: req.user.name || req.user.email.split('@')[0], label: req.share.label, expires: req.share.expires_at });
 });
-/* the plan and food values only – not who last changed the app defaults */
-coach.get('/defaults', (req, res) => { const { updatedBy, updatedAt, ...d } = defaults.forUser(req.user); res.json(d); });
+coach.get('/defaults', (req, res) => res.json(defaults.forUser(req.user)));
 coach.get('/days', (req, res) => res.json(q.sums.all(req.user.id, ...range(req.query)).map(r => ({ date: r.date, ...JSON.parse(r.summary) }))));
 coach.get('/weights', (req, res) => res.json(q.weights.all(req.user.id, ...range(req.query))));
 coach.use('/timeline', timeline.router);
 coach.use('/photos', photos.router);
 coach.use((req, res) => res.status(404).json({ error: 'Not found' }));
 
-module.exports = { mine, coach, list, create };
+module.exports = { mine, coach };
