@@ -1,5 +1,5 @@
 'use strict';
-/* Versioned static files. Each script, stylesheet and icon in public/ gets a short hash of its content; the HTML pages
+/* Versioned static files. Each script, stylesheet and icon (svg, png, ico) in public/ gets a short hash of its content; the HTML pages
    are served with their references rewritten to /app.js?v=<hash>. A query string rather than a renamed file keeps the
    file server, the CSP ('self') and every old reference working as they are: the name on disk never changes.
    - /app.js?v=<its current hash>: cached for a year, immutable – a new deploy changes the hash, so the page asks for a new URL.
@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 
 const IMMUTABLE = 'public, max-age=31536000, immutable';
-const ASSET = /\.(js|css|svg)$/;
+const ASSET = /\.(js|css|svg|png|ico)$/;
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 
 function create(dir, { live = false } = {}) {
@@ -57,7 +57,8 @@ function create(dir, { live = false } = {}) {
     if (req.method === 'GET' || req.method === 'HEAD') {
       const name = req.path.slice(1), v = req.query.v;
       if (live && typeof v === 'string') scan();
-      res.set('Cache-Control', typeof v === 'string' && v && v === hashOf(name) ? IMMUTABLE : 'no-cache');
+      /* fonts carry their version in the file name (public/fonts/archivo-latin-v5.woff2) – a new font gets a new name */
+      res.set('Cache-Control', /^fonts\/[\w.-]+\.woff2$/.test(name) || (typeof v === 'string' && v && v === hashOf(name)) ? IMMUTABLE : 'no-cache');
     }
     next();
   }

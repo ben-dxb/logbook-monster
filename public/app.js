@@ -39,6 +39,9 @@ let resetArmed=false, isAdmin=false, aiOn=false, planFiles=true;
 let LIB=[], LIBV=0;                         /* the food library (yours and shared), and a version to spot changes */
 
 /* ---------- server ---------- */
+/* the one message for a request that never reached the server (offline, server down); e.network marks it */
+const NET_ERR='Can’t connect – check your connection and try again.';
+const netError=()=>{const e=new Error(NET_ERR);e.network=true;return e;};
 /* ver: the version (`updated`) of the record this change was made on, null for none yet; a newer one on the server
    answers 409 (e.conflict) and nothing is saved (server/version.js) */
 async function api(method,url,body,ver,again){
@@ -50,7 +53,7 @@ async function api2(method,url,body,ver,again){
   try{r=await fetch(url,{method,credentials:'same-origin',
     headers:{...(body!==undefined?{'content-type':'application/json'}:{}),'x-csrf-token':csrf,...TZH,...(ver!==undefined?{'x-version':ver==null?'none':ver}:{})},
     body:body!==undefined?JSON.stringify(body):undefined});}
-  catch{throw new Error('Can’t reach the server – is it still running?');}
+  catch{throw netError();}
   if(r.status===401){const j=await r.json().catch(()=>({}));setTimeout(()=>toLogin(j.gone),0);const e=new Error('You were signed out');e.signedOut=true;throw e;}
   if(r.status===404&&method==='GET') return null;
   const j=await r.json().catch(()=>({}));
@@ -227,6 +230,11 @@ function day(){useDefs(S.cur);if(!S.days[S.cur]){if(!dayReady())throw new Error(
 function tplLabel(d){const D=S.days[d],s=SUMS[d];return (s&&s.tname)||tnameOn(d,(D&&D.type)||(s&&s.type)||typeOn(d));}
 const wd=()=>wdOf(S.cur);
 function showLoading(on){$('#loading').hidden=!on;}
+/* a start-up problem, in the alert under the header; Retry loads the page again (changes waiting to be sent are kept – restoreStash) */
+function bootNote(msg,retry){$('#bootmsg').textContent=msg;$('#bootretry').hidden=!retry;$('#bootnote').hidden=false;}
+$('#bootretry').addEventListener('click',()=>location.reload());
+/* the skip link moves focus to the page, without putting #main in the address (which the router would read as a page) */
+$('.skip').addEventListener('click',e=>{e.preventDefault();$('#main').focus();});
 
 /* ---------- number boxes ----------
    A box the browser can't read ("80e", "abc") has the value '' – which used to save as 0, or delete a weight. Such a typo, or a
@@ -553,7 +561,7 @@ async function setWeight(date,kg){
 /* ---------- routing: #dash (the landing page), #day/2026-10-15, #history/2026-10, #history/timeline/…, #gym/…, #foods/…, #supps/…, #photos/…, #account, #admin ----------
    History has two tabs: Calendar (#history) and Timeline (#history/timeline, the 'timeline' view); old #timeline links still work, and old #weight links open the Timeline (weight is logged on the Daily Tracker).
    #account (account admin, anyone) and #admin (super admin; tabs #admin/ai, #admin/people, #admin/email) share the #v-admin page. */
-const VIEWS=['dash','day','history','gym','foods','supps','photos','timeline','account','admin'];
+const VIEWS=['dash','day','history','gym','foods','supps','photos','timeline','account','admin','none'];
 const viewEl=n=>$('#v-'+(n==='account'?'admin':n));
 /* a tab left open past midnight: whatever was on 'today' moves to the new today (the date of the action, not of the page load) */
 let TODAY=todayStr();
@@ -577,17 +585,25 @@ function route(){
   if(/^#timeline(\/|$)/.test(location.hash))history.replaceState(null,'','#history/'+location.hash.slice(1));
   let [v,arg,...more]=location.hash.replace(/^#/,'').split('/');
   if(v==='history'&&arg==='timeline'){v='timeline';[arg,...more]=more;}
-  view=VIEWS.includes(v)&&(v!=='admin'||isAdmin)?v:v?'day':'dash';
+  /* an address that isn't a page says so (it used to open the Daily Tracker); Super admin for anyone else says who it's for */
+  const known=VIEWS.includes(v)&&v!=='none';
+  view=known&&(v!=='admin'||isAdmin)?v:v?'none':'dash';
   const top=view==='timeline'?'history':view;
   document.querySelectorAll('.views a').forEach(a=>{if(a.dataset.view===top)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
   document.querySelectorAll('.htabs a').forEach(a=>{if(a.dataset.h===(view==='timeline'?'timeline':'cal'))a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
-  VIEWS.forEach(n=>{viewEl(n).hidden=true;});viewEl(view).hidden=false;
+  /* the Daily Tracker shows once its day is drawn (openDay), not empty first and then filled in */
+  const dayWas=!viewEl('day').hidden;
+  VIEWS.forEach(n=>{viewEl(n).hidden=true;});if(view!=='day'||dayWas)viewEl(view).hidden=false;
   $('#acct').open=false;
-  if(view==='dash'){renderDash(arg?[arg]:[]);}
+  if(view==='none'){const adm=v==='admin';
+    $('#none-h').textContent=adm?'Super admin is for the app’s admins':'There’s no page like that';
+    $('#none-msg').textContent=adm?'Your account doesn’t have Super admin. Your own plan, foods and settings are on Account admin.':'The address may be mistyped, or the page has moved.';
+    const l=$('#v-none .ghost');l.href=adm?'#account':'#day';l.textContent=adm?'Account admin':'Daily Tracker';}
+  else if(view==='dash'){renderDash(arg?[arg]:[]);}
   else if(view==='day'){
     if(v==='day'&&arg&&!isDate(arg)){history.replaceState(null,'','#day');   /* 2026-13-01 never rolls over into another day */
       numNote(realDate(arg)?'Pick a day from 2000 to a year from now – showing '+(S.cur===todayStr()?'today':fmtLong(S.cur))+'.':`There’s no such day as ${arg} – showing ${S.cur===todayStr()?'today':fmtLong(S.cur)}.`);}
-    openDay(isDate(arg)?arg:S.cur);}
+    openDay(isDate(arg)?arg:S.cur).finally(()=>{if(view==='day')viewEl('day').hidden=false;});}
   else if(view==='history'){if(/^\d{4}-\d{2}$/.test(arg||'')){
       if(isDate(arg+'-01'))month=arg+'-01';
       else{month=todayStr().slice(0,7)+'-01';history.replaceState(null,'','#history');   /* 2026-13 never rolls over into another month */
@@ -599,6 +615,23 @@ function route(){
   else if(view==='supps'){renderSupps(arg?[arg,...more]:[]);}
   else if(view==='photos'){renderPhotos(arg?[arg,...more]:[]);}
   else renderTimeline(arg?[arg]:[]);
+  viewTitle();
+}
+/* Each page has its own title, and the hidden h1 at the top of <main> names it. Going to another page (not another day or tab
+   of the same one) moves focus to that heading, so a screen reader or keyboard starts at the new page – without scrolling. */
+const VIEW_NAMES={dash:'Dashboard',day:'Daily Tracker',history:'History',timeline:'Timeline',gym:'Gym',foods:'Food Library',supps:'Supplements',
+  photos:'Progress photos',account:'Account admin',admin:'Super admin',none:'Page not found'};
+const AD_TAB_NAMES={ai:'AI',people:'People',email:'Email',options:'Options',log:'Security log'};
+let focusedView=null;
+function viewTitle(){
+  let name=VIEW_NAMES[view]||'Logbook Monster';
+  if(view==='day')name+=' – '+fmtLong(S.cur);
+  else if(view==='admin'&&typeof adTab==='string'&&AD_TAB_NAMES[adTab])name+=' – '+AD_TAB_NAMES[adTab];
+  else if(view==='none'&&location.hash.replace(/^#/,'').split('/')[0]==='admin')name='Super admin – not available';
+  document.title=name+' – Logbook Monster';
+  const h=$('#vh');h.textContent=name;
+  if(focusedView!==null&&focusedView!==view&&!document.querySelector('dialog[open]'))h.focus({preventScroll:true});
+  focusedView=view;
 }
 function go(hash){if(location.hash==='#'+hash)route();else location.hash=hash;}
 
@@ -752,6 +785,9 @@ $('#pwform').addEventListener('submit',async e=>{
   catch(err){msg.textContent=err.message;}
 });
 document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(e.target)&&!$('#recheck').contains(e.target))d.open=false;});
+/* the account menu closes on Escape (focus back on its button) and when focus moves on past it */
+$('#acct').addEventListener('keydown',e=>{const d=$('#acct');if(e.key==='Escape'&&d.open){e.preventDefault();d.open=false;d.querySelector('summary').focus();}});
+$('#acct').addEventListener('focusout',e=>{const d=$('#acct'),to=e.relatedTarget;if(d.open&&to&&!d.contains(to)&&!$('#recheck').contains(to))d.open=false;});
 
 /* two-step sign-in: set up (key + otpauth link, confirmed with one code, then 10 recovery codes) and switch off */
 let TF=null,tfNew=null,tfCodes=null;
@@ -789,16 +825,22 @@ $('#tfbody').addEventListener('submit',async e=>{
 });
 
 /* ---------- start ----------
-   after every script has run (DOMContentLoaded), so start-up never reaches a page's globals (fAiOn, renderDash…) before they exist */
+   The account's data is asked for as soon as this script runs (the scripts after it are still loading – they are deferred);
+   everything that uses it waits for every script to have run (DOMContentLoaded), so start-up never reaches a page's globals
+   (fAiOn, renderDash…) before they exist. The rest is asked for once /api/me says you're signed in. */
+let libErr='';
+const BOOT_ME=api('GET','/api/me');
+const BOOT_DATA=BOOT_ME.then(()=>Promise.all([api('GET','/api/settings'),api('GET','/api/days'),api('GET','/api/weights'),api('GET','/api/defaults'),
+  api('GET','/api/foods').catch(e=>{if(e.signedOut)throw e;libErr=e.message;return null;})]));   /* without the food library the rest still works */
+BOOT_DATA.catch(()=>{});   /* handled below, after DOMContentLoaded */
 document.addEventListener('DOMContentLoaded',async()=>{
-  let skipped=[],libErr='';
+  let skipped=[];
   try{
-    const me=await api('GET','/api/me');csrf=me.csrf;ME=me.email;UID=me.id;
-    $('#who').textContent=me.name||me.email;$('#who').title=me.email;
+    const me=await BOOT_ME;csrf=me.csrf;ME=me.email;UID=me.id;
+    $('#who').textContent=me.name||me.email;$('#who').title=me.email;$('#acct>summary').setAttribute('aria-label','Account menu – '+me.email);
     if(!me.hasPassword){$('#pwcur').hidden=true;$('#pwbox').querySelector('summary').textContent='Set a password';}
     isAdmin=!!me.admin;aiOn=!!me.ai;planFiles=me.planFiles!==false;$('#adminlink').hidden=!isAdmin;
-    const [settings,sums,weights,defs,lib]=await Promise.all([api('GET','/api/settings'),api('GET','/api/days'),api('GET','/api/weights'),api('GET','/api/defaults'),
-      api('GET','/api/foods').catch(e=>{if(e.signedOut)throw e;libErr=e.message;return null;})]);   /* without the food library the rest still works */
+    const [settings,sums,weights,defs,lib]=await BOOT_DATA;
     LIB=(lib&&lib.foods)||[];fAiOn=!!(lib&&lib.ai);
     setDefaults(defs);
     S.pud={...PUD_DEFAULT,...((settings||{}).pud||{})};S.snackOv=(settings||{}).snackOv||{};
@@ -808,9 +850,10 @@ document.addEventListener('DOMContentLoaded',async()=>{
     (weights||[]).forEach(w=>{WEIGHTS[w.date]=w.kg;});
     recalcPudding();
     skipped=await restoreStash();
-  }catch(e){if(!e.signedOut){$('#loading').textContent='Couldn’t load your data: '+e.message+' – reload the page to try again.';}return;}
+  }catch(e){if(!e.signedOut){showLoading(false);
+    bootNote(e.network?'You seem to be offline – your changes aren’t lost.':`Couldn’t load your data – ${endStop(e.message)}`,true);}return;}
   showLoading(false);
-  if(libErr){$('#bootnote').textContent=`Your food library couldn’t load (${libErr}), so its foods are missing until you reload the page.`;$('#bootnote').hidden=false;}
+  if(libErr)bootNote(`Your food library couldn’t load (${libErr}), so its foods are missing until you reload the page.`,true);
   route();
   if(pending.size)flush();   /* changes kept from a sign-out go now, whatever page you land on */
   if(skipped.length)alert(`Changes you made before you were signed out weren’t put back, because ${skipped.join(', ')} changed on another device or tab since. The newer copy is kept.`);

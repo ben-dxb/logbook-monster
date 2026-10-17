@@ -96,7 +96,7 @@ test('pages: no-cache with a strong ETag, 304 only after the route has run; asse
     assert.match(r.headers.get('etag'), /^"[0-9a-f]{20,}"$/, p + ': a strong ETag');
     const html = await r.text(), list = refs(html);
     assert.ok(list.some(u => /\.js\?/.test(u)) && list.some(u => /\.css\?/.test(u)), p);
-    for (const u of list) { assert.match(u, /^\/[a-z0-9]+\.(js|css|svg)\?v=[0-9a-f]{10}$/, `${p}: ${u}`); seen.add(u); }
+    for (const u of list) { assert.match(u, /^\/[a-z0-9-]+\.(js|css|svg|png)\?v=[0-9a-f]{10}$/, `${p}: ${u}`); seen.add(u); }
     const again = await fetch(BASE + p, { headers: { 'if-none-match': r.headers.get('etag'), 'cache-control': 'max-age=0',   /* as a browser revalidates (fetch would add no-cache) */
        ...(p === '/' ? { cookie: ann.cookie() } : {}) } });
     assert.strictEqual(again.status, 304, p + ' revalidates');
@@ -115,6 +115,9 @@ test('pages: no-cache with a strong ETag, 304 only after the route has run; asse
     const r = await fetch(BASE + u);
     assert.deepStrictEqual([r.status, r.headers.get('cache-control')], [200, 'no-cache'], u);
   }
+  /* the self-hosted font: its version is in its name, so it is kept for a year */
+  const font = await fetch(BASE + '/fonts/archivo-latin-v5.woff2');
+  assert.deepStrictEqual([font.status, font.headers.get('cache-control'), font.headers.get('content-type')], [200, assets.IMMUTABLE, 'font/woff2']);
   assert.strictEqual((await fetch(BASE + '/api/me', { headers: { cookie: ann.cookie() } })).headers.get('cache-control'), 'no-store', 'API answers are untouched');
 });
 
