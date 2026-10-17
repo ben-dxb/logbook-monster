@@ -223,6 +223,9 @@ async function pShrink(file,max,quality){
 }
 /* api() sends JSON; the pictures go as they are */
 async function pSend(method,url,blob,more={}){
+  wrote();try{return await pSend2(method,url,blob,more);}finally{wrote();}
+}
+async function pSend2(method,url,blob,more){
   let r;
   try{r=await fetch(url,{method,credentials:'same-origin',headers:{'content-type':'image/jpeg','x-csrf-token':csrf,...TZH,...more},body:blob});}
   catch{throw new Error('Can’t reach the server – is it still running?');}

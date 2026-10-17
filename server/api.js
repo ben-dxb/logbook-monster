@@ -15,6 +15,7 @@ const supps = require('./supps');
 const checklist = require('./checklist');
 const photos = require('./photos');
 const timeline = require('./timeline');
+const trendCache = require('./trendcache');
 const shares = require('./shares');
 const jobs = require('./jobs');
 const { isDate, writeError, todayIn } = require('./dates');
@@ -125,6 +126,15 @@ router.use(requireAuth);
 router.use(express.json({ limit: '300kb' }));
 router.use(csrfProtect);
 router.use(ai.scope);
+/* Any write may change what the Timeline's trends show: the account's kept answers (server/trendcache.js) go stale as the
+   answer is sent – before the browser can read it and ask again – whatever the status (a failed write may have done part). */
+router.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    const end = res.end, uid = req.user.id;
+    res.end = function (...a) { trendCache.bump(uid); return end.apply(this, a); };
+  }
+  next();
+});
 /* the person's date today, from the time zone the app sends (server/dates.js) */
 router.use((req, res, next) => { req.today = todayIn(req.get('x-time-zone') || (typeof req.query.tz === 'string' ? req.query.tz : '')); next(); });   /* ?tz= for the export link */
 /* Every account's saves, whatever the route: the tracker saves a changed day 0.6 s after the last edit, so even nonstop
@@ -186,6 +196,7 @@ router.put('/admin/ai', adminOnly, (req, res, next) => (isObj(req.body) && Objec
   if (!isObj(req.body)) return bad(res, 'Settings must be an object');
   try {
     const out = ai.save(req.body), b = req.body;
+    trendCache.bumpAll();   /* the trends say whether AI is set up */
     audit.log(req, 'ai.settings', { apiKey: b.key === undefined ? undefined : String(b.key || '').trim() ? 'set' : 'cleared',
       model: b.model === undefined ? undefined : true, tasks: isObj(b.models) ? Object.keys(b.models) : undefined });
     res.json(out);
@@ -234,6 +245,7 @@ router.put('/admin/options', adminOnly, (req, res, next) => (loosens(options(), 
     o[k] = v;
   }
   q.putOptions.run(JSON.stringify(o));
+  trendCache.bumpAll();
   audit.log(req, 'options.changed', req.body);
   res.json(o);
 });

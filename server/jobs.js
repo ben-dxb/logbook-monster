@@ -7,6 +7,7 @@ const express = require('express');
 const db = require('./db');
 const config = require('./config');
 const mail = require('./mail');
+const trendCache = require('./trendcache');
 
 /* kind -> what it is and where its result is opened in the app */
 const KINDS = {
@@ -85,9 +86,10 @@ function start(user, kind, label, work) {
     try { tell(user, kind, label, msg); } catch (e2) { console.error(e2); }
   };
   Promise.resolve().then(work).then(result => {
+    trendCache.bump(user.id);   /* it ran after the request's answer went: whatever it wrote, kept trends go stale */
     try { q.done.run(JSON.stringify(result), id); } catch (e) { return failed(e, 'The AI read it, but the app couldn’t keep the result – try again'); }
     try { tell(user, kind, label); } catch (e) { console.error(e); }
-  }, e => failed(e)).catch(e => console.error(`AI ${kind} read ${id}:`, e));
+  }, e => { trendCache.bump(user.id); failed(e); }).catch(e => console.error(`AI ${kind} read ${id}:`, e));
   return view(q.get.get(user.id, id));
 }
 
