@@ -76,34 +76,85 @@ const limiter = (limit, message, more = {}) => rateLimit({
   skipFailedRequests: true, requestWasSuccessful: (req, res) => res.statusCode < 400 || !!(req.ai && req.ai.calls), ...more,
 });
 
-/* The key is kept sealed (keySealed, server/seal.js); stored() hands it back opened as key. One kept from before is sealed on start. */
+/* The key is kept sealed (keySealed, server/seal.js); stored() hands it back opened as key. Two more slots for rotating it
+   (docs/rotation.md): next (saved and tested before it takes over) and old (the one promote() replaced, kept OVERLAP for
+   "Test old" after revoking it at OpenRouter, then dropped). keyId / nextId / oldId: random ids for credentials.js, whose age
+   restarts only when the key itself changes. One kept in plain text from before is sealed on start. */
 const box = require('./seal')('openrouter-key-v1');
+const creds = require('./credentials');
+const OVERLAP = 60 * 60 * 1000;
+const SLOTS = [['key', 'keySealed'], ['next', 'nextSealed'], ['old', 'oldSealed']];
 function stored() {
   const r = q.get.get(), s = r ? JSON.parse(r.data) : {};
-  if (s.keySealed) { const k = box.unsealText(s.keySealed); if (k) { s.key = k; delete s.keySealed; } }
+  for (const [k, f] of SLOTS) if (s[f]) { const v = box.unsealText(s[f]); if (v) { s[k] = v; delete s[f]; } }
+  if (s.oldUntil && Date.now() > s.oldUntil) {   /* its hour is up: dropped for good */
+    for (const k of ['old', 'oldSealed', 'oldId', 'oldUntil']) delete s[k];
+    q.put.run(sealed(s));
+  }
   return s;
 }
-const sealed = ({ key, ...s }) => JSON.stringify(key ? { ...s, keySealed: box.sealText(key) } : s);
-{ const r = q.get.get(), s = r && JSON.parse(r.data); if (s && (s.key || box.stale(s.keySealed))) q.reseal.run(sealed(stored())); }   /* plain, or sealed under an older key */
+function sealed(s) {
+  const out = { ...s };
+  for (const [k, f] of SLOTS) { delete out[k]; if (s[k]) out[f] = box.sealText(s[k]); }
+  return JSON.stringify(out);
+}
+{ const r = q.get.get(), s = r && JSON.parse(r.data); if (s && SLOTS.some(([k]) => s[k])) q.reseal.run(sealed(stored())); }   /* plain from before */
+const envKey = () => config.envSecret('OPENROUTER_API_KEY').value;
 /* A key saved on the Admin page wins over OPENROUTER_API_KEY in .env. */
 function current(task) {
   const s = stored();
-  const key = s.key || process.env.OPENROUTER_API_KEY || '';
+  const key = s.key || envKey() || '';
   const model = s.model || process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
   return { key, source: s.key ? 'admin' : key ? 'env' : null, model: (task && s.models && s.models[task]) || model };
+}
+/* which slots hold a key (never the keys), for the Keys panel */
+function slots() {
+  const s = stored(), c = current();
+  return { source: c.source, next: !!s.next, old: !!s.old, oldUntil: s.old ? s.oldUntil : null };
+}
+const KEY_RE = /^[\x21-\x7e]{10,300}$/;
+const keyOf = v => { const key = String(v || '').trim(); if (key && !KEY_RE.test(key)) throw new Error('That doesn’t look like an API key'); return key; };
+/* the active key changes: the one it replaces stays as old for OVERLAP */
+function setActive(s, key, id) {
+  if (s.key && s.key !== key) Object.assign(s, { old: s.key, oldId: s.keyId, oldUntil: Date.now() + OVERLAP });
+  s.key = key; s.keyId = id || creds.newKid();
+  creds.record('OPENROUTER', s.keyId);
+}
+function saveNext(v) {
+  const key = keyOf(v), s = stored();
+  if (!key) { delete s.next; delete s.nextId; } else { s.next = key; s.nextId = creds.newKid(); }
+  q.put.run(sealed(s));
+  return status();
+}
+function promote() {
+  const s = stored();
+  if (!s.next) throw Object.assign(new Error('Save a next key first'), { status: 409 });
+  setActive(s, s.next, s.nextId);
+  delete s.next; delete s.nextId;
+  q.put.run(sealed(s));
+  return status();
+}
+/* One real, free call with a slot's key: OpenRouter's GET /key answers 200 for a live key, 401 for a revoked one. */
+async function verify(slot) {
+  const s = stored(), key = slot === 'active' ? current().key : s[slot];
+  if (!key) throw Object.assign(new Error(slot === 'old' ? 'There’s no old key any more – it was dropped an hour after the promote' : `There’s no ${slot} key`), { status: 404 });
+  try {
+    const r = await fetch(`${BASE}/key`, { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15000) });
+    return { slot, ok: r.ok, status: r.status, dead: r.status === 401 || r.status === 403 };
+  } catch { return { slot, ok: false, status: 0, dead: false, error: 'Couldn’t reach OpenRouter' }; }
 }
 /* What the browser may see: never the key itself. Only the super admin gets this (GET /api/admin/ai). */
 function status() {
   const c = current(), own = stored().models || {};
-  return { configured: !!c.key, source: c.source, hint: c.key ? '…' + c.key.slice(-4) : '', model: c.model, defaultModel: DEFAULT_MODEL,
+  return { configured: !!c.key, source: c.source, hint: c.key ? '…' + c.key.slice(-4) : '', model: c.model, defaultModel: DEFAULT_MODEL, slots: slots(),
     tasks: Object.entries(TASKS).map(([id, t]) => ({ id, name: t.name, hint: t.hint, model: own[id] || '', uses: own[id] || c.model })) };
 }
 function save(body) {
   const s = stored();
   if (body.key !== undefined) {
-    const key = String(body.key || '').trim();
-    if (key && !/^[\x21-\x7e]{10,300}$/.test(key)) throw new Error('That doesn’t look like an API key');
-    if (key) s.key = key; else { delete s.key; delete s.keySealed; }
+    const key = keyOf(body.key);
+    if (key) { if (key !== s.key) setActive(s, key); }
+    else { for (const k of ['key', 'keyId', 'old', 'oldId', 'oldUntil']) delete s[k]; creds.forget('OPENROUTER'); }
   }
   if (body.model !== undefined) {
     const model = String(body.model || '').trim();
@@ -311,4 +362,4 @@ async function importPlan(buf, type, user, date) {
   return { ...tidy(reply, foods), model };
 }
 
-module.exports = { status, save, importPlan, ask, askText, check, scope, limiter, TYPES_IN };
+module.exports = { status, save, saveNext, promote, verify, slots, importPlan, ask, askText, check, scope, limiter, TYPES_IN };

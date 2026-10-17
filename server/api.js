@@ -22,6 +22,7 @@ const { isDate, writeError, todayIn } = require('./dates');
 const { isNum } = require('./num');
 const version = require('./version');
 const twostep = require('./twostep');
+const creds = require('./credentials');
 
 const q = {
   getSettings: db.prepare('SELECT data FROM settings WHERE user_id = ?'),
@@ -203,6 +204,54 @@ router.put('/admin/ai', adminOnly, (req, res, next) => (isObj(req.body) && Objec
     res.json(out);
   } catch (e) { bad(res, e.message); }
 });
+/* Rotating the OpenRouter key and the SMTP password through their next slot (docs/rotation.md): save as next, test a slot with
+   one real call, promote next to active (the active one stays as old for an hour), test old after revoking it – it must fail.
+   All behind the re-check; the security log gets the slot and the outcome, never a key. */
+const slotOf = b => (isObj(b) && ['active', 'next', 'old'].includes(b.slot) ? b.slot : null);
+function rotation(mod, name, field) {
+  return {
+    next: (req, res) => {
+      if (!isObj(req.body) || typeof req.body[field] !== 'string') return bad(res, `Send the new ${field === 'key' ? 'key' : 'password'} as "${field}"`);
+      try {
+        const out = mod.saveNext(req.body[field]);
+        audit.log(req, 'secret.next', { name, set: !!req.body[field].trim() });
+        res.json(out);
+      } catch (e) { bad(res, e.message); }
+    },
+    verify: async (req, res) => {
+      const slot = slotOf(req.body);
+      if (!slot) return bad(res, 'Say which slot to test: active, next or old');
+      try {
+        const r = await mod.verify(slot);
+        audit.log(req, 'secret.tested', { name, slot, ok: r.ok, dead: r.dead });
+        if (slot === 'old' && r.dead) creds.mark(name, { old_dead_at: new Date().toISOString() });
+        res.json(r);
+      } catch (e) { fail(res, e); }
+    },
+    promote: (req, res) => {
+      try {
+        const out = mod.promote();
+        if (name === 'OPENROUTER') trendCache.bumpAll();   /* the trends say whether AI is set up */
+        audit.log(req, 'secret.promoted', { name });
+        res.json(out);
+      } catch (e) { fail(res, e); }
+    },
+  };
+}
+const aiRot = rotation(ai, 'OPENROUTER', 'key'), mailRot = rotation(mail, 'SMTP', 'pass');
+router.post('/admin/ai/next', adminOnly, fresh, aiRot.next);
+router.post('/admin/ai/verify', adminOnly, fresh, aiRot.verify);
+router.post('/admin/ai/promote', adminOnly, fresh, aiRot.promote);
+router.post('/admin/email/next', adminOnly, fresh, mailRot.next);
+router.post('/admin/email/verify', adminOnly, fresh, mailRot.verify);
+router.post('/admin/email/promote', adminOnly, fresh, mailRot.promote);
+/* Every credential with its age, slots and next step – never a value (server/credentials.js). */
+router.get('/admin/keys', adminOnly, (req, res) => {
+  const list = creds.list();
+  res.json({ credentials: list, stale: list.filter(c => c.rotate && ['stale', 'overdue', 'unknown'].includes(c.tier)).length,
+    due: list.filter(c => c.rotate && c.tier === 'due').length, warn: creds.WARN, rotate: creds.ROTATE, slots: { ai: ai.slots(), mail: mail.slots() } });
+});
+
 /* The OpenRouter key is the super admin's, so each account gets a handful of reads an hour. */
 const aiLimit = ai.limiter(12, 'That’s a lot of AI reads – wait a while and try again.', { skip: req => superAdmin(req.user) });
 router.post('/my/ai-import', aiLimit, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), ai.scope, readPlan);

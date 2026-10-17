@@ -46,19 +46,32 @@ async function resolve(host, soft) {
   const addr = addrs.find(a => net.isIP(a) === 4) || addrs[0];
   return { addr, loopback: ok && LOOPBACK.check(addr, net.isIP(addr) === 6 ? 'ipv6' : 'ipv4') };
 }
-/* The password is kept sealed (passSealed, server/seal.js); stored() hands it back opened as pass. One kept from before is sealed on start. */
+/* The password is kept sealed (passSealed, server/seal.js); stored() hands it back opened as pass. Like the OpenRouter key
+   (ai.js) it has a next slot (saved and tested before it takes over) and an old one (kept OVERLAP after a promote for
+   "Test old"); passId / nextId / oldId are random ids for credentials.js. One kept in plain text from before is sealed on start. */
 const box = require('./seal')('smtp-pass-v1');
+const creds = require('./credentials');
+const OVERLAP = 60 * 60 * 1000;
+const SLOTS = [['pass', 'passSealed'], ['next', 'nextSealed'], ['old', 'oldSealed']];
+function sealed(s) {
+  const out = { ...s };
+  for (const [k, f] of SLOTS) { delete out[k]; if (s[k]) out[f] = box.sealText(s[k]); }
+  return JSON.stringify(out);
+}
 function stored() {
   const r = q.get.get(), s = r ? JSON.parse(r.data) : {};
-  if (s.passSealed) { const p = box.unsealText(s.passSealed); if (p) { s.pass = p; delete s.passSealed; } }
+  for (const [k, f] of SLOTS) if (s[f]) { const v = box.unsealText(s[f]); if (v) { s[k] = v; delete s[f]; } }
+  if (s.oldUntil && Date.now() > s.oldUntil) {   /* its hour is up: dropped for good */
+    for (const k of ['old', 'oldSealed', 'oldId', 'oldUntil']) delete s[k];
+    q.put.run(sealed(s));
+  }
   return s;
 }
-const sealed = ({ pass, ...s }) => JSON.stringify(pass ? { ...s, passSealed: box.sealText(pass) } : s);
-{ const r = q.get.get(), s = r && JSON.parse(r.data); if (s && (s.pass || box.stale(s.passSealed))) q.reseal.run(sealed(stored())); }   /* plain, or sealed under an older key */
+{ const r = q.get.get(), s = r && JSON.parse(r.data); if (s && SLOTS.some(([k]) => s[k])) q.reseal.run(sealed(stored())); }   /* plain from before */
 function fromEnv() {
   const e = process.env;
   return { host: e.SMTP_HOST || '', port: +e.SMTP_PORT || 0, secure: e.SMTP_SECURE == null ? null : bool(e.SMTP_SECURE),
-    user: e.SMTP_USER || '', pass: e.SMTP_PASS || '', from: e.MAIL_FROM || '', fromName: e.MAIL_FROM_NAME || '' };
+    user: e.SMTP_USER || '', pass: config.envSecret('SMTP_PASS').value, from: e.MAIL_FROM || '', fromName: e.MAIL_FROM_NAME || '' };
 }
 /* Settings saved on the Admin page win over .env, field by field. */
 function current() {
@@ -82,7 +95,7 @@ const configured = () => { const c = current(); return !!(c.host && c.from); };
 function status() {
   const c = current();
   return { configured: !!(c.host && c.from), source: c.source, host: c.host, port: c.port, secure: c.secure, user: stored().user || process.env.SMTP_USER || '',
-    hasPassword: !!c.pass, passwordSource: c.passSource, from: c.from, fromName: c.fromName, sources: c.sources };
+    hasPassword: !!c.pass, passwordSource: c.passSource, slots: slots(), from: c.from, fromName: c.fromName, sources: c.sources };
 }
 
 async function save(body) {
@@ -100,14 +113,58 @@ async function save(body) {
   }
   if (body.secure !== undefined) { if (body.secure === null || body.secure === '') delete s.secure; else s.secure = !!body.secure; }
   if (body.pass !== undefined) {
-    const p = String(body.pass || '');
-    if (p.length > 500) throw new Error('Password is too long');
-    if (p) s.pass = p; else { delete s.pass; delete s.passSealed; }
+    const p = passOf(body.pass, s);
+    if (p) { if (p !== s.pass) setActive(s, p); }
+    else { for (const k of ['pass', 'passSealed', 'passId', 'old', 'oldSealed', 'oldId', 'oldUntil']) delete s[k]; creds.forget('SMTP'); }
   }
-  /* Google shows app passwords in groups of four ("abcd efgh ijkl mnop"); the spaces aren't part of it. */
-  if (s.pass && /(^|\.)(gmail|googlemail)\.com$/i.test(s.host || fromEnv().host)) s.pass = s.pass.replace(/\s+/g, '');
   q.put.run(sealed(s));
   return status();
+}
+/* Google shows app passwords in groups of four ("abcd efgh ijkl mnop"); the spaces aren't part of it. */
+function passOf(v, s) {
+  const p = String(v || '');
+  if (p.length > 500) throw new Error('Password is too long');
+  return p && /(^|\.)(gmail|googlemail)\.com$/i.test(s.host || fromEnv().host) ? p.replace(/\s+/g, '') : p;
+}
+/* the active password changes: the one it replaces stays as old for OVERLAP */
+function setActive(s, pass, id) {
+  if (s.pass && s.pass !== pass) Object.assign(s, { old: s.pass, oldId: s.passId, oldUntil: Date.now() + OVERLAP });
+  s.pass = pass; s.passId = id || creds.newKid();
+  creds.record('SMTP', s.passId);
+}
+function saveNext(v) {
+  const s = stored(), p = passOf(v, s);
+  if (!p) { delete s.next; delete s.nextId; } else { s.next = p; s.nextId = creds.newKid(); }
+  q.put.run(sealed(s));
+  return status();
+}
+function promote() {
+  const s = stored();
+  if (!s.next) throw Object.assign(new Error('Save a next password first'), { status: 409 });
+  setActive(s, s.next, s.nextId);
+  delete s.next; delete s.nextId;
+  q.put.run(sealed(s));
+  return status();
+}
+/* which slots hold a password (never the passwords), for the Keys panel */
+function slots() {
+  const s = stored(), c = current();
+  return { source: c.pass ? c.passSource : null, next: !!s.next, old: !!s.old, oldUntil: s.old ? s.oldUntil : null };
+}
+/* One real sign-in with a slot's password and the saved settings: connect, TLS, AUTH, then quit – no email is sent. */
+async function verify(slot) {
+  const s = stored(), c = current();
+  const pass = slot === 'active' ? c.pass : s[slot];
+  if (!pass) throw refuse(slot === 'old' ? 'There’s no old password any more – it was dropped an hour after the promote' : `There’s no ${slot} password`, 404);
+  if (!c.host || !c.from) throw refuse('Email isn’t set up yet – add the sending account first.', 409);
+  const at = await resolve(c.host);
+  try {
+    await nodemailer.createTransport(transportOptions({ ...c, pass, user: c.user || c.from }, at)).verify();
+    return { slot, ok: true, dead: false };
+  } catch (err) {
+    console.error(`SMTP check of the ${slot} password failed:`, String(err.response || err.message || err).slice(0, 300));
+    return { slot, ok: false, dead: err && err.code === 'EAUTH', error: `The mail server didn’t accept it: ${reason(err)}.` };
+  }
 }
 
 /* Connects to the address that was checked (no second lookup), naming the server for TLS. Without implicit TLS, STARTTLS is
@@ -151,4 +208,4 @@ function notify(msg) {
   send(msg).catch(e => console.error('Email notification failed:', e.message));
 }
 
-module.exports = { reason, status, save, send, notify, configured, current, EMAIL_RE, internal, transportOptions };
+module.exports = { reason, status, save, saveNext, promote, verify, slots, send, notify, configured, current, EMAIL_RE, internal, transportOptions };
