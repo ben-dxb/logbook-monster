@@ -31,7 +31,7 @@ let LIB=[], LIBV=0;                         /* the food library (yours and share
 /* ---------- server ---------- */
 /* ver: the version (`updated`) of the record this change was made on, null for none yet; a newer one on the server
    answers 409 (e.conflict) and nothing is saved (server/version.js) */
-async function api(method,url,body,ver){
+async function api(method,url,body,ver,again){
   let r;
   try{r=await fetch(url,{method,credentials:'same-origin',
     headers:{...(body!==undefined?{'content-type':'application/json'}:{}),'x-csrf-token':csrf,...(ver!==undefined?{'x-version':ver==null?'none':ver}:{})},
@@ -40,8 +40,24 @@ async function api(method,url,body,ver){
   if(r.status===401){setTimeout(toLogin,0);const e=new Error('You were signed out');e.signedOut=true;throw e;}
   if(r.status===404&&method==='GET') return null;
   const j=await r.json().catch(()=>({}));
-  if(!r.ok){const e=new Error(j.error||`HTTP ${r.status}`);e.conflict=r.status===409&&ver!==undefined;throw e;}
+  if(!r.ok){
+    /* a sensitive change on an older sign-in: password or code again, then the same request once more */
+    if(r.status===403&&j.recheck&&!again&&await recheck())return api(method,url,body,ver,true);
+    if(r.status===403&&j.setup2fa)setTimeout(tfShow,0);
+    const e=new Error(j.error||`HTTP ${r.status}`);e.conflict=r.status===409&&ver!==undefined;throw e;}
   return j;
+}
+function recheck(){
+  const d=$('#recheck');if(d.open)return Promise.resolve(false);
+  return new Promise(res=>{
+    $('#rc-in').value='';$('#rc-msg').textContent='';
+    const done=v=>{d.onclose=null;if(d.open)d.close();res(v);};
+    $('#rc-form').onsubmit=async e=>{e.preventDefault();const v=$('#rc-in').value,c=v.replace(/\s/g,'');
+      try{await api('POST','/api/recheck',/^\d{6}$/.test(c)?{code:c}:{password:v},undefined,true);done(true);}
+      catch(err){$('#rc-msg').textContent=err.message;}};
+    $('#rc-cancel').onclick=()=>done(false);d.onclose=()=>done(false);
+    d.showModal();$('#rc-in').focus();
+  });
 }
 
 /* Signed out with changes still waiting: keep them in this browser, under your account id, and send them after you sign back in
@@ -657,7 +673,41 @@ $('#pwform').addEventListener('submit',async e=>{
     msg.textContent='Password updated.'+(r.signedOut?' Signed out everywhere else.':'')+(r.linksOff?` ${r.linksOff} coach link${r.linksOff>1?'s':''} switched off.`:'');$('#pw-cur').value=$('#pw-new').value='';$('#pwcur').hidden=false;}
   catch(err){msg.textContent=err.message;}
 });
-document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(e.target))d.open=false;});
+document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(e.target)&&!$('#recheck').contains(e.target))d.open=false;});
+
+/* two-step sign-in: set up (key + otpauth link, confirmed with one code, then 10 recovery codes) and switch off */
+let TF=null,tfNew=null,tfCodes=null;
+async function tfLoad(){try{TF=await api('GET','/api/totp');}catch(e){TF=null;}tfRender();}
+function tfRender(msg=''){
+  const b=$('#tfbody');let h='';
+  if(tfCodes)h=`<p class="sub">Two-step sign-in is on. Save these recovery codes somewhere safe – each one works once, if you lose your phone. They won’t be shown again.</p>
+    <ul class="tfcodes" id="tf-codes">${tfCodes.map(c=>`<li>${esc(c)}</li>`).join('')}</ul><button class="ghost" type="button" data-tf="done">I’ve saved them</button>`;
+  else if(TF&&TF.on)h=`<p class="sub">On: after your password you’re asked for a code from your authenticator app. ${TF.recoveryLeft} recovery code${TF.recoveryLeft===1?'':'s'} left.</p>
+    <form data-tf="off" class="pwform"><label class="f"><span class="lbl">Password or code, to switch it off</span><input id="tf-offin" type="password" autocomplete="current-password"></label>
+    <button class="ghost" type="submit">Switch off</button></form>`;
+  else if(tfNew)h=`<p class="sub">Add this key to an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password…) as a time-based key, or open the link on your phone:</p>
+    <p class="tfsecret" id="tf-secret">${esc(tfNew.secret.replace(/(.{4})/g,'$1 ').trim())}</p><a class="ghost" href="${esc(tfNew.uri)}">Open in authenticator app</a>
+    <form data-tf="on" class="pwform"><label class="f"><span class="lbl">The 6-digit code it shows</span><input id="tf-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7"></label>
+    <button class="btn" type="submit">Turn on</button></form>`;
+  else h=`<p class="sub">Ask for a code from an authenticator app on your phone after your password, so a leaked password alone can’t get in.</p>
+    <button class="btn" type="button" data-tf="start">Set up</button>`;
+  b.innerHTML=h+`<p class="sub" id="tfmsg" role="status">${esc(msg)}</p>`;
+}
+function tfShow(){$('#acct').open=true;$('#tfbox').open=true;tfLoad();}
+$('#tfbox').addEventListener('toggle',()=>{if($('#tfbox').open&&!tfNew&&!tfCodes)tfLoad();});
+$('#tfbody').addEventListener('click',async e=>{
+  const a=e.target.closest('button[data-tf]');if(!a)return;
+  if(a.dataset.tf==='start'){try{tfNew=await api('POST','/api/totp/setup',{});tfRender();$('#tf-code').focus();}catch(err){if(!err.signedOut)tfRender(err.message);}}
+  else if(a.dataset.tf==='done'){tfCodes=null;tfLoad();}
+});
+$('#tfbody').addEventListener('submit',async e=>{
+  e.preventDefault();const f=e.target.dataset.tf;
+  if(f==='on'){try{const r=await api('POST','/api/totp/enable',{code:$('#tf-code').value.replace(/\s/g,'')});tfNew=null;tfCodes=r.codes;tfRender(r.signedOut?'Signed out everywhere else.':'');}
+    catch(err){if(!err.signedOut)$('#tfmsg').textContent=err.message;}}
+  else if(f==='off'){const v=$('#tf-offin').value,c=v.replace(/\s/g,'');
+    try{await api('POST','/api/totp/disable',/^\d{6}$/.test(c)||/^[A-Za-z2-7]{5}-?[A-Za-z2-7]{5}$/.test(c)?{code:c}:{password:v});TF=null;await tfLoad();$('#tfmsg').textContent='Two-step sign-in is off.';}
+    catch(err){if(!err.signedOut)$('#tfmsg').textContent=err.message;}}
+});
 
 /* ---------- start ---------- */
 (async()=>{

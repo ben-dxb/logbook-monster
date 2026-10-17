@@ -310,11 +310,17 @@ $('#ad-planfiles').addEventListener('change',async e=>{
   el.disabled=false;el.checked=planFiles;$('#v-admin').classList.toggle('nofiles',!planFiles);
 });
 /* super admin: private AI providers only, and the daily AI caps (0 = no limit) */
-function aoFill(o){$('#ad-aiprivate').checked=o.aiPrivate!==false;$('#ad-capuser').value=o.aiDailyUser;$('#ad-capall').value=o.aiDailyAll;}
+function aoFill(o){$('#ad-aiprivate').checked=o.aiPrivate!==false;$('#ad-admintotp').checked=!!o.adminTotp;$('#ad-capuser').value=o.aiDailyUser;$('#ad-capall').value=o.aiDailyAll;}
 async function aoLoad(){try{aoFill(await api('GET','/api/admin/options'));}catch(e){}}
 $('#ad-aiprivate').addEventListener('change',async e=>{
   const el=e.target;el.disabled=true;
   try{aoFill(await api('PUT','/api/admin/options',{aiPrivate:el.checked}));}
+  catch(err){if(!err.signedOut)alert(err.message);aoLoad();}
+  el.disabled=false;
+});
+$('#ad-admintotp').addEventListener('change',async e=>{
+  const el=e.target;el.disabled=true;
+  try{aoFill(await api('PUT','/api/admin/options',{adminTotp:el.checked}));}
   catch(err){if(!err.signedOut)alert(err.message);aoLoad();}
   el.disabled=false;
 });

@@ -271,6 +271,18 @@ db.exec(`CREATE TABLE IF NOT EXISTS login_failures (
 );
 CREATE INDEX IF NOT EXISTS login_failures_email ON login_failures(email, at);`);
 
+/* Added later: the second sign-in step (authenticator app, twostep.js). secret is sealed with AES-256-GCM under a key from
+   SESSION_SECRET; enabled = 0 while it's being set up; last_step: the newest 30-second step a code was taken for, so a code works
+   once; recovery: the SHA-256 hashes of the unused recovery codes (JSON). */
+db.exec(`CREATE TABLE IF NOT EXISTS totp (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  secret     TEXT NOT NULL,
+  enabled    INTEGER NOT NULL DEFAULT 0,
+  last_step  INTEGER NOT NULL DEFAULT 0,
+  recovery   TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);`);
+
 /* Added later, for the per-account storage caps: the size of each day's JSON is indexed so the total is cheap to add up,
    and a photo's thumbnail size is kept beside the photo's (older thumbnails count as 0). */
 db.exec('CREATE INDEX IF NOT EXISTS days_size ON days(user_id, length(data))');

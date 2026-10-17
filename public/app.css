@@ -8,7 +8,7 @@ h1{font-size:22px;font-weight:800;font-stretch:80%;margin:0;letter-spacing:.01em
 .views{display:flex;gap:4px;background:var(--surface);border:1px solid var(--line);border-radius:99px;padding:3px;margin-right:auto}
 .views a{text-decoration:none;color:var(--muted);font-weight:700;font-size:14px;padding:4px 14px;border-radius:99px;white-space:nowrap}
 .views a[aria-current="page"]{background:var(--accent);color:var(--accent-ink)}
-.acct{position:relative}
+.acct{position:relative;margin-left:auto}   /* at the right of its row, so the panel (right-aligned) stays on screen */
 .acct>summary{list-style:none;cursor:pointer;border:1px solid var(--line);border-radius:99px;padding:4px 12px;font-size:13px;color:var(--muted);
   max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--surface)}
 .acct>summary::-webkit-details-marker{display:none}
@@ -634,3 +634,10 @@ footer{font-size:12px;color:var(--muted)}
 /* a number box that refused a typo (app.js numNote) */
 .numnote{position:fixed;left:16px;bottom:16px;z-index:60;margin:0;width:min(380px,calc(100vw - 32px));background:var(--surface);color:var(--ink);
   border:1px solid var(--line);border-left:4px solid var(--bad);border-radius:10px;padding:10px 12px;box-shadow:0 6px 20px rgba(0,0,0,.14);overflow-wrap:anywhere}
+
+/* ---------- two-step sign-in (account menu) and the re-check dialog ---------- */
+.tfsecret{font-family:ui-monospace,monospace;font-size:13px;word-break:break-all;user-select:all;background:var(--soft);border-radius:6px;padding:6px 8px;margin:0}
+.tfcodes{font-family:ui-monospace,monospace;font-size:13px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin:0;padding:0;list-style:none;user-select:all}
+.recheck{border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);padding:16px;width:min(360px,calc(100vw - 32px))}
+.recheck h2{margin:0;font-size:18px}
+.rcbtns{display:flex;gap:8px}
