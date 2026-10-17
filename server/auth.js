@@ -34,8 +34,12 @@ const safeEqual = (a, b) => {
 
 /* Signed out, the CSRF token is an HMAC of a random cookie (signed double-submit), so visiting the
    sign-in page stores nothing on the server. Signed in, it lives in the session. */
-const PRE = 'logbookmonster.pre';
-const preCookie = req => { const m = /(?:^|;\s*)logbookmonster\.pre=([A-Za-z0-9_-]{43})(?:;|$)/.exec(req.headers.cookie || ''); return m ? m[1] : ''; };
+/* Over https it is __Host-logbookmonster.pre (Secure, Path=/, no Domain), so a sibling subdomain can't plant one (login CSRF), as
+   with config.sessionCookie. A browser holding one in the old name mid-sign-in at the deploy is refused once with the usual
+   "session expired, reload" message, then gets the new one. */
+const PRE = config.cookieSecure ? '__Host-logbookmonster.pre' : 'logbookmonster.pre';
+const PRE_RE = new RegExp(`(?:^|;\\s*)${PRE.replace(/[.-]/g, '\\$&')}=([A-Za-z0-9_-]{43})(?:;|$)`);
+const preCookie = req => { const m = PRE_RE.exec(req.headers.cookie || ''); return m ? m[1] : ''; };
 /* signed with the first session secret; one signed with any secret in SESSION_SECRETS is still taken (docs/rotation.md) */
 const preTokenWith = (key, v) => (v ? b64url(crypto.createHmac('sha256', key).update('csrf:' + v).digest()) : '');
 const preToken = v => preTokenWith(config.sessionSecrets[0], v);

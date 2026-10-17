@@ -599,6 +599,15 @@ test('invites: admin invites someone not in ALLOWED_EMAILS, they set a password 
   assert.match(sent.to, /new\.person@example\.com/);
   assert.ok(sent.data.replace(/=\n/g, '').includes(inv.body.link.split('#')[1]), 'email should carry the link');
 
+  /* a name with CR/LF in it is stored and emailed as one line (final black-box test) */
+  const crlf = await admin.req('POST', '/api/admin/users', { email: 'crlf@example.com', name: 'Eve\r\n\r\nURGENT:\tclick\x00here' });
+  assert.strictEqual(crlf.status, 200);
+  assert.strictEqual((await admin.req('GET', '/api/admin/users')).body.users.find(u => u.email === 'crlf@example.com').name, 'Eve URGENT: click here');
+  const crlfMail = mails.at(-1).data.replace(/=\r?\n/g, '');
+  assert.ok(/^Hi Eve URGENT: click here,\r?$/m.test(crlfMail), crlfMail);
+  assert.ok(!/^URGENT/m.test(crlfMail), crlfMail);
+  assert.strictEqual((await admin.req('DELETE', `/api/admin/users/${crlf.body.id}`)).status, 200);
+
   /* a second invite replaces the first link */
   const again = await admin.req('POST', `/api/admin/users/${inv.body.id}/invite`, {});
   assert.strictEqual(again.status, 200);
