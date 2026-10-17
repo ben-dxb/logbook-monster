@@ -2,7 +2,6 @@
 /* Outgoing email (invites, notifications) over SMTP. The settings live in app_config and are edited
    on the Admin page; SMTP_* values in .env are the fallback. The password never leaves the server. */
 const net = require('node:net');
-const crypto = require('node:crypto');
 const dns = require('node:dns');
 const nodemailer = require('nodemailer');
 const db = require('./db');
@@ -230,16 +229,14 @@ function reason(err) {
 /* a refusal sending again won't change: the sender or recipient refused, or a 5xx answer to the message (not a sign-in) */
 const permanent = err => !!err && err.code !== 'EAUTH' && (err.code === 'EENVELOPE' || (err.responseCode >= 500 && err.responseCode < 600));
 
-/* One pooled connection set (2 at most) per set of settings, made again when they change. */
-let pool = null;
+/* One connection per send, over a socket of our own (nodemailer connects it and adds TLS): a send cut at LIMITS.send destroys
+   it, so the server can't carry on and deliver it after the retry has (a pool's close() leaves a busy connection running). */
+const sockets = new Set();
 function transport(opts) {
-  const sig = crypto.createHash('sha256').update(JSON.stringify(opts)).digest('hex');
-  if (pool && pool.sig === sig) return pool.t;
-  if (pool) pool.t.close();
-  pool = { sig, t: nodemailer.createTransport({ ...opts, pool: true, maxConnections: 2, maxMessages: 100 }) };
-  return pool.t;
+  const socket = new net.Socket();
+  sockets.add(socket); socket.once('close', () => sockets.delete(socket));
+  return { t: nodemailer.createTransport({ ...opts, socket }), socket };
 }
-function drop(t) { if (pool && pool.t === t) pool = null; try { t.close(); } catch {} }
 
 /* A mail server that can't be reached (3 sends in a row that couldn't connect, timed out or whose name didn't resolve) is
    left alone for 2 minutes, doubling to 30 while the one test send let through after that fails too: meanwhile sends fail at
@@ -284,17 +281,17 @@ async function send({ to, subject, text, replyTo }) {
   const probe = breaker.enter();
   let at;
   try { at = await resolve(c.host); } catch (e) { breaker.result(e.code ? e : null, probe); throw e; }
-  const t = transport(transportOptions(c, at));
+  const { t, socket } = transport(transportOptions(c, at));
   let timer;
   try {
     await Promise.race([
       t.sendMail({ from: { name: c.fromName, address: c.from }, to, subject, text, replyTo }),
-      new Promise((_, no) => { timer = setTimeout(() => { drop(t); no(Object.assign(new Error(`no answer within ${LIMITS.send / 1000} s`), { code: 'ETIMEDOUT' })); }, LIMITS.send); }),
+      new Promise((_, no) => { timer = setTimeout(() => { socket.destroy(); no(Object.assign(new Error(`no answer within ${LIMITS.send / 1000} s`), { code: 'ETIMEDOUT' })); }, LIMITS.send); }),
     ]);
     breaker.result(null, probe);
   } catch (err) {
     breaker.result(err, probe);
-    if (DOWN.includes(err.code)) drop(t);   /* a pooled connection that broke isn't used again */
+    socket.destroy();
     console.error('Email sending failed:', String(err.response || err.message || err).slice(0, 300));
     throw Object.assign(refuse(`The mail server didn’t accept it: ${reason(err)}.`, 502, err.code), { permanent: permanent(err) });
   } finally { clearTimeout(timer); }
@@ -347,6 +344,6 @@ function drain() {
 setInterval(drain, 30 * 1000).unref();
 setTimeout(drain, 2000).unref();   /* what was left from before a restart */
 const outbox = { drain, rows: () => qo.all.all(), sending };
-const _test = { resolver, looked };
+const _test = { resolver, looked, sockets };
 
 module.exports = { reason, status, save, saveNext, promote, verify, slots, send, notify, configured, current, EMAIL_RE, internal, transportOptions, LIMITS, breaker, outbox, JOB_KEEP, RETRY, _test };

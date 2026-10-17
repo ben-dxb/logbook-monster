@@ -404,7 +404,7 @@ test('coach links: a reminder a week before one runs out, Renew swaps the secret
     assert.strictEqual((await ann('POST', `/api/shares/${made.id}/renew`, { key: 'wrong' })).status, 404);
     const r = await ann('POST', `/api/shares/${made.id}/renew`, { key });
     assert.strictEqual(r.status, 200);
-    assert.strictEqual(r.body.label, 'Coach Sam');
+    assert.deepStrictEqual(Object.keys(r.body).sort(), ['expires', 'id', 'key', 'url'], 'no label in the reply (the list below keeps the name)');
     assert.notStrictEqual(r.body.url, made.url);
     assert.ok(Math.abs(Date.parse(r.body.expires) - Date.now() - 90 * 86400000) < 60000);
     assert.strictEqual((await fetch(made.url + '/api/info')).status, 404, 'the old secret is dead');
