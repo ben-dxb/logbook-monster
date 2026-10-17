@@ -46,16 +46,16 @@ async function kyAfter(k){
 document.addEventListener('submit',e=>{
   const f=e.target.closest('[data-ky-form]');if(!f)return;e.preventDefault();
   const k=f.dataset.kyForm, R=KY_ROT[k], i=f.querySelector('input'), v=i.value.trim();
-  if(!v){i.focus();return;}
+  if(!v)return fieldError(i,`Paste the new ${R.what}`);
   once(f,async()=>{
     try{await api('POST',`/api/admin/${R.path}/next`,{[R.field]:v});i.value='';kyMsg[k]='';await kyAfter(k);kySay(k,`Saved as next. Test it before you promote it.`);}
-    catch(err){if(!err.signedOut)kySay(k,err.message);}
-  });
+    catch(err){if(!err.signedOut)fieldError(i,endStop(err.message));}
+  },'Saving…');
 });
-document.addEventListener('click',e=>{
+document.addEventListener('click',async e=>{
   const b=e.target.closest('[data-ky]');if(!b)return;
   const k=b.dataset.k, R=KY_ROT[k], a=b.dataset.ky;
-  if(a==='promote'&&!confirm(`Promote the next ${R.what}? It takes over straight away; the current one is kept for an hour so you can test it after revoking it.`))return;
+  if(a==='promote'&&!await ask(`Promote the next ${R.what}? It takes over straight away; the current one is kept for an hour so you can test it after revoking it.`,{yes:`Promote the next ${R.what}`,no:'Not yet'}))return;
   once(b,async()=>{
     try{
       if(a==='promote'){await api('POST',`/api/admin/${R.path}/promote`);kyMsg[k]='';await kyAfter(k);kySay(k,`Promoted. Now revoke the old ${R.what} at ${R.where} and press Test old.`);return;}

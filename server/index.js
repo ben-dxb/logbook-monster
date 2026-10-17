@@ -11,6 +11,7 @@ const api = require('./api');
 const shares = require('./shares');
 const audit = require('./audit');
 const assets = require('./assets');
+const storage = require('./storage');
 
 const app = express();
 app.disable('x-powered-by');
@@ -89,7 +90,8 @@ app.use(session({
   },
 }));
 
-app.get('/healthz', (req, res) => res.json({ ok: true }));
+/* ok: false (503) when the database can't be written to or a disk it writes to has under 200 MB free (server/storage.js) */
+app.get('/healthz', (req, res) => { const h = storage.health(db, config); res.status(h.ok ? 200 : 503).json(h); });
 app.use('/auth', auth.router);
 app.use('/api', api);
 /* Coach links: read only, no sign-in – the secret in the path is the key (server/shares.js). */
@@ -136,6 +138,9 @@ app.use(files.headers, express.static(pub, { index: false, cacheControl: false }
 app.use((req, res) => errorPage(req, res, 404, { error: 'Not found' }));
 
 app.use((err, req, res, next) => {
+  /* an error after the answer went (e.g. while it was being sent) can't be answered again: log it, end what's left */
+  if (res.headersSent) { console.error(`${req.method} ${audit.redact(req.originalUrl)} (after the answer):`, err); if (!res.writableEnded) res.destroy(); return; }
+  if (storage.full(err)) { console.error(`${req.method} ${audit.redact(req.originalUrl)}: storage full:`, err.message); return res.status(507).json({ error: storage.FULL }); }
   if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Request too large' });
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Bad JSON' });
   if (err instanceof URIError || (err.status === 400 && /decode/i.test(err.message))) {   /* a broken %-escape in a route id */

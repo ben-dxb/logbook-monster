@@ -87,7 +87,7 @@ test('every page: fonts from this site only (preloaded before the app), a <main>
   }
   const idx = fs.readFileSync(path.join(pub, 'index.html'), 'utf8');
   const order = [...idx.matchAll(/<script defer src="\/([a-z]+)\.js">/g)].map(m => m[1]);
-  assert.deepStrictEqual(order.slice(0, 3), ['engine', 'app', 'jobs'], 'jobs.js right after app.js');
+  assert.deepStrictEqual(order.slice(0, 4), ['forms', 'engine', 'app', 'jobs'], 'the form kit first, jobs.js right after app.js');
   for (const f of ['archivo-latin-v5.woff2', 'archivo-latin-ext-v5.woff2', 'OFL.txt']) assert.ok(fs.existsSync(path.join(pub, 'fonts', f)), f);
   for (const f of ['login.html', 'invite.html']) {
     const html = fs.readFileSync(path.join(pub, f), 'utf8');

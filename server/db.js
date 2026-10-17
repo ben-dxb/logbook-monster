@@ -343,6 +343,15 @@ if (!db.prepare('PRAGMA table_info(shares)').all().some(c => c.name === 'reminde
 }
 
 /* Added later: the security log (server/audit.js). No foreign keys: a removed account's rows stay, to show who removed it. */
+/* Emails nobody waits on (mail.notify): kept until sent, or dropped once too old (server/mail.js). Times in ms. */
+db.exec(`CREATE TABLE IF NOT EXISTS outbox (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  msg        TEXT NOT NULL,
+  tries      INTEGER NOT NULL DEFAULT 0,
+  next_at    INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+)`);
+db.exec('CREATE INDEX IF NOT EXISTS outbox_next ON outbox(next_at)');
 db.exec(`CREATE TABLE IF NOT EXISTS audit (
   id       INTEGER PRIMARY KEY AUTOINCREMENT,
   at       TEXT NOT NULL,

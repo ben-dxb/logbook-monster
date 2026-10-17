@@ -2,7 +2,8 @@
 /* Outgoing email (invites, notifications) over SMTP. The settings live in app_config and are edited
    on the Admin page; SMTP_* values in .env are the fallback. The password never leaves the server. */
 const net = require('node:net');
-const dns = require('node:dns').promises;
+const crypto = require('node:crypto');
+const dns = require('node:dns');
 const nodemailer = require('nodemailer');
 const db = require('./db');
 const config = require('./config');
@@ -32,14 +33,38 @@ function internal(ip) {
   return !v || INTERNAL.check(ip, v === 6 ? 'ipv6' : 'ipv4');
 }
 const allowed = host => config.smtpAllowHosts.includes(String(host).toLowerCase());
-const refuse = (msg, status) => Object.assign(new Error(msg), { status });
+const refuse = (msg, status, code) => Object.assign(new Error(msg), { status, code });
+
+/* How long sending may take (ms): the name lookup, each read from the server, and the whole send (queue, connect and message). */
+const LIMITS = { dns: 5000, socket: 15000, send: 30000, dnsKeep: 5 * 60 * 1000 };
+/* A name is looked up over DNS with a time limit (c-ares: not on the thread pool, so a dead DNS server can't block file reads);
+   one DNS doesn't know (a hosts-file name such as localhost) goes through the system's lookup, also timed. Kept 5 minutes. */
+const resolver = new dns.promises.Resolver({ timeout: LIMITS.dns, tries: 1 });
+const looked = new Map();   /* host -> { at, addrs } */
+const timed = (p, ms) => {
+  let t;
+  return Promise.race([p, new Promise((_, no) => { t = setTimeout(() => no(Object.assign(new Error('DNS lookup timed out'), { code: 'ETIMEOUT' })), ms); })]).finally(() => clearTimeout(t));
+};
+async function lookup(host) {
+  const hit = looked.get(host);
+  if (hit && Date.now() - hit.at < LIMITS.dnsKeep) return hit.addrs;
+  const both = await timed(Promise.allSettled([resolver.resolve4(host), resolver.resolve6(host)]), LIMITS.dns + 500);
+  let addrs = both.flatMap(r => (r.status === 'fulfilled' ? r.value : []));
+  if (!addrs.length) {
+    if (both.some(r => r.reason && ['ETIMEOUT', 'ECONNREFUSED', 'ESERVFAIL'].includes(r.reason.code))) throw Object.assign(new Error('DNS didn’t answer'), { code: 'ETIMEOUT' });
+    addrs = (await timed(dns.promises.lookup(host, { all: true, verbatim: true }), LIMITS.dns)).map(a => a.address);
+  }
+  if (looked.size > 100) looked.clear();
+  looked.set(host, { at: Date.now(), addrs });
+  return addrs;
+}
 /* The address to connect to. Throws (400) on an internal one; `soft` lets a name that doesn't resolve through (checked again at send). */
 async function resolve(host, soft) {
   let addrs;
   if (net.isIP(host)) addrs = [host];
   else {
-    try { addrs = (await dns.lookup(host, { all: true, verbatim: true })).map(a => a.address); }
-    catch { if (soft) return null; throw refuse('Couldn’t find that mail server – check the server name', 502); }
+    try { addrs = await lookup(host); }
+    catch { if (soft) return null; throw refuse('Couldn’t find that mail server – check the server name', 502, 'EDNS'); }
   }
   const ok = allowed(host);
   if (!addrs.length || (!ok && addrs.some(internal))) throw refuse('That mail server is on a private or internal network address, which isn’t allowed', 400);
@@ -118,6 +143,7 @@ async function save(body) {
     else { for (const k of ['pass', 'passSealed', 'passId', 'old', 'oldSealed', 'oldId', 'oldUntil']) delete s[k]; creds.forget('SMTP'); }
   }
   q.put.run(sealed(s));
+  looked.clear(); breaker.reset();   /* new settings get a fresh look */
   return status();
 }
 /* Google shows app passwords in groups of four ("abcd efgh ijkl mnop"); the spaces aren't part of it. */
@@ -174,7 +200,7 @@ function transportOptions(c, to) {
     host: to.addr, port: c.port, secure: c.secure, requireTLS: !c.secure && !to.loopback, tls: { minVersion: 'TLSv1.2' },
     ...(net.isIP(c.host) ? {} : { servername: c.host }),
     auth: c.user ? { user: c.user, pass: c.pass } : undefined,
-    connectionTimeout: 15000, greetingTimeout: 10000, socketTimeout: 20000,
+    connectionTimeout: 15000, greetingTimeout: 10000, socketTimeout: LIMITS.socket,
   };
 }
 /* A short reason for the browser; the server's own reply only goes to the log. */
@@ -188,24 +214,110 @@ function reason(err) {
   return 'it refused the message';
 }
 
+/* One pooled connection set (2 at most) per set of settings, made again when they change. */
+let pool = null;
+function transport(opts) {
+  const sig = crypto.createHash('sha256').update(JSON.stringify(opts)).digest('hex');
+  if (pool && pool.sig === sig) return pool.t;
+  if (pool) pool.t.close();
+  pool = { sig, t: nodemailer.createTransport({ ...opts, pool: true, maxConnections: 2, maxMessages: 100 }) };
+  return pool.t;
+}
+function drop(t) { if (pool && pool.t === t) pool = null; try { t.close(); } catch {} }
+
+/* A mail server that can't be reached (3 sends in a row that couldn't connect, timed out or whose name didn't resolve) is
+   left alone for 2 minutes, doubling to 30 while the one test send let through after that fails too: meanwhile sends fail at
+   once (503) – the test email says so straight away, an invite returns its link, notifications wait in the outbox. */
+const DOWN = ['ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'EDNS', 'ECONNREFUSED', 'ETIMEOUT', 'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH'];
+const breaker = {
+  fails: 0, until: 0, wait: 2 * 60 * 1000, probing: false,
+  open() { return this.until > Date.now() || (this.fails >= 3 && this.probing); },
+  /* true for the one send let through to see whether it's back */
+  enter() {
+    if (this.open()) throw refuse('The mail server isn’t answering – try again in a few minutes', 503);
+    if (this.fails >= 3) { this.probing = true; return true; }
+    return false;
+  },
+  result(err, probe) {
+    if (probe) this.probing = false;
+    if (!err || !DOWN.includes(err.code)) { if (this.fails >= 3) console.log('Mail server answering again'); this.fails = 0; this.until = 0; this.wait = 2 * 60 * 1000; return; }
+    this.fails++;
+    if (probe) this.wait = Math.min(this.wait * 2, 30 * 60 * 1000);
+    if (this.fails >= 3) { this.until = Date.now() + this.wait; console.error(`Mail server not answering (${err.code}): leaving it ${Math.round(this.wait / 60000)} min`); }
+  },
+  reset() { Object.assign(this, { fails: 0, until: 0, wait: 2 * 60 * 1000, probing: false }); },
+};
+
 /* Send one email. Throws with a readable message if email isn't set up or the server refuses it. */
 async function send({ to, subject, text, replyTo }) {
   const c = current();
   if (!c.host || !c.from) { const e = new Error('Email isn’t set up yet – add the sending account on the Admin page.'); e.status = 409; throw e; }
   if (!EMAIL_RE.test(String(to || ''))) { const e = new Error('That isn’t a valid email address'); e.status = 400; throw e; }
-  const at = await resolve(c.host);
+  const probe = breaker.enter();
+  let at;
+  try { at = await resolve(c.host); } catch (e) { breaker.result(e.code ? e : null, probe); throw e; }
+  const t = transport(transportOptions(c, at));
+  let timer;
   try {
-    await nodemailer.createTransport(transportOptions(c, at)).sendMail({ from: { name: c.fromName, address: c.from }, to, subject, text, replyTo });
+    await Promise.race([
+      t.sendMail({ from: { name: c.fromName, address: c.from }, to, subject, text, replyTo }),
+      new Promise((_, no) => { timer = setTimeout(() => { drop(t); no(Object.assign(new Error(`no answer within ${LIMITS.send / 1000} s`), { code: 'ETIMEDOUT' })); }, LIMITS.send); }),
+    ]);
+    breaker.result(null, probe);
   } catch (err) {
+    breaker.result(err, probe);
+    if (DOWN.includes(err.code)) drop(t);   /* a pooled connection that broke isn't used again */
     console.error('Email sending failed:', String(err.response || err.message || err).slice(0, 300));
-    throw refuse(`The mail server didn’t accept it: ${reason(err)}.`, 502);
-  }
+    throw refuse(`The mail server didn’t accept it: ${reason(err)}.`, 502, err.code);
+  } finally { clearTimeout(timer); }
 }
 
-/* For notifications nobody is waiting on: log and carry on if it fails. */
-function notify(msg) {
+/* For notifications nobody is waiting on: kept in the outbox table and sent there, 2 at a time, tried again after 1, 5, 15 and
+   then every 60 minutes until sent or `keep` ms old (24 hours: security notices; JOB_KEEP for an AI read being ready). Ones
+   left from before a restart go out after it. */
+const MIN = 60 * 1000, KEEP = 24 * 60 * MIN, JOB_KEEP = 6 * 60 * MIN, RETRY = [1, 5, 15, 60].map(m => m * MIN);
+const qo = {
+  add: db.prepare('INSERT INTO outbox (msg, next_at, expires_at) VALUES (?, ?, ?)'),
+  due: db.prepare('SELECT id, msg, tries, expires_at FROM outbox WHERE next_at <= ? ORDER BY next_at, id LIMIT 8'),
+  done: db.prepare('DELETE FROM outbox WHERE id = ?'),
+  later: db.prepare('UPDATE outbox SET tries = ?, next_at = ? WHERE id = ?'),
+  old: db.prepare('DELETE FROM outbox WHERE expires_at <= ?'),
+  all: db.prepare('SELECT id, tries, next_at, expires_at FROM outbox ORDER BY id'),
+};
+const sending = new Set();
+function notify(msg, { keep = KEEP } = {}) {
   if (!configured()) return;
-  send(msg).catch(e => console.error('Email notification failed:', e.message));
+  const now = Date.now(), { to, subject, text, replyTo } = msg;
+  try { qo.add.run(JSON.stringify({ to, subject, text, replyTo }), now, now + keep); }
+  catch (e) { console.error('Email notification couldn’t be queued:', e.message); return; }
+  drain();
 }
+function drain() {
+  try {
+    const now = Date.now(), gone = qo.old.run(now).changes;
+    if (gone) console.error(`Dropped ${gone} email notification${gone === 1 ? '' : 's'} that couldn’t be sent in time`);
+    if (breaker.open() || !configured()) return;
+    for (const row of qo.due.all(now)) {
+      if (sending.size >= (breaker.fails >= 3 ? 1 : 2)) break;
+      if (sending.has(row.id)) continue;
+      sending.add(row.id);
+      let m;
+      try { m = JSON.parse(row.msg); } catch { m = null; }
+      let next = true;   /* a write here that fails (a full disk) waits for the timer rather than send the same row again at once */
+      Promise.resolve(m ? send(m) : Promise.reject(refuse('unreadable', 400))).then(() => qo.done.run(row.id), e => {
+        const when = Date.now();
+        if (e.status === 400 || e.status === 409) { console.error('Email notification dropped:', e.message); return qo.done.run(row.id); }
+        if (e.status === 503) return qo.later.run(row.tries, Math.max(breaker.until, when + MIN), row.id);   /* not tried: the breaker is open */
+        const tries = row.tries + 1, next = when + RETRY[Math.min(tries, RETRY.length) - 1];
+        if (next >= row.expires_at) { console.error('Email notification dropped after', tries, 'tries:', e.message); return qo.done.run(row.id); }
+        qo.later.run(tries, next, row.id);
+      }).catch(e => { next = false; console.error('Email outbox:', e.message); }).finally(() => { sending.delete(row.id); if (next) setImmediate(drain); });
+    }
+  } catch (e) { console.error('Email outbox:', e.message); }
+}
+setInterval(drain, 30 * 1000).unref();
+setTimeout(drain, 2000).unref();   /* what was left from before a restart */
+const outbox = { drain, rows: () => qo.all.all(), sending };
+const _test = { resolver, looked };
 
-module.exports = { reason, status, save, saveNext, promote, verify, slots, send, notify, configured, current, EMAIL_RE, internal, transportOptions };
+module.exports = { reason, status, save, saveNext, promote, verify, slots, send, notify, configured, current, EMAIL_RE, internal, transportOptions, LIMITS, breaker, outbox, JOB_KEEP, RETRY, _test };

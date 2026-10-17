@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="/base.css">
 <link rel="stylesheet" href="/app.css">
 <!-- deferred: they run in this order once the page is parsed, before DOMContentLoaded (start-up in app.js waits for it) -->
+<script defer src="/forms.js"></script>
 <script defer src="/engine.js"></script>
 <script defer src="/app.js"></script>
 <script defer src="/jobs.js"></script>
@@ -96,7 +97,7 @@
     <nav id="tabs" aria-label="This week"></nav>
     <div class="daystate">
       <div id="status" class="status" role="status"></div>
-      <label class="wt">Weight <input id="wt" type="number" inputmode="decimal" min="20" max="400" step="0.1" aria-label="Weight in kg"><em>kg</em><span id="wtdelta" class="sub"></span></label>
+      <label class="wt">Weight <input id="wt" type="number" inputmode="decimal" min="20" max="400" step="0.1" aria-label="Weight in kg" data-keep data-unit="kg"><em>kg</em><span id="wtdelta" class="sub"></span></label>
     </div>
     <div class="sticky">
       <div id="sum"></div>
@@ -124,14 +125,14 @@
       <form id="snackform" class="snackf">
         <label class="f sn"><span class="lbl">Snack</span><select id="sn"></select></label>
         <label class="f sq"><span class="lbl" id="su">How many</span><input id="sq" type="number" inputmode="decimal" min="0" step="1" value="1"></label>
-        <button class="btn" type="submit">Add</button>
+        <button class="btn" type="submit">Add snack</button>
       </form>
       <details><summary>Snack values (tap to check or correct)</summary><div id="snackvals"></div></details>
       <h3 class="lbl">From the food library</h3>
       <form id="libform" class="snackf" hidden>
         <label class="f sn"><span class="lbl">Food</span><select id="ln"></select></label>
         <label class="f sq"><span class="lbl" id="lu">Grams</span><input id="lq" type="number" inputmode="decimal" min="0" step="1" value="100"></label>
-        <button class="btn" type="submit">Add</button>
+        <button class="btn" type="submit">Add food</button>
       </form>
       <p id="libnone" class="empty">Nothing in the food library yet. <a href="#foods/new">Add a food</a>, or tick “Save to my food library” below.</p>
       <h3 class="lbl">Something else</h3>
@@ -141,7 +142,7 @@
         <label class="f"><span class="lbl">Protein</span><input id="o-p" type="number" inputmode="decimal" min="0" step="0.1"></label>
         <label class="f"><span class="lbl">Carbs</span><input id="o-c" type="number" inputmode="decimal" min="0" step="0.1"></label>
         <label class="f"><span class="lbl">Fat</span><input id="o-f" type="number" inputmode="decimal" min="0" step="0.1"></label>
-        <button class="btn" type="submit">Add</button>
+        <button class="btn" type="submit">Add item</button>
         <label class="tog osave"><input type="checkbox" id="o-save"> Save to my food library</label>
       </form>
       <div id="offlist"></div>
@@ -181,7 +182,7 @@
       <span><i class="dot over">▲</i> Over</span>
       <span><i class="dot under">▼</i> Under</span>
     </div>
-    <div id="cal" class="cal" role="grid" aria-labelledby="mtitle"></div>
+    <div id="cal" class="cal"></div>
     <div id="msum" class="msum"></div>
     <div id="hbad" class="note hbad" role="note" hidden></div>
   </section>
@@ -255,6 +256,7 @@
       <span class="sb"><button class="ghost" type="button" data-ad="discard" id="ad-discard" hidden>Discard changes</button>
         <button class="btn" type="button" data-ad="save" id="ad-save" disabled>Save my plan</button></span>
       <p id="ad-fromhint" class="sub adfromhint"></p>
+      <div id="ad-saveerr" class="ferrsum adsaveerr" role="alert" hidden></div>
     </div>
     <section class="panel admine" aria-labelledby="ad-ph">
       <h2 id="ad-ph">My meal plan</h2>
@@ -441,7 +443,7 @@
         <label class="f"><span class="lbl">Port</span><input id="ad-m-port" type="number" inputmode="numeric" min="1" max="65535" placeholder="465"></label>
         <label class="f"><span class="lbl">Security</span><select id="ad-m-tls"><option value="1">Implicit TLS (port 465)</option><option value="0">STARTTLS (port 587)</option></select></label>
         <label class="f"><span class="lbl">Username (blank = send-from address)</span><input id="ad-m-user" autocomplete="off" spellcheck="false"></label>
-        <label class="f"><span class="lbl">Password / app password</span><input id="ad-m-pass" type="password" autocomplete="new-password" spellcheck="false"></label>
+        <label class="f"><span class="lbl">Password / app password</span><input id="ad-m-pass" type="password" autocomplete="off" spellcheck="false"></label>
         <div class="admailact"><button class="btn" type="submit">Save email settings</button>
           <button class="ghost" type="button" id="ad-m-del" hidden>Remove saved settings</button></div>
       </form>
