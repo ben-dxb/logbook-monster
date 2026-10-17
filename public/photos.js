@@ -8,8 +8,9 @@
    each dated from its own data (ExifDate, exifdate.js) unless the person turns that off; the date picked is used for
    any without one. Uses helpers from app.js and gym.js (gHead, gEmpty). */
 
-let PHOTOS=null, PPOSES=['front','left','right','back','other'], PSTYLES=[], PWT={};
+let PHOTOS=null, PPOSES=['front','left','right','back','other'], PSTYLES=[];
 let pPose='all', pDate=todayStr(), pUpPose='other', pMsg='', pTok=0, pBusy=false;
+let pUpSay='', pUpErr='';   /* an upload's progress line and its error: kept here so leaving Photos and coming back still shows them */
 let pSel=false, pPick=[];                          /* picking photos to compare, and the ones picked (up to 2) */
 let pAi=false, pAiBusy=false;                     /* AI set up (an admin's OpenRouter key), and a "Tag with AI" run going */
 let pUseExif=true;                                /* date each photo from its own data (the date picked for any without one) */
@@ -31,20 +32,19 @@ const pStyleName=s=>P_STYLE[s]||s;
 const pStyleIn=(pose,s)=>s.startsWith(pose+'_')?pStyleName(s).replace(/^\w+ (.)/,(m,c)=>c.toUpperCase()):pStyleName(s);
 /* "Front · Most muscular", or just the pose when there's no pose type */
 const pLabel=p=>pPoseName(p.pose)+(p.style?' · '+pStyleIn(p.pose,p.style):'');
-function pSort(){PHOTOS.sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id);}
+function pSort(){if(PHOTOS)PHOTOS.sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id);}
 async function pLoad(){
   const [r,w]=await Promise.all([api('GET','/api/photos'),api('GET','/api/weights')]);
   PHOTOS=(r&&r.photos)||[];if(r&&r.poses)PPOSES=r.poses;if(r&&r.styles)PSTYLES=r.styles;pAi=!!(r&&r.ai);pSort();
-  PWT={};(w||[]).forEach(x=>{PWT[x.date]=x.kg;});
+  if(w){Object.keys(WEIGHTS).forEach(d=>{delete WEIGHTS[d];});w.forEach(x=>{WEIGHTS[x.date]=x.kg;});}   /* the app's own copy, so a weigh-in cleared on the Daily Tracker is gone here too */
 }
 const pYmd=d=>parse(d).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});
 const pDayGap=(a,b)=>Math.round((parse(b)-parse(a))/864e5);
 
 /* ---------- bodyweight ---------- */
-/* every weigh-in, oldest first: the ones loaded here plus any logged since (WEIGHTS in app.js) */
+/* every weigh-in, oldest first (WEIGHTS in app.js: refreshed when Photos loads, kept up to date by the Daily Tracker) */
 function pWeights(){
-  const all={...PWT};Object.keys(WEIGHTS).forEach(d=>{if(WEIGHTS[d]!=null)all[d]=WEIGHTS[d];});
-  return Object.keys(all).sort().map(d=>({date:d,kg:all[d]}));
+  return Object.keys(WEIGHTS).filter(d=>WEIGHTS[d]!=null).sort().map(d=>({date:d,kg:WEIGHTS[d]}));
 }
 /* the weight on a day: that day's weigh-in, else the closest within P_NEAR_DAYS (marked near) */
 function pWeightOn(d,ws){
@@ -102,7 +102,7 @@ function pStyleOptions(sel){
 /* the AI's pose for a photo; save stores it too, but only while the photo still has the pose it had when asked (seen) or the AI's */
 /* the AI only ever gets the small version: a photo without one (from before thumbnails) gets one first */
 async function pAskAi(id,save,seen){
-  const p=PHOTOS.find(x=>x.id===id);
+  const p=(PHOTOS||[]).find(x=>x.id===id);
   if(p&&!p.tv){
     try{const b=await(await fetch(pSrc(p),{credentials:'same-origin'})).blob();
       const t=await pSend('PUT',`/api/photos/${id}/thumb`,await pShrink(b,P_THUMB,0.8));const i=PHOTOS.findIndex(x=>x.id===id);if(i>=0)PHOTOS[i]=t;}
@@ -123,8 +123,8 @@ function pCatalogPage(){
       <label class="tog swide"><input type="checkbox" id="p-exif"${pUseExif?' checked':''}> Date each photo from its own data (when it was taken)</label>
       <label class="f swide"><span class="lbl">Note (optional)</span><input id="p-note" maxlength="200" placeholder="e.g. morning, fasted, after the cut"></label>
       <p id="p-pick" class="sub swide" role="status"></p>
-      <p id="p-err" class="aderr swide" role="alert" hidden></p>
-      <div class="factions swide"><button class="btn" type="submit">Upload</button><span id="p-state" class="sub" role="status"></span></div>
+      <p id="p-err" class="aderr swide" role="alert"${pUpErr?'':' hidden'}>${esc(pUpErr)}</p>
+      <div class="factions swide"><button class="btn" type="submit"${pBusy?' disabled':''}>Upload</button><span id="p-state" class="sub" role="status">${pBusy?esc(pUpSay):''}</span></div>
       <p class="sub swide">Pick as many as you like, up to 5 GB at a time. Only you can see your photos. They’re made smaller before upload and the camera’s details, location included, are left out.${pAi?' With “Let AI tell”, the small version of each photo goes to the AI service set up for this app to pick the pose.':' They go in under Other – open a photo to set its pose.'}</p>
     </form>
     <div class="ptools">
@@ -139,7 +139,7 @@ function pCatalogPage(){
         <label class="tog"><input type="checkbox" id="p-near"${pNear?' checked':''}${latest?'':' disabled'}> Same weight as</label>
         <label class="f"><span class="lbl">Weight kg</span><input id="p-nearkg" type="number" inputmode="decimal" min="20" max="400" step="0.1" value="${esc(pNearKg)}" placeholder="${latest?latest.kg:''}"${latest?'':' disabled'}></label>
         <label class="f"><span class="lbl">Within</span><select id="p-tol"${latest?'':' disabled'}>${tols}</select></label>
-        <span class="sub">${latest?`Your latest weigh-in: <b>${esc(latest.kg)} kg</b> on ${esc(fmtShort(latest.date))}.`:'Log your weight on the Weight page to filter photos by bodyweight.'}</span>
+        <span class="sub">${latest?`Your latest weigh-in: <b>${esc(latest.kg)} kg</b> on ${esc(fmtShort(latest.date))}.`:'Log your weight on the <a href="#day">Daily Tracker</a> to filter photos by bodyweight.'}</span>
       </div>
     </div>
     <div id="p-selbar" class="psel" role="status"${pSel?'':' hidden'}></div>
@@ -252,13 +252,15 @@ async function pPicked(){
     const own=ds.filter(d=>d.own), days=new Set(own.map(d=>d.date)).size, none=files.length-own.length;
     if(own.length){const sorted=own.map(d=>d.date).sort();
       txt+=` ${own.length===files.length?(files.length===1?'Taken':'All taken'):own.length+' taken'} ${days===1?'on '+fmtShort(sorted[0]):`over ${days} days, ${fmtShort(sorted[0])} to ${fmtShort(sorted[sorted.length-1])}`}.`;}
-    if(none)txt+=` ${none===files.length?(none===1?'It has':'None have'):none+(none===1?' has':' have')} no date of ${none===1&&files.length===1?'its':'their'} own – ${none===1?'it':'they'}’ll get the date picked.`;
+    if(none)txt+=` ${none===files.length?(none===1?'It has':'None have'):none+(none===1?' has':' have')} no date of ${none===1?'its':'their'} own – ${none===1?'it':'they'}’ll get the date picked.`;
   }
   el.textContent=txt;
 }
 async function pUpload(form){
-  if(pBusy)return;
-  const err=$('#p-err'), st=$('#p-state'), btn=form.querySelector('button[type=submit]');
+  /* the page can be drawn again while this runs (leave Photos and come back): always write to the form on screen now */
+  const showErr=t=>{pUpErr=t;const e=$('#p-err');if(e){e.textContent=t;e.hidden=!t;}};
+  if(pBusy){showErr('An upload is still running – wait for it to finish, then upload these.');return;}
+  const err={set textContent(t){showErr(t);},set hidden(h){if(h)showErr('');},get hidden(){return !pUpErr;}}, btn=form.querySelector('button[type=submit]');
   const files=[...$('#p-file').files], date=$('#p-date').value, pick=$('#p-pose')?$('#p-pose').value:'other', note=$('#p-note').value.trim();
   const byAi=pick==='ai', pose=byAi?'other':pick, useExif=pUseExif;
   const unset=byAi||pick==='other';                 /* left as Other (the default, and all there is with AI off) – not set by hand, so "Tag poses with AI" takes them later */
@@ -269,7 +271,7 @@ async function pUpload(form){
   pBusy=true;btn.disabled=true;pDate=date;if(pAi)pUpPose=pick;
   const n=files.length, many=n>1, fails=[], dates=new Set();
   let done=0, started=0, aiMiss=0, own=0, stop=null;
-  const say=t=>{st.textContent=t;};
+  const say=t=>{pUpSay=t;const s=$('#p-state');if(s)s.textContent=t;};
   try{
     say(useExif?'Reading the photos’ dates…':'Uploading…');
     const when=await pDates(files,date,useExif);
@@ -281,9 +283,9 @@ async function pUpload(form){
         if(stop)return;
         let p=await pSend('POST',`/api/photos?${new URLSearchParams({date:d,pose,...(unset?{ai:'1'}:{})})}`,big,note?{'x-photo-note':encodeURIComponent(note)}:{});   /* the note in a header: never in a logged URL */
         try{p=await pSend('PUT',`/api/photos/${p.id}/thumb`,small);}catch(e){if(e.signedOut)throw e;}   /* the catalog falls back to the full picture */
-        PHOTOS.push(p);done++;dates.add(d);if(when[i].own)own++;
+        if(PHOTOS)PHOTOS.push(p);done++;   /* null: the list was dropped meanwhile (a range delete) and loads again */dates.add(d);if(when[i].own)own++;
         if(byAi){
-          try{const a=await pAskAi(p.id,true,p);const k=PHOTOS.findIndex(x=>x.id===p.id);if(k>=0)PHOTOS[k]=a.photo;}
+          try{const a=await pAskAi(p.id,true,p);const k=(PHOTOS||[]).findIndex(x=>x.id===p.id);if(k>=0)PHOTOS[k]=a.photo;}
           catch(e){if(e.signedOut)throw e;aiMiss++;}   /* stays "other", not counted as set by hand */
         }
       }catch(e){
@@ -306,11 +308,12 @@ async function pUpload(form){
   }catch(e){
     if(e.signedOut)return;
     err.textContent=(done?`Added ${done} of ${n}. `:'')+e.message;err.hidden=false;
-  }finally{pBusy=false;}
+  }finally{pBusy=false;pUpSay='';}
   pSort();
   if(view!=='photos'||location.hash.replace(/^#/,'').split('/')[1])return;
-  if(err.hidden){form.reset();$('#p-date').value=pDate;if($('#p-pose'))$('#p-pose').value=pUpPose;$('#p-exif').checked=pUseExif;$('#p-pick').textContent='';}
-  st.textContent='';btn.disabled=false;renderPhotoList();
+  const f=$('#p-form');if(!f)return;
+  if(err.hidden){f.reset();$('#p-date').value=pDate;if($('#p-pose'))$('#p-pose').value=pUpPose;$('#p-exif').checked=pUseExif;$('#p-pick').textContent='';}
+  $('#p-state').textContent='';f.querySelector('button[type=submit]').disabled=false;renderPhotoList();
 }
 
 /* ---------- one photo ---------- */

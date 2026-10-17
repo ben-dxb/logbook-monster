@@ -8,7 +8,7 @@
    Uses helpers from app.js. */
 
 const AD_BOXES=[['p','Protein'],['c','Carbs'],['x','Additional fats']];
-const AD_FREE=[['sauce','Sauces','passata, tomato paste and any food marked Sauce'],['veg','Green veg','broccoli, spinach and any food marked Green veg']];
+const AD_FREE=[['sauce','Sauces','any food marked Sauce'],['veg','Green veg','any food marked Green veg']];
 const AD_FREE_OPTS=[['','No'],['sauce','Sauce'],['veg','Green veg']];
 const AD_LEGACY={T:'Training',R:'Rest',S:'Saturday training'};   /* day types before templates had names */
 const AD_MAX_TPL=12;
@@ -16,6 +16,9 @@ let AD=null, AD_BASE=null, adSaved='', adType=null, adMsg='', adErrs=[], adBusy=
 let DEFS={mine:null,myVersions:[]};          /* your plan from the server: the change in effect today and every dated change */
 let DEFS_ON, adVer=null, adFrom='', adFromToday=false;          /* plan change applied now; the one being edited; the date a save takes effect from ('' = from the start) */
 let adAi=null, adNotes=[], adSuper=false;
+const LOADERR={};   /* a part of the page whose data didn't load: its message, shown in its place */
+const loadErr=(what,k)=>`<p class="aderr" role="alert">Couldn’t load ${what}: ${esc(LOADERR[k])}. Open this tab again or reload the page to try again.</p>`;
+const loadTry=async(k,fn)=>{try{const v=await fn();delete LOADERR[k];return v;}catch(e){if(e.signedOut)throw e;LOADERR[k]=e.message||'Something went wrong';return null;}};
 const AD_TABS=['ai','people','email','options','log'];
 let adTab='ai';                              /* the super admin tab shown */
 const adOpen=new Set();                      /* food editors left open */
@@ -29,7 +32,7 @@ function useDefs(date,force){const v=mineOn(date);if(force||v!==DEFS_ON){DEFS_ON
 function typeOn(date){const v=mineOn(date),ids=((v&&v.templates)||[]).map(t=>t.id),s=v&&v.schedule,t=Array.isArray(s)?s[wdOf(date)]:null;
   return ids.includes(t)?t:ids[0]||null;}
 function tnameOn(date,id){const v=mineOn(date),t=((v&&v.templates)||[]).find(x=>x.id===id);return t?t.name:AD_LEGACY[id]||'';}
-function freshOn(date,t){useDefs(date);return freshDay(wdOf(date),t);}
+function freshOn(date,t){useDefs(date);const D=freshDay(wdOf(date),t);libSync(D,date);return D;}   /* with its copy of the plan foods, as persist() keeps it */
 function adApplyInUse(){useDefs(S.cur,true);}
 function setDefaults(d){DEFS=d||{mine:null,myVersions:[]};adApplyInUse();}
 const adEmpty=v=>!v||(!(v.templates||[]).length&&!Object.keys(v.foods||{}).length&&!Object.keys(v.free||{}).length);
@@ -103,7 +106,10 @@ function renderAdmin(){
   $('#v-admin').classList.toggle('mine',mine);
   $('#v-admin').classList.toggle('nofiles',!planFiles);$('#ad-planfiles').checked=planFiles;
   if(!adAi)adAiLoad();
-  if(!mine){if(!adSuper){adSuper=true;auLoad();amLoad();aoLoad();}if(adTab==='log'&&!LG)lgLoad();adTabs();return;}
+  if(!mine){if(!adSuper){adSuper=true;auLoad();amLoad();aoLoad();}
+    else{if(LOADERR.au)auLoad();if(LOADERR.am)amLoad();if(LOADERR.ao)aoLoad();}   /* a part that failed to load tries again when you come back */
+    if(LOADERR.ai)adAiLoad();
+    if(adTab==='log'&&!LG)lgLoad();adTabs();return;}
   if(!AD){adPick();adLoad();}
   if(!SH)shLoad();
   if(!ML)mlLoad();
@@ -312,7 +318,8 @@ $('#ad-planfiles').addEventListener('change',async e=>{
 });
 /* super admin: private AI providers only, and the daily AI caps (0 = no limit) */
 function aoFill(o){$('#ad-aiprivate').checked=o.aiPrivate!==false;$('#ad-admintotp').checked=!!o.adminTotp;$('#ad-capuser').value=o.aiDailyUser;$('#ad-capall').value=o.aiDailyAll;}
-async function aoLoad(){try{aoFill(await api('GET','/api/admin/options'));}catch(e){}}
+async function aoLoad(){const o=await loadTry('ao',()=>api('GET','/api/admin/options')).catch(()=>null);if(o)aoFill(o);
+  $('#ad-capmsg').innerHTML=LOADERR.ao?loadErr('the options','ao'):'';}
 $('#ad-aiprivate').addEventListener('change',async e=>{
   const el=e.target;el.disabled=true;
   try{aoFill(await api('PUT','/api/admin/options',{aiPrivate:el.checked}));}
@@ -370,7 +377,7 @@ function adDownload(name,text,type){
 /* ---------- plan files: CSV (one row per food) or JSON ---------- */
 const CSV_COLS=['day_type','meal','meal_name','box','food','grams','locked','note','food_name'];
 /* a cell starting with = + - @ (or tab / CR) would run as a formula in Excel or Sheets: keep it text */
-function csvCell(v){v=String(v==null?'':v);if(/^[=+\-@\t\r]/.test(v))v="'"+v;return /[",\n\r]/.test(v)?`"${v.replace(/"/g,'""')}"`:v;}
+function csvCell(v){v=String(v==null?'':v);if(/^[=+\-@\t\r]/.test(v))v="'"+v;return /[",;\t\n\r]/.test(v)?`"${v.replace(/"/g,'""')}"`:v;}
 function planCsv(plan){
   const rows=[CSV_COLS.join(',')];
   AD.templates.forEach(({id,name})=>(plan[id]||[]).forEach(m=>{let first=true;
@@ -453,7 +460,7 @@ function adTakeTemplates(list){
 /* load a plan-shaped object (a JSON file or the AI's reading of a PDF) into the draft; returns the templates it filled */
 function adMeals(list){
   const items=v=>Array.isArray(v)?v.filter(i=>i&&typeof i==='object'&&i.f!=null).map(adCleanItem):[];
-  return list.filter(m=>m&&typeof m==='object').map(m=>({id:String(m.id).slice(0,8),name:String(m.name||'').slice(0,100),...(m.note?{note:String(m.note).slice(0,200)}:{}),
+  return list.filter(m=>m&&typeof m==='object').map((m,mi)=>({id:String(m.id==null||m.id===''?mi+1:m.id).slice(0,8),   /* no number: its place, as the server does */name:String(m.name||'').slice(0,100),...(m.note?{note:String(m.note).slice(0,200)}:{}),
     p:items(m.p),c:items(m.c),x:items(m.x)}));
 }
 function adApplyJson(j){
@@ -486,7 +493,9 @@ async function adUpload(file){
   const text=await file.text();
   if(/\.json$/i.test(file.name)||/^\s*\{/.test(text)){
     let j;try{j=JSON.parse(text);}catch{adErrs=['That JSON file couldn’t be read.'];renderAdmin();return;}
-    try{adApplyJson(j);}catch(e){adErrs=[e.message];adMsg=`${file.name} wasn’t loaded:`;renderAdmin();return;}
+    let got;try{got=adApplyJson(j);}catch(e){adErrs=[e.message];adMsg=`${file.name} wasn’t loaded:`;renderAdmin();return;}
+    if(!got.length&&!(j&&typeof j==='object'&&!Array.isArray(j)&&(j.foods||j.schedule||j.targets||j.templates))){
+      adErrs=[`It has no meals for a day template (${AD.templates.map(t=>t.id).join(', ')||'none yet'}), foods, week or targets.`];adMsg=`${file.name} had nothing to load:`;renderAdmin();return;}
     adMsg=`Loaded ${file.name}. Check it below, then save.`;
   }else{
     const {plan,errs,made}=csvToPlan(text);
@@ -506,8 +515,9 @@ async function adUpload(file){
 /* Only the super admin sees the AI settings (key, default model, a model per task); an account just needs to know whether reading is on. */
 async function adAiLoad(){
   adAi={configured:aiOn};
-  if(isAdmin){try{adAi=await api('GET','/api/admin/ai');aiOn=adAi.configured;}catch(e){}}
+  if(isAdmin){const r=await loadTry('ai',()=>api('GET','/api/admin/ai')).catch(()=>null);if(r){adAi=r;aiOn=r.configured;}}
   adAiRender();
+  if(LOADERR.ai)$('#ad-aikeystate').innerHTML=loadErr('the AI settings','ai');
 }
 function adAiRender(){
   if(!adAi)return;
@@ -677,7 +687,8 @@ function clRender(){
   $('#ad-clsave').disabled=!clDirty;
 }
 function clChanged(){clDirty=true;$('#ad-clsave').disabled=false;$('#ad-clmsg').textContent='';}
-function clNewId(){let n=1;while(clDraft.some(x=>x.id==='c'+n))n++;return 'c'+n;}
+/* never an id used before (a removed item's ticks stay under its id, so a new item must not take it over) */
+function clNewId(){let id;do id='c'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);while(clDraft.some(x=>x.id===id));return id;}
 $('#v-admin').addEventListener('click',async e=>{
   const b=e.target.closest('button[data-cl]');if(!b||!clDraft)return;
   const a=b.dataset.cl, i=+b.dataset.i;
@@ -701,11 +712,11 @@ $('#v-admin').addEventListener('change',e=>{const d=e.target.dataset;if((d.cl===
 /* ---------- Share with your coach: read-only links with no password, live until a time you pick (server/shares.js) ---------- */
 let SH=null, shNew=null;
 const shWhen=iso=>new Date(iso).toLocaleString(undefined,{day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'});
-async function shLoad(){try{SH=(await api('GET','/api/shares')).shares;}catch(e){SH=null;}shRender();}
+async function shLoad(){const r=await loadTry('sh',()=>api('GET','/api/shares')).catch(()=>null);SH=r?r.shares:null;shRender();}
 function shRender(){
   $('#ad-shnew').innerHTML=shNew?`<p class="admsg">Link made – copy it now and send it to your coach. For your safety it isn’t shown again; make a new one if you lose it.</p>
     <div class="adlink"><input id="ad-sh-link" readonly value="${esc(shNew.url)}" aria-label="Coach link"><button type="button" class="ghost" data-sh="copy">Copy link</button>${navigator.share?'<button type="button" class="ghost" data-sh="send">Send…</button>':''}</div>`:'';
-  if(!SH){$('#ad-shares').innerHTML='';return;}
+  if(!SH){$('#ad-shares').innerHTML=LOADERR.sh?loadErr('your coach links','sh'):'';return;}
   $('#ad-shares').innerHTML=SH.length?SH.map(x=>`<div class="aduser"><span class="who"><b>${esc(x.label||'Coach link')}</b>
       <span class="sub">${x.live?`Live until ${esc(shWhen(x.expires))}`:`Ran out ${esc(shWhen(x.expires))}`} · made ${esc(shWhen(x.created))}${x.used?` · last opened ${esc(shWhen(x.used))}`:' · not opened yet'}</span></span>
     <span class="chip ${x.live?'ok':'bad'}">${x.live?'Live':'Ran out'}</span>
@@ -743,12 +754,12 @@ document.addEventListener('click',async e=>{
 let AU=null, auLink=null;
 const AU_STATUS={active:['ok','Active'],invited:['info','Invite sent'],expired:['bad','Invite expired']};
 const auDate=s=>s?new Date(s.replace(' ','T')+'Z').toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}):'';
-async function auLoad(){try{AU=await api('GET','/api/admin/users');}catch(e){AU=null;}auRender();if(LG)lgRender();}
+async function auLoad(){AU=await loadTry('au',()=>api('GET','/api/admin/users')).catch(()=>null);auRender();if(LG)lgRender();}
 function auRender(){
   const m=$('#ad-ivmsg');
   m.innerHTML=auLink?`<p class="admsg">${esc(auLink.msg)}</p>${auLink.error?`<p class="aderr">${esc(auLink.error)} Send them this link yourself:</p>`:''}
     <div class="adlink"><input id="ad-iv-link" readonly value="${esc(auLink.link)}" aria-label="Invite link"><button type="button" class="ghost" data-au="copy">Copy link</button></div>`:'';
-  if(!AU){$('#ad-users').innerHTML='';return;}
+  if(!AU){$('#ad-users').innerHTML=LOADERR.au?loadErr('the accounts','au'):'';return;}
   if(!AU.email&&!auLink)m.innerHTML='<p class="sub">Email isn’t set up yet (see Email below), so you’ll get a link to send yourself.</p>';
   $('#ad-users').innerHTML=AU.users.map(u=>{const [c,t]=AU_STATUS[u.status]||['',''];
     const how=[u.password&&'password',u.google&&'Google'].filter(Boolean).join(' + ');
@@ -775,18 +786,28 @@ document.addEventListener('click',async e=>{
   b.disabled=true;
   try{
     if(a==='resend'){auResult(await api('POST',`/api/admin/users/${u.id}/invite`));}
-    else if(a==='remove'){if(!confirm(`Remove ${u.email}? Their days, history and weights are deleted too. This can’t be undone.`)){b.disabled=false;return;}
+    else if(a==='remove'){if(!confirm(auRemoveText(u))){b.disabled=false;return;}
       await api('DELETE',`/api/admin/users/${u.id}`);auLink=null;}
     await auLoad();
   }catch(err){b.disabled=false;if(!err.signedOut)alert(err.message);}
 });
 
+/* everything removing an account deletes, said plainly – shared foods and supplements leave everyone's library */
+function auRemoveText(u){
+  const n=(k,w)=>`${k} ${w}${k===1?'':'s'}`;
+  return `Remove ${u.email}? Everything in the account is deleted with it: days, history, weights, gym sets and workouts, supplements, checklist, coach links`
+    +(u.photos?` and ${n(u.photos,'progress photo')} (the files too)`:', progress photos')+'.'
+    +(u.shared?`\n\n${u.shared===1?'The food or supplement':`The ${u.shared} foods and supplements`} they shared with everyone will disappear from every other account’s library too.`:'')
+    +'\n\nThis can’t be undone.';
+}
 /* ---------- Email: the account invites and notifications are sent from ---------- */
 let AM=null;
 const AM_PROV={gmail:['smtp.gmail.com',465],outlook:['smtp.office365.com',587]};
-async function amLoad(){try{AM=await api('GET','/api/admin/email');}catch(e){AM=null;}amFill();}
+async function amLoad(){AM=await loadTry('am',()=>api('GET','/api/admin/email')).catch(()=>null);amFill();}
 function amFill(){
-  if(!AM)return;
+  /* a form that didn't load can't be saved over the settings in use */
+  $('#ad-mailform').querySelectorAll('button[type=submit],button:not([type])').forEach(b=>{b.disabled=!AM;});
+  if(!AM){$('#ad-mailstate').innerHTML=LOADERR.am?loadErr('the email settings','am'):'';return;}
   $('#ad-mailstate').innerHTML=AM.configured?`<span class="chip ok">✓ Set up</span> Sending from ${esc(AM.from)} via ${esc(AM.host)}${AM.source==='env'?' (from .env)':''}.`
     :'<span class="chip bad">Not set up</span> Invites give you a link to send yourself until this is filled in.';
   const host=AM.host||AM_PROV.gmail[0];
@@ -839,13 +860,14 @@ $('#ad-lg-ev').insertAdjacentHTML('beforeend',Object.entries(LG_EV).map(([k,l])=
 async function lgLoad(more){
   const p=new URLSearchParams(),ev=$('#ad-lg-ev').value,u=$('#ad-lg-user').value;
   if(ev)p.set('event',ev);if(u)p.set('user',u);if(more&&LG&&LG.next)p.set('before',LG.next);
-  try{const r=await api('GET','/api/admin/log?'+p);LG=more&&LG?{rows:LG.rows.concat(r.rows),next:r.next}:r;}catch(e){if(!more)LG={rows:[],next:null};}
+  try{const r=await api('GET','/api/admin/log?'+p);LG=more&&LG?{rows:LG.rows.concat(r.rows),next:r.next}:r;delete LOADERR.lg;}
+  catch(e){if(e.signedOut)return;LOADERR.lg=e.message;if(!more)LG={rows:[],next:null};}
   lgRender();
 }
 function lgRender(){
   const sel=$('#ad-lg-user');
   if(AU&&sel.options.length<2)sel.insertAdjacentHTML('beforeend',AU.users.map(u=>`<option value="${u.id}">${esc(u.email)}</option>`).join(''));
-  $('#ad-log').innerHTML=LG?(LG.rows.length?LG.rows.map(r=>lgRow(r,true)).join(''):'<p class="sub">Nothing logged for this filter.</p>'):'';
+  $('#ad-log').innerHTML=(LOADERR.lg?loadErr('the log','lg'):'')+(LG?(LG.rows.length?LG.rows.map(r=>lgRow(r,true)).join(''):LOADERR.lg?'':'<p class="sub">Nothing logged for this filter.</p>'):'');
   $('#ad-lg-more').hidden=!(LG&&LG.next);
 }
 $('#ad-lgform').addEventListener('submit',e=>{e.preventDefault();lgLoad();});
@@ -854,8 +876,9 @@ $('#ad-lg-user').addEventListener('change',()=>lgLoad());
 $('#ad-lg-more').addEventListener('click',()=>lgLoad(true));
 async function mlLoad(more){
   ML=ML||{rows:[],next:null};
-  try{const r=await api('GET','/api/my/log'+(more&&ML.next?'?before='+ML.next:''));ML=more?{rows:ML.rows.concat(r.rows),next:r.next}:r;}catch(e){}
-  $('#ad-mylog').innerHTML=ML.rows.length?ML.rows.map(r=>lgRow(r,false)).join(''):'<p class="sub">Nothing logged yet.</p>';
+  try{const r=await api('GET','/api/my/log'+(more&&ML.next?'?before='+ML.next:''));ML=more?{rows:ML.rows.concat(r.rows),next:r.next}:r;delete LOADERR.ml;}
+  catch(e){if(e.signedOut)return;LOADERR.ml=e.message;}
+  $('#ad-mylog').innerHTML=(LOADERR.ml?loadErr('your sign-ins','ml'):'')+(ML.rows.length?ML.rows.map(r=>lgRow(r,false)).join(''):LOADERR.ml?'':'<p class="sub">Nothing logged yet.</p>');
   $('#ad-ml-more').hidden=!ML.next;
 }
 $('#ad-ml-more').addEventListener('click',()=>mlLoad(true));

@@ -73,7 +73,7 @@ function renderTrends(){
   if(!groups.some(g=>g.name==='Supplements'))groups.push({name:'Supplements',list:[]});
   $('#t-metrics').innerHTML=groups.map(g=>`<div class="tgroup"><span class="lbl">${esc(g.name)}</span><div class="tchips">${g.list.map(s=>{
       const on=tOn.has(s.key), none=!s.points.length;
-      return `<button type="button" class="tm tc${col[s.key]}${none?' none':''}" data-ta="metric" data-k="${esc(s.key)}" aria-pressed="${on}" title="${none?'No data in this range':esc(s.name)}"><i class="tsw tc${col[s.key]}"></i>${esc(s.name)}</button>`;}).join('')
+      return `<button type="button" class="tm tc${col[s.key]}${none?' none':''}" data-ta="metric" data-k="${esc(s.key)}" aria-pressed="${on}" title="${none?'No data in this range':esc(s.name)}${s.left?esc(` – ${s.left} dose${s.left===1?'':'s'} in a unit that can’t be turned into ${s.unit} left out`):''}"><i class="tsw tc${col[s.key]}"></i>${esc(s.name)}${s.left?` <small>(${s.left} left out)</small>`:''}</button>`;}).join('')
     ||(g.name==='Supplements'?tRO?'<span class="sub">No supplements followed.</span>':'<span class="sub">Tick “Trend” on a supplement in the <a href="#supps/lib">supplement library</a> to follow it here.</span>':'')}${g.name==='Gym'?tExPicker():''}</div></div>`).join('');
   if($('#t-aibtn'))$('#t-aibtn').disabled=!TL.ai||tAiBusy;
   renderAi();
@@ -173,7 +173,7 @@ function drawTrends(){
 /* ---------- AI summary ---------- */
 function renderAi(){
   const el=$('#t-ai');if(!el||!TL)return;
-  if(!TL.ai){el.innerHTML='<p class="sub">AI isn’t set up – the super admin can add an OpenRouter API key on the Super admin page.</p>';return;}
+  if(!TL.ai){el.innerHTML=`<p class="sub">${typeof isAdmin!=='undefined'&&isAdmin?'AI isn’t set up – add an OpenRouter API key on the <a href="#admin/ai">Super admin page</a>.':'AI isn’t set up in this app yet.'}</p>`;return;}
   if(tAiBusy){el.innerHTML='<p class="note">Reading your numbers…</p>';return;}
   if(tAiErr){el.innerHTML=`<p class="aderr" role="alert">${esc(tAiErr)}</p>`;return;}
   if(!tAi){el.innerHTML='<p class="sub">Switch on the metrics you want compared above, then ask for a summary of how they relate – for example calories against weight, or protein and volume against strength.</p>';return;}
@@ -212,8 +212,13 @@ function tCardHead(d,r){
     <button class="nav" type="button" data-ta="cmove" data-n="1" aria-label="Next day">›</button>
     <button class="x tclose" type="button" data-ta="close" aria-label="Close">×</button></header>`;
 }
-const tFoodName=(D,f)=>(FOODS[f]&&FOODS[f].n)||(D.lib&&D.lib[f]&&D.lib[f].n)||f;
-const tFoodUnit=(D,f)=>(FOODS[f]&&FOODS[f].unit)||(D.lib&&D.lib[f]&&D.lib[f].unit)||'g';
+/* a food on a saved day: the plan in effect on its date, the day's own copy, the food now, then any other plan change */
+function tFoodRec(D,f,d){
+  const ok=r=>r&&typeof r==='object'?r:null, v=mineOn(d);
+  return ok(own(v&&v.foods,f))||ok(D.lib&&own(D.lib,f))||ok(FOODS[f])||[...(DEFS.myVersions||[])].reverse().map(x=>ok(own(x.foods,f))).find(Boolean)||{};
+}
+const tFoodName=(D,f,d)=>String(tFoodRec(D,f,d).n||f);
+const tFoodUnit=(D,f,d)=>{const u=tFoodRec(D,f,d).unit;return u==='ml'||u==='×'?u:'g';};
 function tCardBody(r){
   const d=r.date, sec=(cls,title,body,link)=>`<section class="tcsec ${cls}"><h3 class="lbl">${title}</h3>${body}${link&&!tRO?`<a class="ghost tclink" href="${link[0]}">${link[1]}</a>`:''}</section>`;
   /* food */
@@ -222,7 +227,7 @@ function tCardBody(r){
     const s=r.food.summary, D=r.food.data, tg=s.targets||{};
     const stat=(k,l,u)=>`<div class="stat"><span class="lbl">${l}</span><span class="num">${r0(s[k])}${tg[k]?`<i>/ ${r0(tg[k])}${u}</i>`:`<i>${u}</i>`}</span></div>`;
     const meals=(D.meals||[]).map(m=>{const items=['p','c','x'].flatMap(b=>m[b]||[]).filter(i=>i.g>0);
-      return `<li><b>Meal ${esc(m.id)} · ${esc(m.name)}</b>${m.eaten?' <span class="chip ok">✓ Eaten</span>':''}<small>${items.map(i=>`${esc(tFoodName(D,i.f))} ${r0(i.g)}${esc(tFoodUnit(D,i.f))}`).join(' · ')||'Nothing in it'}</small></li>`;}).join('');
+      return `<li><b>Meal ${esc(m.id)} · ${esc(m.name)}</b>${m.eaten?' <span class="chip ok">✓ Eaten</span>':''}<small>${items.map(i=>`${esc(tFoodName(D,i.f,d))} ${r0(i.g)}${esc(tFoodUnit(D,i.f,d))}`).join(' · ')||'Nothing in it'}</small></li>`;}).join('');
     const off=(D.off||[]).map(o=>`<li><b>${esc(o.n||'Off-plan food')}</b><small>${r0(+o.k||0)} kcal · P ${r1(+o.p||0)} · C ${r1(+o.c||0)} · F ${r1(+o.f||0)}</small></li>`).join('');
     food=`<div class="tcstats">${stat('k','Calories','')}${stat('p','Protein','g')}${stat('c','Carbs','g')}${stat('f','Fat','g')}</div>
       <ul class="tclist">${meals}</ul>${off?`<span class="lbl">Off plan</span><ul class="tclist">${off}</ul>`:''}`;

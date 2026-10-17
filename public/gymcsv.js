@@ -154,7 +154,10 @@ function readHistory(text,opts={}){
     if(!Number.isFinite(kg)){skipped.push({line,why:`${name}: ${numWhy('weight',cell(r,'weight'),kg)}`});return;}
     const u=cell(r,'unit').toLowerCase();
     if(u)unitSeen=true;
-    if(/lb|pound/.test(u)||(!/kg|kilo/.test(u)&&unit==='lb'))kg*=0.45359237;
+    /* kg, lb or stone; a unit the file names that isn't one of them leaves the row out rather than guessing kg */
+    const per=!u?(unit==='lb'?0.45359237:1):/lb|pound/.test(u)?0.45359237:/kg|kilo/.test(u)?1:/^st(one)?s?$/.test(u)?6.35029318:null;
+    if(per==null){skipped.push({line,why:`${name}: weight unit “${u.slice(0,12)}” not understood (kg, lb or st)`});return;}
+    kg*=per;
     kg=Math.round(kg*100)/100;
     if(kg<-500||kg>2000){skipped.push({line,why:`${name}: weight out of range`});return;}
     const label=/^(normal|working|work)$/i.test(cell(r,'label'))?'':cell(r,'label');
@@ -177,7 +180,8 @@ function readHistory(text,opts={}){
    already imported). */
 function importBatches(sets,max=200000,maxSets=2000){
   const out=[];let cur=[],size=0;
-  sets.forEach((s,i)=>{const n=JSON.stringify(s).length+1,prev=sets[i-1];
+  const enc=new TextEncoder();   /* the server's limit is in bytes: Arabic or emoji take 2–4 each */
+  sets.forEach((s,i)=>{const n=enc.encode(JSON.stringify(s)).length+1,prev=sets[i-1];
     const same=prev&&prev.at===s.at&&prev.name.toLowerCase()===s.name.toLowerCase();
     if(cur.length&&(size+n>max||cur.length>=maxSets)&&!same){out.push(cur);cur=[];size=0;}
     cur.push(s);size+=n;});

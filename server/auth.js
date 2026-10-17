@@ -307,7 +307,8 @@ router.get('/google', limiter, (req, res) => {
 router.get('/google/callback', limiter, async (req, res) => {
   const pending = req.session.oauth;
   delete req.session.oauth;
-  if (!config.google.enabled || !pending) return fail(res, 'google_state');
+  if (!config.google.enabled) return fail(res, 'google_off');
+  if (!pending) return fail(res, 'google_state');
   if (req.query.error) return fail(res, 'google_cancelled');
   if (!safeEqual(req.query.state, pending.state) || Date.now() - pending.at > 10 * 60 * 1000) return fail(res, 'google_state');
 
@@ -363,7 +364,7 @@ router.get('/google/callback', limiter, async (req, res) => {
     await logIn(req, user);
   } catch { return fail(res, 'google_failed'); }
   audit.log(req, 'signin.ok', { via: 'google' });
-  res.redirect('/');
+  res.redirect('/#dash');
 });
 
 module.exports = { router, requireAuth, csrfProtect, csrfToken, q, accountAllowed };

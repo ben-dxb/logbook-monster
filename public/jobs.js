@@ -18,7 +18,7 @@ async function jobStart(url,kind,file){
   if('Notification' in window&&Notification.permission==='default'){try{Notification.requestPermission();}catch{}}
   let r;
   try{r=await fetch(url+(url.includes('?')?'&':'?')+'bg=1',{method:'POST',credentials:'same-origin',body:file,
-    headers:{'content-type':file.type||'application/pdf','x-csrf-token':csrf,'x-file-name':encodeURIComponent(file.name.slice(0,120))}});}
+    headers:{'content-type':file.type||'application/pdf','x-csrf-token':csrf,'x-file-name':encodeURIComponent(Array.from(file.name).slice(0,120).join(''))}});}
   catch{throw new Error('Can’t reach the server – is it still running?');}
   if(r.status===401){setTimeout(toLogin,0);const e=new Error('You were signed out');e.signedOut=true;throw e;}
   const j=await r.json().catch(()=>({}));

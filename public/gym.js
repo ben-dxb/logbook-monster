@@ -16,7 +16,8 @@ const exById=id=>GY&&GY.exercises.find(e=>e.id===id);
 const exName=id=>{const e=exById(id);return e?e.name:'Deleted exercise';};
 const nowAt=()=>{const d=new Date();return `${ymd(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;};
 const atMs=a=>{const [d,t]=a.split('T');const [h,m,s]=t.split(':').map(Number);const x=parse(d);x.setHours(h,m,s||0);return x.getTime();};
-const e1rm=s=>s.reps<=0?0:s.reps===1?s.kg:s.kg*(1+s.reps/30);   /* Epley */
+/* Epley, as the Timeline counts it: a set with no weight or over 20 reps says little about a one-rep max, so it gives none (0) */
+const e1rm=s=>s.kg>0&&s.reps>=1&&s.reps<=20?(s.reps===1?s.kg:s.kg*(1+s.reps/30)):0;
 const kgTxt=k=>String(Math.round(k*100)/100);
 const fmtDur=ms=>{const s=Math.max(0,Math.round(ms/1000)),h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?`${h}:${pad(m)}:${pad(s%60)}`:`${m}:${pad(s%60)}`;};
 function ago(d){if(!d)return '';const n=Math.round((parse(todayStr())-parse(d))/86400000);
@@ -68,7 +69,7 @@ function gChanged(){gSessions=null;Object.keys(GDAY).forEach(k=>delete GDAY[k]);
 function gAnalyse(sets){
   const days=new Map(), pr=new Set(), volPr=new Set();let best=-1,bestVol=-1;
   sets.forEach(s=>{const d=s.at.slice(0,10);if(!days.has(d))days.set(d,[]);days.get(d).push(s);
-    const v=e1rm(s);if(best>=0&&v>best+1e-9)pr.add(s.id);best=Math.max(best,v);});
+    const v=e1rm(s);if(v>0){if(best>=0&&v>best+1e-9)pr.add(s.id);best=Math.max(best,v);}});
   for(const [d,ss] of days){const v=ss.reduce((a,s)=>a+s.reps*s.kg,0);if(bestVol>=0&&v>bestVol+1e-9)volPr.add(d);bestVol=Math.max(bestVol,v);}
   return {days,pr,volPr};
 }
@@ -210,7 +211,7 @@ async function gExercisePage(id){
   if(!gQuick||gQuick.e!==id)gQuick={e:id,reps:last?last.reps:8,kg:last?last.kg:20,note:''};
   const tabs=[['sets','Sets'],['chart','Chart'],['records','Records']].map(([t,n])=>`<button type="button" data-g="tab" data-t="${t}" aria-pressed="${gTab===t}">${n}</button>`).join('');
   let body;
-  if(gTab==='chart')body=`<section class="panel"><h2>Estimated 1 rep max</h2><div class="clegend"><span><i class="sw line"></i>Best estimated 1RM of the day</span><span><i class="sw dots"></i>Heaviest weight</span></div><div class="chart" id="g-chart"></div></section>`;
+  if(gTab==='chart')body=`<section class="panel"><h2>Estimated 1 rep max</h2><div class="clegend"><span><i class="sw line"></i>Best estimated 1RM of the day</span><span><i class="sw dots"></i>Heaviest weight</span></div><div class="chart" id="g-chart"></div><p class="sub">From weighted sets of 1–20 reps (Epley), as on the Timeline.</p></section>`;
   else if(gTab==='records')body=gRecords(sets,A);
   else{
     const days=[...A.days.keys()].reverse();
@@ -262,7 +263,7 @@ function gRecords(sets,A){
   let bd=null,bdv=-1;for(const [d,ss] of A.days){const v=ss.reduce((a,s)=>a+s.reps*s.kg,0);if(v>bdv){bdv=v;bd=d;}}
   const reps=[];for(let r=1;r<=15;r++){const ok=sets.filter(s=>s.reps>=r);if(ok.length)reps.push([r,ok.reduce((b,s)=>(s.kg>b.kg?s:b),ok[0])]);}
   return `<div class="wstats">${[
-    ['Est. 1 rep max',`${kgTxt(Math.round(e1rm(b1)*10)/10)}<i>kg</i>`,when(b1)],
+    e1rm(b1)>0?['Est. 1 rep max',`${kgTxt(Math.round(e1rm(b1)*10)/10)}<i>kg</i>`,when(b1)]:['Est. 1 rep max','–','needs a weighted set of 1–20 reps'],
     ['Heaviest',`${kgTxt(bk.kg)}<i>kg</i>`,when(bk)],
     ['Most reps',`${br.reps}<i>reps</i>`,when(br)],
     ['Best set volume',`${kgTxt(Math.round(bv.reps*bv.kg))}<i>kg</i>`,when(bv)],
@@ -279,7 +280,7 @@ function gChart(sets){
   if(pts.length<2){box.innerHTML='<p class="emptyc">Log this exercise on two different days to see a trend.</p>';return;}
   const W=Math.max(300,box.clientWidth||600), H=Math.round(Math.min(320,Math.max(220,W*0.42))), m={l:44,r:12,t:12,b:26};
   const t0=parse(pts[0].d).getTime(), t1=parse(pts[pts.length-1].d).getTime();
-  const vals=pts.flatMap(p=>[p.e,p.k]);let lo=Math.min(...vals),hi=Math.max(...vals);const padv=Math.max(1,(hi-lo)*0.12);lo-=padv;hi+=padv;
+  const vals=pts.flatMap(p=>p.e>0?[p.e,p.k]:[p.k]);let lo=Math.min(...vals),hi=Math.max(...vals);const padv=Math.max(1,(hi-lo)*0.12);lo-=padv;hi+=padv;
   const step=[1,2,5,10,20,25,50,100,200].find(s=>(hi-lo)/s<=5)||500;lo=Math.floor(lo/step)*step;hi=Math.ceil(hi/step)*step;
   const x=d=>m.l+(parse(d).getTime()-t0)/Math.max(1,t1-t0)*(W-m.l-m.r), y=v=>m.t+(hi-v)/(hi-lo)*(H-m.t-m.b);
   let g='<g class="grid">';for(let v=lo;v<=hi+1e-9;v+=step)g+=`<line x1="${m.l}" x2="${W-m.r}" y1="${y(v)}" y2="${y(v)}"/>`;
@@ -288,7 +289,7 @@ function gChart(sets){
   g+='</g>';
   box.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Estimated 1 rep max from ${esc(fmtShort(pts[0].d))} to ${esc(fmtShort(pts[pts.length-1].d))}">${g}
     ${pts.map(p=>`<circle class="pt" cx="${x(p.d).toFixed(1)}" cy="${y(p.k).toFixed(1)}" r="3"><title>${esc(fmtShort(p.d))}: ${kgTxt(p.k)} kg</title></circle>`).join('')}
-    <path class="avg" d="${pts.map((p,i)=>(i?'L':'M')+x(p.d).toFixed(1)+' '+y(p.e).toFixed(1)).join('')}"/></svg>`;
+    <path class="avg" d="${pts.filter(p=>p.e>0).map((p,i)=>(i?'L':'M')+x(p.d).toFixed(1)+' '+y(p.e).toFixed(1)).join('')}"/></svg>`;
 }
 
 /* ---------- edit one set ---------- */

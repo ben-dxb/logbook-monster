@@ -8,7 +8,7 @@
    Uses helpers from app.js (api, esc, todayStr, addDays…), admin.js (mineOn, typeOn, tnameOn) and supps.js (SUPPS, sLoad, sDose). */
 
 let CL=null;                     /* {items, custom, defaults} */
-let dTicks={}, dAuto={supps:new Set(),gym:new Set()}, dGym=[], dPhotos=null, dDate=todayStr(), dTok=0;
+let dTicks={}, dAuto={supps:new Set(),gym:new Set()}, dGym=[], dPhotos=null, dDate=todayStr(), dTok=0, dErr={};
 
 /* Is this day template a training one? "T" (what plan imports call training) or a name with "train" in it. */
 const dIsTraining=(id,name)=>id==='T'||/train/i.test(name||'');
@@ -33,13 +33,18 @@ async function renderDash(args){
   try{
     if(!CL){box.innerHTML='<p class="note">Loading…</p>';}
     const from=addDays(t,-6);
-    const [cl,days,slog,gym,ph]=await Promise.all([CL||api('GET','/api/checklist'),api('GET',`/api/checklist/days?from=${from}&to=${t}`),
-      api('GET',`/api/supps/log?from=${from}&to=${t}`),api('GET','/api/gym/sessions?limit=60'),api('GET','/api/photos'),SUPPS?null:sLoad()]);
+    /* each feed on its own: one that fails shows its own message, the rest of the page still loads */
+    const one=p=>Promise.resolve(p).then(v=>({v}),e=>({e}));
+    const [cl,days,slog,gym,ph,sp]=await Promise.all([CL||api('GET','/api/checklist'),api('GET',`/api/checklist/days?from=${from}&to=${t}`),
+      api('GET',`/api/supps/log?from=${from}&to=${t}`),api('GET','/api/gym/sessions?limit=60'),api('GET','/api/photos'),SUPPS?null:sLoad()].map(one));
     if(tok!==dTok||view!=='dash')return;
-    CL=cl;dTicks=(days&&days.days)||{};
-    dAuto.supps=new Set(((slog&&slog.entries)||[]).map(e=>e.date));
-    dGym=gym||[];dAuto.gym=new Set(dGym.map(s=>s.date));
-    dPhotos=(ph&&ph.photos)||[];
+    const out=[cl,days,slog,gym,ph,sp].find(r=>r.e&&r.e.signedOut);if(out)throw out.e;
+    const msg=r=>r.e?r.e.message||'Something went wrong':'';
+    dErr={checklist:msg(cl)||msg(days),auto:[slog.e&&'supplements',gym.e&&'gym sets'].filter(Boolean).join(' and '),gym:msg(gym),photos:msg(ph),supps:msg(sp)};
+    if(cl.v)CL=cl.v;dTicks=(days.v&&days.v.days)||{};
+    dAuto.supps=new Set(((slog.v&&slog.v.entries)||[]).map(e=>e.date));
+    dGym=gym.v||[];dAuto.gym=new Set(dGym.map(s=>s.date));
+    dPhotos=ph.v?ph.v.photos||[]:null;
     box.innerHTML=dPage();
   }catch(e){if(!e.signedOut&&tok===dTok)box.innerHTML=`<p class="note">Couldn’t load your dashboard: ${esc(e.message)}</p>`;}
 }
@@ -53,7 +58,9 @@ function dPage(){
 }
 
 /* ---------- the checklist ---------- */
+const dFailed=(what,m)=>`<p class="note" role="alert">Couldn’t load ${what}: ${esc(m)}. Reload the page to try again.</p>`;
 function dChecklist(){
+  if(dErr.checklist)return `<div class="dhead"><h2 id="d-ch">Daily checklist</h2></div>${dFailed('your checklist',dErr.checklist)}`;
   const t=todayStr(), items=dItems(dDate), n=items.filter(it=>dDone(it,dDate)).length;
   const week=Array.from({length:7},(_,i)=>addDays(t,i-6)).map(d=>{
     const its=dItems(d), k=its.filter(it=>dDone(it,d)).length, all=its.length&&k===its.length;
@@ -68,6 +75,7 @@ function dChecklist(){
       const auto=dAutoDone(it,dDate), done=auto||(dTicks[dDate]||[]).includes(it.id);
       return `<li><label class="dtick${done?' done':''}"><input type="checkbox" data-dk="${esc(it.id)}"${done?' checked':''}${auto?' disabled':''}> <span>${esc(it.label)}</span>${auto?`<span class="sub">${it.auto==='weight'?'weight logged':it.auto==='supps'?'logged':'sets logged'}</span>`:''}</label></li>`;}).join('')}</ul>`
       :'<p>Nothing on your checklist for this day. Set it up on <a href="#account">Account admin</a>.</p>'}
+    ${dErr.auto?`<p class="sub">Your ${esc(dErr.auto)} couldn’t load, so their automatic ticks may be missing.</p>`:''}
     <p class="sub"><a href="#account">Change the checklist</a></p>`;
 }
 async function dTick(el){
@@ -97,12 +105,14 @@ function dWeight(t){
     <p>${last===t?'Weighed in today':'Last weigh-in '+esc(fmtLong(last))}${ch!=null?` · <b>${ch>0?'+':''}${ch} kg</b> on a week before`:''}</p>`);
 }
 function dGymCard(t){
+  if(dErr.gym)return dCard('#gym','Gym',dFailed('your gym sessions',dErr.gym));
   if(!dGym.length)return dCard('#gym','Gym','<p>No sets logged yet.</p>');
   const last=dGym.reduce((a,b)=>b.date>a.date?b:a), wk=dGym.filter(s=>s.date>addDays(t,-7)).length;
   return dCard('#gym','Gym',`<div class="dbig"><b>${wk}</b> session${wk===1?'':'s'} in the last 7 days</div>
     <p>Last: ${last.date===t?'today':esc(fmtLong(last.date))} – ${last.sets} set${last.sets===1?'':'s'}${last.volume?`, ${Math.round(last.volume).toLocaleString()} kg volume`:''}</p>`);
 }
 function dSupps(){
+  if(dErr.supps&&!SUPPS)return dCard('#supps/lib','Supplement regime',dFailed('your supplements',dErr.supps));
   const mine=(SUPPS||[]).filter(s=>s.mine);
   if(!mine.length)return dCard('#supps/lib','Supplement regime','<p>No supplements yet – add them in the library, or read your regime from a PDF with AI.</p>');
   const show=mine.slice(0,8);
@@ -110,8 +120,9 @@ function dSupps(){
     ${mine.length>show.length?`<p>…and ${mine.length-show.length} more</p>`:''}<p>Tick “Supplements taken” on the checklist – no need to log each one.</p>`);
 }
 function dPhoto(){
+  if(dErr.photos)return dCard('#photos','Progress photos',dFailed('your photos',dErr.photos));
   if(!dPhotos||!dPhotos.length)return dCard('#photos','Progress photos','<p>No progress photos yet.</p>');
-  const p=dPhotos.reduce((a,b)=>b.date>a.date||(b.date===a.date&&b.id>a.id)?b:a);
+  const t=todayStr(), past=dPhotos.filter(x=>x.date<=t), p=(past.length?past:dPhotos).reduce((a,b)=>b.date>a.date||(b.date===a.date&&b.id>a.id)?b:a);   /* not one dated ahead */
   const src=p.tv?`/api/photos/${p.id}/thumb?v=${encodeURIComponent(p.tv)}`:`/api/photos/${p.id}/file?v=${encodeURIComponent(p.v)}`;
   return dCard('#photos','Progress photos',`<div class="dphoto"><img src="${src}" alt="Latest progress photo, ${esc(p.pose)}" loading="lazy"><p>Latest: ${esc(fmtLong(p.date))}<br>${dPhotos.length} photo${dPhotos.length===1?'':'s'} in all</p></div>`);
 }

@@ -11,7 +11,9 @@ const INVITE_DAYS = 7;
 const q = {
   list: db.prepare(`SELECT u.id, u.email, u.name, u.created_at, u.last_login_at, u.invited_by,
       u.password_hash IS NOT NULL AS has_password, u.google_sub IS NOT NULL AS has_google,
-      (SELECT MAX(expires_at) FROM invites i WHERE i.user_id = u.id) AS invite_expires
+      (SELECT MAX(expires_at) FROM invites i WHERE i.user_id = u.id) AS invite_expires,
+      (SELECT COUNT(*) FROM photos p WHERE p.user_id = u.id) AS photos,
+      (SELECT COUNT(*) FROM foods f WHERE f.user_id = u.id AND f.public = 1) + (SELECT COUNT(*) FROM supplements s WHERE s.user_id = u.id AND s.public = 1) AS shared
     FROM users u ORDER BY u.created_at, u.id`),
   byId: db.prepare('SELECT id, email, name, password_hash, google_sub, invited_by, last_login_at FROM users WHERE id = ?'),
   byEmail: db.prepare('SELECT id, email, name, password_hash, google_sub, invited_by, last_login_at FROM users WHERE email = ?'),
@@ -33,7 +35,7 @@ function list(admin, isAdmin) {
   return q.list.all().map(u => ({
     id: u.id, email: u.email, name: u.name, created: u.created_at, lastLogin: u.last_login_at,
     invitedBy: u.invited_by, password: !!u.has_password, google: !!u.has_google,
-    admin: isAdmin(u), you: u.id === admin.id,
+    admin: isAdmin(u), you: u.id === admin.id, photos: u.photos, shared: u.shared,
     status: u.has_password || u.has_google || u.last_login_at ? 'active' : u.invite_expires && u.invite_expires > sqlNow() ? 'invited' : 'expired',
   }));
 }

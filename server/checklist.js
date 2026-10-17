@@ -85,6 +85,8 @@ const versionOf = user => { const r = q.get.get(user.id); return r ? r.updated_a
 router.put('/', send(req => {
   const items = clean(isObj(req.body) ? req.body.items : null);
   version.check(req, versionOf(req.user));
+  /* the default list sent back goes back to following the defaults */
+  if (JSON.stringify(items) === JSON.stringify(DEFAULTS)) { q.del.run(req.user.id); return { items: DEFAULTS, custom: false, defaults: DEFAULTS, updated: null }; }
   const updated = version.stamp();
   q.put.run(req.user.id, JSON.stringify(items), updated);
   return { items, custom: true, defaults: DEFAULTS, updated };

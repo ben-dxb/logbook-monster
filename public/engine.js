@@ -27,17 +27,19 @@ function recalcPudding(){
   const sn=SNACKS.find(x=>x.id==='pudding');
   if(sn) Object.assign(sn,{k:FOODS.pudding.k,p:FOODS.pudding.p,c:FOODS.pudding.c,f:FOODS.pudding.f});
 }
-/* off-plan snacks: per item ('each') or per 100g ('g'). est = estimate, check the label */
+/* off-plan snacks: per item ('each') or per 100g ('g'). est = estimate, check the label.
+   old: the first user's own snacks from before accounts had their own foods – kept so days that logged them still add up,
+   offered only to an account still on that old built-in plan (snacksShown in app.js); everyone else uses the food library. */
 const SNACKS=[
-  {id:'reese',n:"Reese's mini",u:'each',k:48,p:1.0,c:5.2,f:2.8},
-  {id:'shortbread',n:'Walkers shortbread fingers (pack of 2)',u:'each',k:200,p:2.2,c:24.2,f:10.8},
-  {id:'skittles',n:'Skittles 38g bag',u:'each',k:154,p:0,c:34.4,f:1.6},
-  {id:'deemah',n:'Deemah date biscuit (pack of 2)',u:'each',k:78,p:1.0,c:13.2,f:2.4},
-  {id:'scroll',n:'Starbucks iced cinnamon scroll',u:'each',k:384,p:4.2,c:57.1,f:15.2},
-  {id:'cookie',n:'Starbucks triple chocolate cookie',u:'each',k:527,p:6.9,c:67.2,f:25.2,est:true},
-  {id:'ricecake',n:'Rice cakes',u:'g',k:385,p:8,c:81,f:2.8},
-  {id:'malties',n:'Malties hazelnut spread',u:'g',k:523,p:5.5,c:59.6,f:28.5},
-  {id:'biscoff',n:'Biscoff spread',u:'g',k:570,p:3,c:57.3,f:38},
+  {id:'reese',old:true,n:"Reese's mini",u:'each',k:48,p:1.0,c:5.2,f:2.8},
+  {id:'shortbread',old:true,n:'Walkers shortbread fingers (pack of 2)',u:'each',k:200,p:2.2,c:24.2,f:10.8},
+  {id:'skittles',old:true,n:'Skittles 38g bag',u:'each',k:154,p:0,c:34.4,f:1.6},
+  {id:'deemah',old:true,n:'Deemah date biscuit (pack of 2)',u:'each',k:78,p:1.0,c:13.2,f:2.4},
+  {id:'scroll',old:true,n:'Starbucks iced cinnamon scroll',u:'each',k:384,p:4.2,c:57.1,f:15.2},
+  {id:'cookie',old:true,n:'Starbucks triple chocolate cookie',u:'each',k:527,p:6.9,c:67.2,f:25.2,est:true},
+  {id:'ricecake',old:true,n:'Rice cakes',u:'g',k:385,p:8,c:81,f:2.8},
+  {id:'malties',old:true,n:'Malties hazelnut spread',u:'g',k:523,p:5.5,c:59.6,f:28.5},
+  {id:'biscoff',old:true,n:'Biscoff spread',u:'g',k:570,p:3,c:57.3,f:38},
   {id:'pudding',n:'Rice pudding (batch)',u:'g',k:0,p:0,c:0,f:0},
 ];
 function snackVal(id){const s=SNACKS.find(x=>x.id===id);return id==='pudding'?{...s}:{...s,...((S.snackOv||{})[id]||{})};}
@@ -261,7 +263,7 @@ function warnings(day){
   });
   return w;
 }
-/* Health Road packs hold the meat in the plan plus sauce that isn't: weigh the whole pack and eat the
+/* Delivered meals' packs hold the meat in the plan plus sauce that isn't: weigh the whole pack and eat the
    same share of it as your share of the meat. g = meat you're having, pack = pack weight, meat = meat in the pack. */
 function packPortion(g,pack,meat){return g>0&&pack>0&&meat>0?g/meat*pack:null;}
 function fmtG(i){const u=FOODS[i.f].unit||'g';return Math.round(i.g)+u;}

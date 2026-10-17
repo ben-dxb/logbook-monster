@@ -31,7 +31,7 @@
     $('submit').disabled = true;
     try {
       const { ok, status, j } = await post('/auth/invite/accept', { token, password: $('password').value, name: $('name').value.trim() });
-      if (ok) { location.replace('/'); return; }
+      if (ok) { location.replace('/#dash'); return; }
       if (status === 403 && /session/i.test(j.error || '')) { location.reload(); return; }
       showErr(j.error || 'That didn’t work.');
     } catch { showErr('Can’t reach the server.'); }

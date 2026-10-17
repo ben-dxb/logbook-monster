@@ -47,6 +47,7 @@
   </header>
 
   <p id="loading" class="note">Loading your data…</p>
+  <p id="bootnote" class="note" role="alert" hidden></p>
 
   <!-- ===================== DASHBOARD ===================== -->
   <section id="v-dash" class="view" hidden>
@@ -105,7 +106,7 @@
       <p id="libnone" class="empty">Nothing in the food library yet. <a href="#foods/new">Add a food</a>, or tick “Save to my food library” below.</p>
       <h3 class="lbl">Something else</h3>
       <form id="offform" class="grid5">
-        <label class="f"><span class="lbl">Food</span><input id="o-n" placeholder="e.g. Krispy Kreme"></label>
+        <label class="f"><span class="lbl">Food</span><input id="o-n" placeholder="e.g. Krispy Kreme" maxlength="80"></label>
         <label class="f"><span class="lbl">kcal</span><input id="o-k" type="number" inputmode="decimal" min="0"></label>
         <label class="f"><span class="lbl">Protein</span><input id="o-p" type="number" inputmode="decimal" min="0" step="0.1"></label>
         <label class="f"><span class="lbl">Carbs</span><input id="o-c" type="number" inputmode="decimal" min="0" step="0.1"></label>
@@ -130,7 +131,7 @@
         <button class="btn" id="coach" type="button">Plan targets</button>
       </div>
     </section>
-    <footer>Health Road food in cooked weights, home cooking in raw weights. Rice pudding is weighed in grams from the batch. Every change saves to your account automatically. Green/red amounts show the change from the plan. Health Road meat comes in sauce: weigh the pack and the box under the meat tells you how much of it to eat.</footer>
+    <footer>Every change saves to your account automatically. Green/red amounts show the change from the plan. Rice pudding is weighed in grams from the batch. For meat delivered in sauce, weigh the pack and the box under the meat tells you how much of it to eat.</footer>
   </section>
 
   <!-- ===================== HISTORY ===================== -->
@@ -267,7 +268,7 @@
       <div class="seg pbasis" role="group" aria-label="Protein target counts" id="ad-pbasis"><span class="lbl">Protein target counts</span>
         <button type="button" data-act="pbasis" data-v="total" aria-pressed="true">Total protein</button>
         <button type="button" data-act="pbasis" data-v="direct" aria-pressed="false">Direct protein</button></div>
-      <p>Which protein auto-balance aims the protein target at. Direct protein is meat, eggs, dairy and whey only; total also counts carbs and off-plan food. Saved straight away (no need to save your plan) and applies to every day; it’s the same switch as on the Daily Tracker.</p>
+      <p>Which protein auto-balance aims the protein target at. Direct protein is meat, eggs, dairy and whey only; total also counts carbs and off-plan food. Saved straight away (no need to save your plan); it’s the same switch as on the Daily Tracker. A day re-balances to it the next time you change that day – saved days don’t move on their own.</p>
     </section>
     <section class="panel admine" aria-labelledby="ad-frh">
       <h2 id="ad-frh">My free foods</h2>

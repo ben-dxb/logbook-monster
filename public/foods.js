@@ -40,7 +40,7 @@ function fPlanFoods(){
   const names={};for(const e of meals.values())names[e.m.name]=(names[e.m.name]||0)+1;
   for(const [key,e] of meals){
     const tot={k:0,p:0,c:0,f:0};
-    e.items.forEach(i=>{const F=FOODS[i.f];for(const x in tot)tot[x]+=F[x]*i.g/100;ing(i.f);});
+    e.items.forEach(i=>{const F=FOODS[i.f];if(!isFree(i.f))for(const x in tot)tot[x]+=F[x]*i.g/100;ing(i.f);});   /* free sauces / veg count nothing, as on the Daily Tracker */
     const types=TEMPLATES.filter(t=>e.types.has(t.id)).map(t=>t.name);
     const days=types.length===TEMPLATES.length&&types.length>1?'every day template':fList(types);
     out.push({id:'plan:m:'+fHash(key),plan:true,mine:false,public:false,ai:null,by:null,kind:'meal',unit:'each',
