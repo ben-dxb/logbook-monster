@@ -53,7 +53,8 @@ function trackSessionSecrets() {
 const daysSince = d => { const t = Date.parse(d && d.length === 10 ? d + 'T00:00:00Z' : d || ''); return Number.isFinite(t) ? Math.floor((Date.now() - t) / DAY) : null; };
 const fmt = t => new Date(t).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
 const tier = days => (days == null ? 'unknown' : days >= LOUD ? 'overdue' : days >= ROTATE ? 'stale' : days >= WARN ? 'due' : 'ok');
-const howToDate = n => `Its age isn’t known: add the date it was set – ${n}=YYYY-MM-DD:<value> in .env, or ${n}_SET=YYYY-MM-DD – and restart.`;
+/* the step for a credential of unknown age, one sentence per case (the line that uses it already says the age isn't known) */
+const howToDate = n => `To record its age, add the date it was set in .env – ${n}=YYYY-MM-DD:<value> or ${n}_SET=YYYY-MM-DD – and restart.`;
 
 /* Each credential: name, what it is, where it's held, the slots in use, its age, and the next step. rotate: false = no
    30-day rotation (it says why). */
@@ -102,7 +103,8 @@ function list() {
     const set = env ? config.envSecret(envName).set : (r && r.set_at) || '';
     const used = ['active', sl.next ? 'next' : '', sl.old ? `old (until ${fmt(sl.oldUntil)})` : ''].filter(Boolean).join(' + ');
     add({ name, label, where: env ? `.env (${envName})` : name === 'SMTP' ? 'database, sealed (Super admin › Email)' : 'database, sealed (Super admin › AI)', set, slots: used,
-      next: [env ? `Save one on Super admin to rotate it there${set ? '' : `, or ${howToDate(envName)}`}` : !set ? 'Its age isn’t known – save it again or promote a new one.' : '',
+      next: [env ? (set ? 'Save one on Super admin to rotate it there.' : `${howToDate(envName)} Or save one on Super admin to rotate it there.`)
+        : !set ? `To record its age, save it again on Super admin › ${name === 'SMTP' ? 'Email' : 'AI'} or promote a new one.` : '',
         sl.next ? 'Test next, then Promote.' : 'To rotate: make a new one at the provider, Save as next, Test next, Promote, revoke the old one, Test old.',
         sl.old ? 'Revoke the old one at the provider, then Test old – it must fail.' : ''].filter(Boolean).join(' ') });
   }
@@ -125,7 +127,7 @@ function check(start) {
     if (c.tier === 'due') continue;
     audit.once(null, 'secret.stale', { id: c.name, name: c.name, days: c.days });
     if (start && c.tier === 'overdue') console.error(`${c.label} (${c.name}) is ${c.days} days old – rotate it now (docs/rotation.md). ${c.next}`);
-    else if (start) console.warn(`${c.label} (${c.name}) ${c.days == null ? 'has no recorded age' : `is ${c.days} days old`} – ${c.next}`);
+    else if (start) console.warn(`${c.label} (${c.name}) ${c.days == null ? 'has no recorded age. ' : `is ${c.days} days old – `}${c.next}`);
   }
   const today = new Date().toISOString().slice(0, 10);
   if (due.length && lastMail !== today) {
