@@ -455,6 +455,75 @@ async function phase2cLibrary(browser) {
   await ctx.close();
 }
 
+/* Phase 2C last leftovers: a list read more than 10 s ago is read again when its section opens inside an open page (Gym Records → Sets,
+   Supplements Library → Log and ‹ ›, Dashboard → Photos), Records shows assisted-only work as assistance with no negative volume, the
+   account menu says "Change password" once a first one is set, and an impossible #day says so. */
+async function phase2cLast(browser) {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } }), pg = await ctx.newPage(), errs = [];
+  pg.on('pageerror', e => errs.push(e.message));
+  const hash = async (h, sel) => { await pg.evaluate(h => { location.hash = h; }, h); if (sel) await pg.waitForSelector(sel, { timeout: 5000 }); };
+  const later = () => pg.evaluate(() => { const n = Date.now; Date.now = () => n() + 11000; });   /* 11 s on, without waiting for it */
+  await pg.route('**/api/me', async r => { const res = await r.fetch(), j = await res.json(); r.fulfill({ response: res, json: { ...j, hasPassword: false } }); });
+  await pg.goto(BASE + '/login'); await signIn(pg); await pg.waitForSelector('#v-dash:not([hidden])');
+
+  /* a Google-only account sets its first password: the menu says Change password after */
+  expect(await pg.textContent('#pwbox summary') === 'Set a password', 'a Google-only account is offered to set a password');
+  await pg.route('**/auth/password', r => r.fulfill({ json: { ok: true } }));
+  await pg.click('#acct summary'); await pg.click('#pwbox summary');
+  await pg.fill('#pw-new', 'smoke-password-1'); await pg.click('#pwform button[type=submit]');
+  await pg.waitForFunction(() => /Password updated/.test(document.querySelector('#pwmsg').textContent), null, { timeout: 5000 });
+  expect(await pg.textContent('#pwbox summary') === 'Change password', 'after setting one the menu should say Change password');
+  await pg.unroute('**/auth/password'); await pg.unroute('**/api/me');
+  await pg.click('#acct summary');
+
+  /* #day with an impossible date says so */
+  await hash('#day/2026-13-01');
+  await pg.waitForFunction(() => /no such day as 2026-13-01/.test((document.querySelector('#numnote') || {}).textContent || ''), null, { timeout: 5000 });
+  expect(await pg.evaluate(() => location.hash) === '#day', 'the bad day should leave the address');
+
+  /* gym: assisted-only Records, and a set logged elsewhere shows on Records → Sets */
+  const ex = await pg.evaluate(async () => {
+    const e = await api('POST', '/api/gym/exercises', { name: 'Smoke last assisted dip' });
+    await api('POST', '/api/gym/sets', { exercise: e.id, reps: 8, kg: -30, at: addDays(todayStr(), -2) + 'T10:00' });
+    await api('POST', '/api/gym/sets', { exercise: e.id, reps: 8, kg: -20, at: addDays(todayStr(), -1) + 'T10:00' });
+    return e.id;
+  });
+  await hash('#gym/e/' + ex, '#g-body .gday');
+  await pg.click('[data-g=tab][data-t=records]'); await pg.waitForSelector('#g-body .wstats', { timeout: 5000 });
+  const rec = await pg.textContent('#g-body');
+  expect(!/-\d/.test(rec) && /Least assistance/.test(rec) && /assisted 20 kg/.test(rec), 'assisted-only Records: no negative numbers, assistance named: ' + rec.slice(0, 300));
+  await pg.evaluate(ex => api('POST', '/api/gym/sets', { exercise: ex, reps: 8, kg: -10, at: todayStr() + 'T09:00' }), ex);
+  await later();
+  await pg.click('[data-g=tab][data-t=sets]');
+  await pg.waitForFunction(() => document.querySelectorAll('#g-body .gset').length === 3, null, { timeout: 5000 });
+
+  /* supplements: an entry made elsewhere shows on Library → Log and on ‹ then › */
+  await hash('#supps', '#s-log .empty, #s-log .orow');
+  await hash('#supps/lib', '#s-list');
+  await pg.evaluate(() => api('POST', '/api/supps/log', { date: todayStr(), name: 'Smoke last entry one', amount: 1, unit: 'g' }));
+  await later();
+  await hash('#supps');
+  await pg.waitForFunction(() => /Smoke last entry one/.test((document.querySelector('#s-log') || {}).textContent || ''), null, { timeout: 5000 });
+  await pg.click('[data-sa=prev]'); await pg.waitForFunction(() => !/Smoke last entry one/.test((document.querySelector('#s-log') || {}).textContent || 'x'), null, { timeout: 5000 });
+  await pg.evaluate(() => api('POST', '/api/supps/log', { date: todayStr(), name: 'Smoke last entry two', amount: 1, unit: 'g' }));
+  await later();
+  await pg.click('[data-sa=next]');
+  await pg.waitForFunction(() => /Smoke last entry two/.test((document.querySelector('#s-log') || {}).textContent || ''), null, { timeout: 5000 });
+
+  /* photos: one uploaded elsewhere shows on Dashboard → Photos */
+  await hash('#photos', '#p-list');
+  await hash('#dash', '#d-body .dcard');
+  const ph = await pg.evaluate(async () => {
+    const c = document.createElement('canvas'); c.width = c.height = 16;
+    const b = await new Promise(r => c.toBlob(r, 'image/jpeg'));
+    return pSend('POST', '/api/photos?date=' + todayStr() + '&pose=front', b);
+  });
+  await later();
+  await hash('#photos'); await pg.waitForSelector(`#p-list [data-pid="${ph.id}"]`, { timeout: 5000 });
+  expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
+  await ctx.close();
+}
+
 async function recheck(browser) {
   const { DatabaseSync } = require('node:sqlite');
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } }), pg = await ctx.newPage(), errs = [];
@@ -1431,6 +1500,7 @@ async function recheck(browser) {
     await phase1c(browser);
     await phase2c(browser);
     await phase2cLibrary(browser);
+    await phase2cLast(browser);
     console.log('smoke: ok (desktop + phone)');
   } catch (e) { await browser.close(); return fail(e.stack); }
   await browser.close(); cleanup();

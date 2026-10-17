@@ -8,8 +8,8 @@
    then added to the library – and logged for a day – in one go.
    Uses helpers from app.js and gym.js (gHead, gEmpty). */
 
-let SUPPS=null, SUNITS=[];   /* units the server takes, from GET /api/supps */
-const SLOG={};                    /* date -> that day's entries */
+let SUPPS=null, SUNITS=[], sReadAt=0;   /* units the server takes, from GET /api/supps */
+const SLOG={}, SREAD={};            /* date -> that day's entries; date -> when they were read */
 let STREND=new Set();             /* names followed on the Timeline chart, lower case */
 let sDate=todayStr(), sPick='', sUnit='mg', sQuery='', sFilter='all', sMsg='', sTok=0;
 let SAI=false, sAi=null, sAiMsg='';   /* AI set up; the regime being checked; its error (jobBusy('supps'): reading now) */
@@ -21,7 +21,7 @@ let sMade=null;   /* {name, id}: a library copy "Save to my supplement library" 
 const sUnitTxt=(u,n)=>/s$/.test(u)&&+n===1?u.slice(0,-1):u;
 const sDose=(n,u)=>`${sNum(n)} ${sUnitTxt(u,n)}`;
 function sSort(){SUPPS.sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})||a.id-b.id);}
-async function sLoad(){const r=await api('GET','/api/supps');SUPPS=(r&&r.supplements)||[];if(r&&r.units)SUNITS=r.units;SAI=!!(r&&r.ai);sTrends(r&&r.trends);sSort();}
+async function sLoad(){const r=await api('GET','/api/supps');sReadAt=Date.now();SUPPS=(r&&r.supplements)||[];if(r&&r.units)SUNITS=r.units;SAI=!!(r&&r.ai);sTrends(r&&r.trends);sSort();}
 function sTrends(list){STREND=new Set((list||[]).map(n=>n.toLowerCase()));}
 const sTrendBox=name=>`<label class="tog strend" title="Follow it on the Timeline’s trend chart"><input type="checkbox" data-st="${esc(name)}"${STREND.has(name.toLowerCase())?' checked':''}> Trend</label>`;
 async function sSetTrend(el){
@@ -43,7 +43,7 @@ document.addEventListener('visibilitychange',()=>{
     if(onLog&&$('#s-log')){await sLogOn(sDate);if(tok===sTok&&view==='supps')renderSuppLog();}
   }).catch(()=>{});
 });
-async function sLogOn(d){if(!SLOG[d])SLOG[d]=((await api('GET','/api/supps/log?date='+d))||{}).entries||[];return SLOG[d];}
+async function sLogOn(d){if(!SLOG[d]||isStale(SREAD[d])){SLOG[d]=((await api('GET','/api/supps/log?date='+d))||{}).entries||[];SREAD[d]=Date.now();}return SLOG[d];}
 
 async function renderSupps(args){
   if(view!=='supps')return;
@@ -52,6 +52,7 @@ async function renderSupps(args){
   const tabs=`<nav class="seg gtabs" aria-label="Supplements"><a href="#supps"${lib?'':' aria-current="page"'}>Log</a><a href="#supps/lib"${lib?' aria-current="page"':''}>Library</a></nav>`;
   try{
     if(!SUPPS){box.innerHTML=tabs+'<p class="note">Loading…</p>';await sLoad();if(tok!==sTok||view!=='supps')return;}
+    else if(isStale(sReadAt)&&!(lib&&a)){await sLoad();if(tok!==sTok||view!=='supps')return;}
     if(lib&&(a==='new'||/^\d+$/.test(a||''))){
       let s=a==='new'?null:sById(+a);
       if(a!=='new'&&!(s&&s.mine)){await sLoad();if(tok!==sTok||view!=='supps')return;s=sById(+a);}   /* added in another tab since? */
@@ -170,7 +171,7 @@ function sAiPreview(){
       <label class="f"><span class="lbl">Unit</span><select data-sai="unit" data-i="${i}">${sUnitOptions(x.unit)}</select></label>
       <label class="f sainotes"><span class="lbl">Notes</span><input data-sai="notes" data-i="${i}" maxlength="300" value="${esc(x.notes)}" placeholder="e.g. Morning with food"></label>
     </div>`).join('')}
-    ${sAi.notes.length?`<details class="adnotes" open><summary>What the AI wasn’t sure about (${sAi.notes.length})</summary><ul>${sAi.notes.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></details>`:''}
+    ${sAi.notes.length?`<details class="adnotes" open><summary>Left out, or the AI wasn’t sure (${sAi.notes.length})</summary><ul>${sAi.notes.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></details>`:''}
     <div class="gactions">
       <label class="tog"><input type="checkbox" id="s-ailog"${sAi.log?' checked':''}> Also log them on</label>
       <input type="date" id="s-ailogdate" aria-label="Day to log them on" value="${esc(sAi.day)}"${sAi.log?'':' disabled'}>

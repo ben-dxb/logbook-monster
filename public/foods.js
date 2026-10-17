@@ -297,7 +297,7 @@ async function fFill(btn){
     for(const [m,x] of Object.entries(r.values))$('#f-'+m).value=x;
     if(r.yield&&!$('#f-yield').value.trim())$('#f-yield').value=r.yield;
     fEdit.ai=r.ai;fPaintAi();
-    msg.textContent=`AI filled in ${fList(r.ai.fields.map(m=>M_NAME[m]))}. Check them – its source is below.`;
+    msg.textContent=`AI filled in ${fList(r.ai.fields.map(m=>M_NAME[m]))}. Check them – its source is below.`+(r.unsure&&r.unsure.length?` It couldn’t estimate ${fList(r.unsure.map(m=>M_NAME[m]))} – left blank.`:'');
   }catch(e){if(!here())return;msg.hidden=true;if(!e.signedOut){err.textContent=e.message;err.hidden=false;}}
   finally{btn.disabled=false;}
 }

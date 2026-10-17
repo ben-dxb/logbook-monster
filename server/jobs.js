@@ -16,7 +16,10 @@ const KINDS = {
 };
 const KEEP_DAYS = 7;       /* opened or dropped ones */
 const UNSEEN_DAYS = 30;   /* finished ones nobody has opened yet */
-const AWAY_MS = 30000;   /* no GET /api/jobs for this long = the app isn't open */
+/* No GET /api/jobs for this long = the app isn't open, so a finished read is emailed. A hidden tab polls every 10 s, but browsers
+   throttle hidden tabs' timers to about once a minute (Chrome's intensive throttling), so the window is 3 minutes; a page that is
+   closed says so (POST /away on pagehide), so closing the app right after starting a read still gets the email. */
+const AWAY_MS = 3 * 60 * 1000;
 
 const q = {
   add: db.prepare('INSERT INTO ai_jobs (user_id, kind, label) VALUES (?, ?, ?)'),
@@ -107,6 +110,8 @@ async function respond(req, res, kind, precheck, work) {
 const router = express.Router();
 /* The ones still running or not opened yet (newest first) – no results here, they can be big. */
 router.get('/', (req, res) => { lastAsked.set(req.user.id, Date.now()); res.json({ jobs: q.list.all(req.user.id).filter(r => !(lost.has(r.id) && r.seen)).map(view) }); });
+/* The app was closed (pagehide): email the next finished read rather than wait out AWAY_MS. Another open tab's next poll marks it open again. */
+router.post('/away', (req, res) => { lastAsked.delete(req.user.id); res.json({ ok: true }); });
 router.get('/:id', (req, res) => {
   const r = q.get.get(req.user.id, +req.params.id || 0);
   if (!r) return res.status(404).json({ error: 'That AI read is gone' });
@@ -123,4 +128,4 @@ router.post('/:id/seen', (req, res) => {
   res.json({ ok: true });
 });
 
-module.exports = { router, respond };
+module.exports = { router, respond, start, AWAY_MS };

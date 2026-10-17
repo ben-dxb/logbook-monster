@@ -90,5 +90,9 @@ document.addEventListener('click',e=>{
   if(b.dataset.job==='open')jOpen(+b.dataset.id);else jDismiss(+b.dataset.id);
 });
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&JOBS.some(j=>j.status==='running'))jRefresh();});
+/* The app closing while a read runs: tell the server, so the result is emailed (server/jobs.js AWAY_MS). Back from the browser's cache: open again. */
+addEventListener('pagehide',()=>{if(!JOBS.some(j=>j.status==='running'))return;
+  try{fetch('/api/jobs/away',{method:'POST',keepalive:true,credentials:'same-origin',headers:{'x-csrf-token':csrf,...TZH}}).catch(()=>{});}catch{}});
+addEventListener('pageshow',e=>{if(e.persisted&&JOBS.some(j=>j.status==='running'))jRefresh();});
 /* After sign-in (app.js): anything still running or finished while you were away. */
 function jobsInit(){jRefresh();}

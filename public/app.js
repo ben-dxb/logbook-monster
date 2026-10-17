@@ -17,6 +17,8 @@ const TZH=TZ&&/^[\x21-\x7e]+$/.test(TZ)?{'x-time-zone':TZ}:{};
 const lastDate=()=>{const d=new Date();d.setFullYear(d.getFullYear()+1);return ymd(d);};
 const realDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||'')&&ymd(parse(s))===s;
 const isDate=s=>realDate(s)&&s>='2000-01-01'&&s<=lastDate();
+/* A list read more than 10 s ago is read again when its page or section is opened: another tab or device may have changed it. */
+const STALE_MS=10000, isStale=t=>!t||Date.now()-t>STALE_MS;
 const fmtLong=s=>parse(s).toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 const fmtShort=s=>parse(s).toLocaleDateString(undefined,{day:'numeric',month:'short'});
 const fmtMonth=s=>parse(s).toLocaleDateString(undefined,{month:'long',year:'numeric'});
@@ -575,7 +577,10 @@ function route(){
   VIEWS.forEach(n=>{viewEl(n).hidden=true;});viewEl(view).hidden=false;
   $('#acct').open=false;
   if(view==='dash'){renderDash(arg?[arg]:[]);}
-  else if(view==='day'){openDay(isDate(arg)?arg:S.cur);}
+  else if(view==='day'){
+    if(v==='day'&&arg&&!isDate(arg)){history.replaceState(null,'','#day');   /* 2026-13-01 never rolls over into another day */
+      numNote(realDate(arg)?'Pick a day from 2000 to a year from now – showing '+(S.cur===todayStr()?'today':fmtLong(S.cur))+'.':`There’s no such day as ${arg} – showing ${S.cur===todayStr()?'today':fmtLong(S.cur)}.`);}
+    openDay(isDate(arg)?arg:S.cur);}
   else if(view==='history'){if(/^\d{4}-\d{2}$/.test(arg||'')){
       if(isDate(arg+'-01'))month=arg+'-01';
       else{month=todayStr().slice(0,7)+'-01';history.replaceState(null,'','#history');   /* 2026-13 never rolls over into another month */
@@ -736,7 +741,7 @@ $('#logout').addEventListener('click',async()=>{
 $('#pwform').addEventListener('submit',async e=>{
   e.preventDefault();const msg=$('#pwmsg');msg.textContent='';
   try{const r=await api('POST','/auth/password',{current:$('#pw-cur').value,next:$('#pw-new').value,endLinks:$('#pw-links').checked});
-    msg.textContent='Password updated.'+(r.signedOut?' Signed out everywhere else.':'')+(r.linksOff?` ${r.linksOff} coach link${r.linksOff>1?'s':''} switched off.`:'');$('#pw-cur').value=$('#pw-new').value='';$('#pwcur').hidden=false;}
+    msg.textContent='Password updated.'+(r.signedOut?' Signed out everywhere else.':'')+(r.linksOff?` ${r.linksOff} coach link${r.linksOff>1?'s':''} switched off.`:'');$('#pw-cur').value=$('#pw-new').value='';$('#pwcur').hidden=false;$('#pwbox').querySelector('summary').textContent='Change password';}
   catch(err){msg.textContent=err.message;}
 });
 document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(e.target)&&!$('#recheck').contains(e.target))d.open=false;});

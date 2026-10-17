@@ -4,9 +4,9 @@
    #gym/sessions, #gym/d/2026-10-15, #gym/x (all exercises). Uses helpers from app.js. */
 
 let GY=null;                     /* {exercises:[{id,name,notes,parts,sets,last}], workouts:[{id,name,description,items}], parts:[{id,name}], ai} */
-const GSETS={};                  /* exercise id -> its sets, oldest first */
+const GSETS={}, GREAD={};                  /* exercise id -> its sets, oldest first */
 const GDAY={};                   /* date -> sets that day */
-let gSessions=null, gArgs=[], gTok=0, gTimer=null, gBackE='#gym', gStale=false;   /* gStale: GY to load again before the next page */
+let gSessions=null, gArgs=[], gTok=0, gTimer=null, gBackE='#gym', gStale=false, gReadAt=0;   /* gStale: GY to load again before the next page */
 let gCsv=null;                    /* a history CSV being checked: {file, text, res, dateOrder, unit, busy, done, total} */
 let gDraft=null, gAi=null, gMsg='', gReorder=false, gTab='sets', gShow=30, gQuick=null;
 let gPick={q:'',part:''}, gTagBusy='', gTagMsg='', gExOpen=false;   /* the exercise picker's search and body-part filter; AI tagging */
@@ -59,9 +59,9 @@ async function gTagAi(ids){
 }
 function gHead(back,title,extra){return `<div class="gbar"><a class="nav" href="${esc(back)}" aria-label="Back">‹</a><h2>${esc(title)}</h2>${extra||''}</div>`;}
 
-async function gLoad(){const ai=GY?GY.ai:false;GY=await api('GET','/api/gym');if(GY.ai==null)GY.ai=ai;}
-async function gSetsOf(id){if(!GSETS[id])GSETS[id]=(await api('GET','/api/gym/sets?exercise='+id))||[];return GSETS[id];}
-async function gSetsOn(d){if(!GDAY[d])GDAY[d]=(await api('GET','/api/gym/sets?date='+d))||[];return GDAY[d];}
+async function gLoad(){const ai=GY?GY.ai:false;GY=await api('GET','/api/gym');gReadAt=Date.now();if(GY.ai==null)GY.ai=ai;}
+async function gSetsOf(id){if(!GSETS[id]||isStale(GREAD['e'+id])){GSETS[id]=(await api('GET','/api/gym/sets?exercise='+id))||[];GREAD['e'+id]=Date.now();}return GSETS[id];}
+async function gSetsOn(d){if(!GDAY[d]||isStale(GREAD['d'+d])){GDAY[d]=(await api('GET','/api/gym/sets?date='+d))||[];GREAD['d'+d]=Date.now();}return GDAY[d];}
 /* after a set changes: counts on the list pages and the per-day caches are out of date */
 function gChanged(){gSessions=null;Object.keys(GDAY).forEach(k=>delete GDAY[k]);}
 
@@ -91,14 +91,14 @@ async function renderGym(args){
   if(p!=='new'&&!(p==='w'&&b==='edit'))gDraft=null;
   try{
     if(!GY){box.innerHTML='<p class="note">Loading…</p>';await gLoad();}
-    else if(gStale||(p==='w'||p==='e')&&a&&!(p==='w'?GY.workouts.some(w=>w.id===+a):exById(+a)))await gLoad();   /* made in another tab? */
+    else if(gStale||isStale(gReadAt)&&p!=='new'&&!(p==='w'&&b==='edit')||(p==='w'||p==='e')&&a&&!(p==='w'?GY.workouts.some(w=>w.id===+a):exById(+a)))await gLoad();   /* made in another tab? */
     gStale=false;
     let html;
     if(p==='new'||(p==='w'&&b==='edit'))html=gEditPage(p==='new'?null:+a);
     else if(p==='w')html=await gWorkoutPage(+a);
     else if(p==='e')html=await gExercisePage(+a);
     else if(p==='s')html=await gSetPage(+a);
-    else if(p==='sessions'){if(!gSessions)gSessions=await api('GET','/api/gym/sessions');html=gSessionsPage();}
+    else if(p==='sessions'){if(!gSessions||isStale(GREAD.s)){gSessions=await api('GET','/api/gym/sessions');GREAD.s=Date.now();}html=gSessionsPage();}
     else if(p==='d')html=await gDayPage(a);
     else if(p==='x')html=gExercisesPage();
     else html=gHomePage();
@@ -145,7 +145,7 @@ function gAiPreview(){
     ${gAi.workouts.map((w,i)=>`<div class="gaiw"><label class="tog"><input type="checkbox" id="g-aion-${i}" data-g="aion" data-i="${i}"${w.on?' checked':''}> <b>${esc(w.name)}</b> <span class="sub">${w.exercises.length} exercises</span></label>
       ${w.description?`<p>${esc(w.description)}</p>`:''}
       <ol>${w.exercises.map(x=>`<li><b>${esc(x.name)}</b>${x.existing?' <span class="chip ok">yours</span>':' <span class="chip info">new</span>'}${x.parts&&x.parts.length?' '+gPartChips(x.parts):''}${x.target?` <span class="sub">${esc(x.target)}</span>`:''}</li>`).join('')}</ol></div>`).join('')}
-    ${gAi.notes.length?`<details class="adnotes" open><summary>What the AI wasn’t sure about (${gAi.notes.length})</summary><ul>${gAi.notes.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></details>`:''}
+    ${gAi.notes.length?`<details class="adnotes" open><summary>Left out, or the AI wasn’t sure (${gAi.notes.length})</summary><ul>${gAi.notes.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></details>`:''}
     <div class="gactions"><button class="btn" type="button" data-g="aiadd"${n?'':' disabled'}>Add ${n} workout${n===1?'':'s'}</button><button class="ghost" type="button" data-g="aidrop">Discard</button></div>
   </section>`;
 }
@@ -269,23 +269,27 @@ function gAfterExercise(id){
   const tick=()=>{const ms=Date.now()-atMs(last.at);if(!document.body.contains(el)||ms<0||ms>3*3600000){el.textContent='';return;}el.textContent='Rest '+fmtDur(ms);};
   tick();gTimer=setInterval(tick,1000);
 }
+/* An assisted set (negative kg) shows as "assisted 20 kg"; volume counts only weighted sets – assistance isn't load moved. */
+const gKg=kg=>kg<0?`assisted ${kgTxt(-kg)}`:kgTxt(kg);
 function gRecords(sets,A){
   if(!sets.length)return gEmpty('No sets yet.');
-  const max=f=>sets.reduce((b,s)=>(f(s)>f(b)?s:b),sets[0]);
-  const when=s=>`${s.reps} × ${kgTxt(s.kg)} kg · ${fmtShort(s.at.slice(0,10))}`;
-  const b1=max(e1rm), bk=max(s=>s.kg*10000+s.reps), br=max(s=>s.reps*10000+s.kg), bv=max(s=>s.reps*s.kg);
-  let bd=null,bdv=-Infinity;for(const [d,ss] of A.days){const v=ss.reduce((a,s)=>a+s.reps*s.kg,0);if(v>bdv){bdv=v;bd=d;}}
+  const max=(f,l=sets)=>l.reduce((b,s)=>(f(s)>f(b)?s:b),l[0]);
+  const when=s=>`${s.reps} × ${gKg(s.kg)} kg · ${fmtShort(s.at.slice(0,10))}`;
+  const heavy=sets.filter(s=>s.kg>0);
+  const b1=max(e1rm), bk=max(s=>s.kg*10000+s.reps), br=max(s=>s.reps*10000+s.kg), bv=heavy.length?max(s=>s.reps*s.kg,heavy):null;
+  let bd=null,bdv=0;for(const [d,ss] of A.days){const v=ss.reduce((a,s)=>a+(s.kg>0?s.reps*s.kg:0),0);if(v>bdv){bdv=v;bd=d;}}
   const reps=[];for(let r=1;r<=15;r++){const ok=sets.filter(s=>s.reps>=r);if(ok.length)reps.push([r,ok.reduce((b,s)=>(s.kg>b.kg?s:b),ok[0])]);}
+  const noVol='only weighted sets count – assistance isn’t load moved';
   return `<div class="wstats">${[
     e1rm(b1)>0?['Est. 1 rep max',`${kgTxt(Math.round(e1rm(b1)*10)/10)}<i>kg</i>`,when(b1)]:['Est. 1 rep max','–','needs a weighted set of 1–20 reps'],
-    ['Heaviest',`${kgTxt(bk.kg)}<i>kg</i>`,when(bk)],
+    [bk.kg<0?'Least assistance':'Heaviest',`${kgTxt(Math.abs(bk.kg))}<i>kg</i>`,when(bk)],
     ['Most reps',`${br.reps}<i>reps</i>`,when(br)],
-    ['Best set volume',`${kgTxt(Math.round(bv.reps*bv.kg))}<i>kg</i>`,when(bv)],
-    ['Best day volume',`${kgTxt(Math.round(bdv))}<i>kg</i>`,bd?fmtShort(bd):''],
+    bv?['Best set volume',`${kgTxt(Math.round(bv.reps*bv.kg))}<i>kg</i>`,when(bv)]:['Best set volume','–',noVol],
+    bd?['Best day volume',`${kgTxt(Math.round(bdv))}<i>kg</i>`,fmtShort(bd)]:['Best day volume','–',noVol],
     ['Logged',`${sets.length}<i>sets</i>`,`on ${A.days.size} day${A.days.size===1?'':'s'}`],
   ].map(([l,v,s])=>`<div class="stat"><span class="lbl">${l}</span><span class="num">${v}</span><span class="sub">${esc(s)}</span></div>`).join('')}</div>
-  <section class="panel"><h2>Rep maxes</h2><p>The heaviest weight you’ve moved for at least that many reps.</p>
-    <div class="greps">${reps.map(([r,s])=>`<span class="lbl">${r} rep${r>1?'s':''}</span><b>${kgTxt(s.kg)} kg</b><span class="sub">${esc(fmtShort(s.at.slice(0,10)))}${s.reps>r?` (${s.reps} reps)`:''}</span>`).join('')}</div></section>`;
+  <section class="panel"><h2>Rep maxes</h2><p>The heaviest weight you’ve moved for at least that many reps${sets.some(s=>s.kg<0)?' (for assisted sets, the least assistance)':''}.</p>
+    <div class="greps">${reps.map(([r,s])=>`<span class="lbl">${r} rep${r>1?'s':''}</span><b>${gKg(s.kg)} kg</b><span class="sub">${esc(fmtShort(s.at.slice(0,10)))}${s.reps>r?` (${s.reps} reps)`:''}</span>`).join('')}</div></section>`;
 }
 function gChart(sets){
   const box=$('#g-chart');if(!box)return;

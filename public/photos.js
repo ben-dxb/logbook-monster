@@ -8,7 +8,7 @@
    each dated from its own data (ExifDate, exifdate.js) unless the person turns that off; the date picked is used for
    any without one. Uses helpers from app.js and gym.js (gHead, gEmpty). */
 
-let PHOTOS=null, PPOSES=[], PSTYLES=[];
+let PHOTOS=null, PPOSES=[], PSTYLES=[], pReadAt=0;
 let pPose='all', pDate=todayStr(), pUpPose='other', pMsg='', pTok=0, pBusy=false;
 let pUpSay='', pUpErr='';   /* an upload's progress line and its error: kept here so leaving Photos and coming back still shows them */
 let pSel=false, pPick=[];                          /* picking photos to compare, and the ones picked (up to 2) */
@@ -35,7 +35,7 @@ const pLabel=p=>pPoseName(p.pose)+(p.style?' · '+pStyleIn(p.pose,p.style):'');
 function pSort(){if(PHOTOS)PHOTOS.sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id);}
 async function pLoad(){
   const [r,w]=await Promise.all([api('GET','/api/photos'),api('GET','/api/weights')]);
-  PHOTOS=(r&&r.photos)||[];if(r&&r.poses)PPOSES=r.poses;if(r&&r.styles)PSTYLES=r.styles;pAi=!!(r&&r.ai);pSort();
+  PHOTOS=(r&&r.photos)||[];pReadAt=Date.now();if(r&&r.poses)PPOSES=r.poses;if(r&&r.styles)PSTYLES=r.styles;pAi=!!(r&&r.ai);pSort();
   if(w){Object.keys(WEIGHTS).forEach(d=>{delete WEIGHTS[d];});w.forEach(x=>{WEIGHTS[x.date]=x.kg;});}   /* the app's own copy, so a weigh-in cleared on the Daily Tracker is gone here too */
 }
 const pYmd=d=>parse(d).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});
@@ -81,6 +81,7 @@ async function renderPhotos(args){
   const tabs=`<nav class="seg gtabs" aria-label="Progress photos"><a href="#photos"${cmp?'':' aria-current="page"'}>By date</a><a href="#photos/compare"${cmp?' aria-current="page"':''}>Compare</a></nav>`;
   try{
     if(!PHOTOS){box.innerHTML=tabs+'<p class="note">Loading…</p>';await pLoad();if(tok!==pTok||view!=='photos')return;}
+    else if(isStale(pReadAt)&&!pBusy&&!pAiBusy){await pLoad();if(tok!==pTok||view!=='photos')return;}
     if(/^\d+$/.test(a||'')){
       let p=pById(+a);
       if(!p){await pLoad();if(tok!==pTok||view!=='photos')return;p=pById(+a);}   /* uploaded in another tab since? */

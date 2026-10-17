@@ -173,7 +173,9 @@ test('a supplement regime read with AI: line items to check, then added to the l
     ['Vitamin D3', 5000, 'IU', true], ['Omega-3 fish oil', 2, 'capsules', false], ['Methyl B12', 1000, 'mcg', false],
     ['Greens powder', null, 'scoops', false], ['Mystery', null, 'mg', false]]);
   assert.ok(r.body.notes.includes('Guessed the fish oil strength'));
-  assert.ok(r.body.notes.some(n => /Mystery: unit “spoonful”/.test(n)), 'an unknown unit is flagged to set by hand');
+  assert.ok(r.body.notes.some(n => /^Mystery: “3 spoonful” isn’t in a unit the app knows – kept in its notes/.test(n)), 'an unknown unit is flagged to set by hand, its amount kept');
+  assert.strictEqual(r.body.items.find(x => x.name === 'Mystery').notes, 'Amount: 3 spoonful');
+  assert.ok(r.body.notes.includes('1 line with no name was left out.'));
   assert.strictEqual(r.body.model, 'test/model');
   assert.strictEqual((await cara('GET', '/api/supps')).body.supplements.length, 1, 'nothing is saved by reading');
 

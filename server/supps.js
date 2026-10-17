@@ -135,20 +135,27 @@ function aiUnit(v) {
 }
 function tidyItems(raw, user) {
   const notes = Array.isArray(raw.notes) ? raw.notes.filter(n => typeof n === 'string').map(n => n.slice(0, 300)).slice(0, 30) : [];
-  const items = [];
-  for (const r of (Array.isArray(raw.items) ? raw.items : []).filter(isObj).slice(0, MAX_ITEMS)) {
+  const items = [], told = [], all = (Array.isArray(raw.items) ? raw.items : []).filter(isObj);
+  let blank = 0;
+  for (const r of all.slice(0, MAX_ITEMS)) {
     const name = String(r.name == null ? '' : r.name).replace(/\s+/g, ' ').trim().slice(0, 80);
-    if (!name) continue;
-    let unit = aiUnit(r.unit), amount = null;
-    if (!unit) { notes.push(`${name}: unit “${String(r.unit).slice(0, 20)}” isn’t one the app knows – set it before adding`); unit = 'mg'; }
-    else if (r.amount != null && r.amount !== '') {
-      try { amount = amountOf(r.amount); } catch { notes.push(`${name}: left out the amount – it wasn’t a number`); }
+    if (!name) { blank++; continue; }
+    let unit = aiUnit(r.unit), amount = null, said = '';
+    if (!unit) {   /* an amount in a unit the app doesn't have: kept as text in the item's notes rather than turned into mg */
+      const u = String(r.unit == null ? '' : r.unit).replace(/\s+/g, ' ').trim().slice(0, 20), a = r.amount == null ? '' : String(r.amount).trim().slice(0, 20);
+      said = [a, u].filter(Boolean).join(' ');
+      told.push(said ? `${name}: “${said}” isn’t in a unit the app knows – kept in its notes; pick an amount and unit before adding` : `${name}: no unit given – pick one before adding`);
+      unit = 'mg';
+    } else if (r.amount != null && r.amount !== '') {
+      try { amount = amountOf(r.amount); } catch { told.push(`${name}: left out the amount – it wasn’t a number`); }
     }
-    const row = q.mineByName.get(user.id, name);
-    items.push({ name, amount, unit, notes: String(r.notes == null ? '' : r.notes).replace(/\s+/g, ' ').trim().slice(0, 300), existing: row ? row.id : null });
+    const row = q.mineByName.get(user.id, name), note = String(r.notes == null ? '' : r.notes).replace(/\s+/g, ' ').trim();
+    items.push({ name, amount, unit, notes: (said ? `Amount: ${said}` + (note ? ' – ' + note : '') : note).slice(0, 300), existing: row ? row.id : null });
   }
+  if (blank) told.push(`${blank} line${blank === 1 ? '' : 's'} with no name ${blank === 1 ? 'was' : 'were'} left out.`);
+  if (all.length > MAX_ITEMS) told.push(`The regime has ${all.length} lines; one read takes the first ${MAX_ITEMS}, so ${all.length - MAX_ITEMS} were left out: ${all.slice(MAX_ITEMS).map(r => String(r.name == null ? '' : r.name).trim().slice(0, 40)).filter(Boolean).join(', ').slice(0, 400) || 'no names'}.`);
   if (!items.length) throw Object.assign(new Error('The AI couldn’t find any supplements in that file'), { status: 422 });
-  return { items, notes };
+  return { items, notes: [...told, ...notes] };
 }
 
 /* The OpenRouter key is the admin's, so each account gets a handful of reads an hour. */

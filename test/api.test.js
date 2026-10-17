@@ -701,7 +701,7 @@ test('gym: exercises, workouts and sets belong to one account and are checked', 
   assert.strictEqual(plan.workouts.length, 1);                                          /* empty workout dropped */
   assert.deepStrictEqual(plan.workouts[0].exercises, [{ name: 'Hack squat', target: '1 × 5–8 heavy', existing: ex.body.id, parts: ['chest'] },
     { name: 'Panatta high row', target: '2 × 8–15', existing: null, parts: ['back', 'biceps'] }]);
-  assert.deepStrictEqual(plan.notes, ['Guessed the row machine']);
+  assert.deepStrictEqual(plan.notes, ['Nothing here: no exercises could be read, so it was left out.', 'Guessed the row machine']);
   const imp = await me.req('POST', '/api/gym/import', { workouts: plan.workouts });
   assert.strictEqual(imp.status, 200);
   assert.deepStrictEqual(imp.body.workouts.map(x => x.name), ['Legs', 'Monday — Upper']);
