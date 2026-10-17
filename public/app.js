@@ -12,7 +12,7 @@ const todayStr=()=>ymd(new Date());
 /* this device's time zone, sent with every request so the server's "today" is yours (server/dates.js) */
 const TZ=(()=>{try{return Intl.DateTimeFormat().resolvedOptions().timeZone||'';}catch{return '';}})();
 const TZH=TZ&&/^[\x21-\x7e]+$/.test(TZ)?{'x-time-zone':TZ}:{};
-{const a=document.querySelector('a[href="/api/export"]');if(a&&TZH['x-time-zone'])a.href='/api/export?tz='+encodeURIComponent(TZ);}   /* a plain link: the zone goes in the address */
+if(TZH['x-time-zone'])document.querySelectorAll('a[href="/api/export"]').forEach(a=>{a.href='/api/export?tz='+encodeURIComponent(TZ);});   /* a plain link: the zone goes in the address */
 /* a real date (not 2026-02-31) from 2000 to a year from today – what the server stores (server/dates.js) */
 const lastDate=()=>{const d=new Date();d.setFullYear(d.getFullYear()+1);return ymd(d);};
 const realDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||'')&&ymd(parse(s))===s;
@@ -793,10 +793,19 @@ $('#logout').addEventListener('click',async()=>{
 });
 $('#pwform').addEventListener('submit',async e=>{
   e.preventDefault();const msg=$('#pwmsg');msg.textContent='';
-  try{const r=await api('POST','/auth/password',{current:$('#pw-cur').value,next:$('#pw-new').value,endLinks:$('#pw-links').checked});
-    msg.textContent='Password updated.'+(r.signedOut?' Signed out everywhere else.':'')+(r.linksOff?` ${r.linksOff} coach link${r.linksOff>1?'s':''} switched off.`:'');$('#pw-cur').value=$('#pw-new').value='';$('#pwcur').hidden=false;$('#pwbox').querySelector('summary').textContent='Change password';}
+  try{const r=await api('POST','/auth/password',{current:$('#pw-cur').value,next:$('#pw-new').value,endLinks:!$('#pw-linksf').hidden&&$('#pw-links').checked});
+    msg.textContent='Password updated.'+(r.signedOut?' Signed out everywhere else.':'')+(r.linksOff?` ${r.linksOff} coach link${r.linksOff>1?'s':''} switched off.`:'');$('#pw-cur').value=$('#pw-new').value='';if(r.linksOff)pwLinks();$('#pwcur').hidden=false;$('#pwbox').querySelector('summary').textContent='Change password';}
   catch(err){msg.textContent=err.message;}
 });
+/* "Also switch off my coach links" (unticked): shown only while there are live links, naming them, so nothing ends unseen */
+async function pwLinks(){
+  const f=$('#pw-linksf');let live=[];
+  try{const r=await api('GET','/api/shares');live=((r&&r.shares)||[]).filter(x=>x.live);}catch{}
+  f.hidden=!live.length;$('#pw-links').checked=false;
+  const names=live.map(x=>x.label||'no name').slice(0,4).join(', ')+(live.length>4?`, +${live.length-4} more`:'');
+  $('#pw-linkst').textContent=`Also switch off my ${live.length===1?'coach link':live.length+' coach links'} (${names})`;
+}
+$('#pwbox').addEventListener('toggle',()=>{if($('#pwbox').open)pwLinks();});
 document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(e.target)&&!$('#recheck').contains(e.target))d.open=false;});
 
 /* two-step sign-in: set up (key + otpauth link, confirmed with one code, then 10 recovery codes) and switch off */
@@ -842,6 +851,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
     const me=await api('GET','/api/me');csrf=me.csrf;ME=me.email;UID=me.id;
     $('#who').textContent=me.name||me.email;$('#who').title=me.email;
     if(!me.hasPassword){$('#pwcur').hidden=true;$('#pwbox').querySelector('summary').textContent='Set a password';}
+    if(me.contact){$('#contactlink').href='mailto:'+me.contact;$('#contactlink').hidden=false;}
     isAdmin=!!me.admin;aiOn=!!me.ai;planFiles=me.planFiles!==false;$('#adminlink').hidden=!isAdmin;
     const [settings,sums,weights,defs,lib]=await Promise.all([api('GET','/api/settings'),api('GET','/api/days'),api('GET','/api/weights'),api('GET','/api/defaults'),
       api('GET','/api/foods').catch(e=>{if(e.signedOut)throw e;libErr=e.message;return null;})]);   /* without the food library the rest still works */

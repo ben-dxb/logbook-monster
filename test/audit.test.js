@@ -127,7 +127,7 @@ test('sign-ins: ok, failed (email masked), locked; sign-out; password change', a
 
   const s2 = await signIn('ann@example.com');
   await s2('POST', '/api/shares', { label: 'pw', expires: daysAgo(-7) });
-  const p = await ann('POST', '/auth/password', { current: PASSWORD, next: NEW_PASSWORD });
+  const p = await ann('POST', '/auth/password', { current: PASSWORD, next: NEW_PASSWORD, endLinks: true });
   assert.strictEqual(p.status, 200);
   r = last('password.changed', ANN);
   assert.deepStrictEqual(r.detail, { signedOut: 1, linksOff: 1 });
