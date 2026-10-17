@@ -140,7 +140,7 @@ router.use((req, res, next) => { req.today = todayIn(req.get('x-time-zone') || (
 /* Every account's saves, whatever the route: the tracker saves a changed day 0.6 s after the last edit, so even nonstop
    editing stays far below this; a script hammering saves doesn't. Photo uploads have their own byte, count and rate caps. */
 const SAFE = new Set(['GET', 'HEAD', 'OPTIONS']);
-const photoUpload = req => (req.method === 'POST' && req.path === '/photos') || (req.method === 'PUT' && /^\/photos\/\d+\/thumb$/.test(req.path));
+const photoUpload = req => (req.method === 'POST' && req.path === '/photos') || (req.method === 'PUT' && /^\/photos\/\d+\/(thumb|mid)$/.test(req.path));
 router.use(rateLimit({
   windowMs: 10 * 60 * 1000, limit: config.writeRateLimit, standardHeaders: 'draft-7', legacyHeaders: false,
   keyGenerator: req => 'u' + req.user.id, skip: req => SAFE.has(req.method) || photoUpload(req),

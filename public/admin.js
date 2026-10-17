@@ -662,6 +662,9 @@ let pdTok=0, pdN=0;
 async function pdCount(){
   const from=$('#ad-pd-from').value, to=$('#ad-pd-to').value, msg=$('#ad-pdmsg'), btn=$('#ad-pd-btn'), tok=++pdTok;
   pdN=0;btn.disabled=true;
+  /* "Download" takes the range picked (a ZIP of those photos), or every photo while no range is */
+  const dl=$('#ad-pd-dl'), range=isDate(from)&&isDate(to)&&from<=to;
+  dl.href=range?`/api/photos/zip?from=${from}&to=${to}`:'/api/photos/zip';dl.textContent=range?'Download the photos in this range':'Download all my photos';
   if(!isDate(from)||!isDate(to)){msg.textContent='';return;}
   if(from>to){msg.textContent='The From date is after the To date.';return;}
   msg.textContent='Counting…';
@@ -677,7 +680,7 @@ $('#ad-pdel').addEventListener('submit',async e=>{
   btn.disabled=true;$('#ad-pdmsg').textContent='Deleting…';
   try{const r=await api('DELETE',`/api/photos?from=${from}&to=${to}`);
     PHOTOS=null;pPick=[];                      /* the Photos page loads again next time */
-    $('#ad-pd-from').value=$('#ad-pd-to').value='';pdN=0;++pdTok;
+    $('#ad-pd-from').value=$('#ad-pd-to').value='';pdN=0;++pdTok;$('#ad-pd-dl').href='/api/photos/zip';$('#ad-pd-dl').textContent='Download all my photos';
     $('#ad-pdmsg').textContent=`Deleted ${r.deleted} photo${r.deleted===1?'':'s'}.`;}
   catch(err){if(!err.signedOut)$('#ad-pdmsg').textContent=err.message;btn.disabled=!pdN;}
 });
@@ -883,7 +886,7 @@ const LG_EV={'signin.ok':'Signed in','signin.failed':'Failed sign-in','signin.lo
   'recovery.used':'Recovery code used','twostep.on':'Two-step sign-in on','twostep.off':'Two-step sign-in off','recheck.ok':'Confirmed it’s you',
   'recheck.failed':'Failed to confirm it’s you',signout:'Signed out','password.changed':'Password changed','google.linked':'Google linked','invite.created':'Invite made','invite.accepted':'Invite accepted',
   'account.removed':'Account removed','ai.settings':'AI settings changed','email.settings':'Email settings changed','options.changed':'Options changed',
-  export:'Data downloaded','day.deleted':'Day deleted','checklist.reset':'Checklist reset','photos.deleted':'Photos deleted','food.removed':'Shared food removed',
+  export:'Data downloaded','day.deleted':'Day deleted','checklist.reset':'Checklist reset','photos.deleted':'Photos deleted','photos.downloaded':'Photos downloaded','food.removed':'Shared food removed',
   'supp.removed':'Shared supplement removed','coach.created':'Coach link made','coach.off':'Coach link switched off','coach.used':'Coach link opened','ai.cap':'AI daily limit reached'};
 let LG=null, ML=null;
 const lgDetail=d=>Object.entries(d||{}).filter(([k])=>k!=='eh').map(([k,v])=>`${k}: ${Array.isArray(v)?v.join(', ')||'–':v}`).join(' · ');
