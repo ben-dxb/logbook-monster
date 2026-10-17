@@ -5,10 +5,14 @@
    when SESSION_SECRET isn't set, the .session-secret file the app's sealed secrets depend on. Only this user can read it
    (folders 0700, files 0600). Reads DB_PATH / PHOTO_DIR / SESSION_SECRET from .env like the app.
 
-   Order: photos, then the database, then the photos again (only files not copied yet). A photo deleted while the backup runs was
-   already copied by the first pass, so no row in the database copy is left without its file; one added before the database copy
-   is picked up by the second pass. A file with no row (added after the database copy) is only an extra file – the app removes
-   such files an hour after it starts on the restored copy. Check a backup with npm run restore-check -- <its folder>. */
+   Order: photos, then the database, then the photos again (only files not copied yet), then a check of the copy. The app writes a
+   photo's file before its row and deletes the row before the file, so every row in the database copy had its file on disk when
+   the copy was made: copied by the first pass if it was there already, by the second if it was added after the first pass and
+   still there. The one way left to miss a file – added after the first pass, then deleted (or its thumbnail replaced) after the
+   database copy and before the second pass – is a photo its owner had already deleted: the check takes that row out of the copy
+   (a lost thumbnail only clears the thumbnail; the app makes a new one). So no row in the backup is without its file.
+   A file with no row (added after the database copy) is only an extra file – the app removes such files an hour after it starts
+   on the restored copy. Check a backup with npm run restore-check -- <its folder>. */
 process.umask(0o077);
 const fs = require('fs');
 const path = require('path');
@@ -56,6 +60,19 @@ db.close();
 fs.chmodSync(dbFile, 0o600);
 const [n2, b2] = copyPhotos();
 
+/* rows of the copy whose file isn't in it: deleted from the live folder while the backup ran (see the order above) */
+const copy = new DatabaseSync(dbFile);
+let gone = 0;
+if (copy.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'photos'").get()) {
+  const has = f => fs.existsSync(path.join(photos, path.basename(f)));
+  for (const r of copy.prepare('SELECT id, file, thumb FROM photos').all()) {
+    if (!has(r.file)) { copy.prepare('DELETE FROM photos WHERE id = ?').run(r.id); gone++; }
+    else if (r.thumb && !has(r.thumb)) copy.prepare('UPDATE photos SET thumb = NULL, thumb_size = 0 WHERE id = ?').run(r.id);
+  }
+}
+copy.close();
+fs.chmodSync(dbFile, 0o600);
+
 let secretNote = 'SESSION_SECRET is set (in .env or the environment): keep a copy of .env – it isn’t in this backup.';
 if (!hadSecret) {
   const file = path.join(path.dirname(config.dbPath), '.session-secret');
@@ -70,7 +87,7 @@ if (process.env.SEAL_KEY) secretNote += ' SEAL_KEY is set: keep it (it is in .en
 const dbSize = fs.statSync(dbFile).size;
 console.log(`Backup in ${dest}
   database  ${path.basename(dbFile)}  ${mb(dbSize)}
-  photos    ${n1 + n2} files  ${mb(b1 + b2)}${n2 ? ` (${n2} added while the backup ran)` : ''}
+  photos    ${n1 + n2} files  ${mb(b1 + b2)}${n2 ? ` (${n2} added while the backup ran)` : ''}${gone ? `; ${gone} deleted while it ran left out` : ''}
   total     ${mb(dbSize + b1 + b2)} in ${((Date.now() - t0) / 1000).toFixed(1)} s
 ${secretNote}
 Only this user can open it (folders 0700, files 0600 – on Windows, the folder's own permissions apply). Copy it off this machine.`);

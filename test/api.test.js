@@ -193,7 +193,7 @@ test('no app defaults: every account starts with no meal plan, and a plan is che
   await admin.req('GET', '/auth/config');
   assert.strictEqual((await admin.req('POST', '/auth/login', { email: 'me@example.com', password: 'longenough1' })).status, 200);
   assert.strictEqual((await admin.req('GET', '/api/me')).body.admin, true);
-  assert.deepStrictEqual((await admin.req('GET', '/api/defaults')).body, { mine: null, myVersions: [] });
+  assert.deepStrictEqual((await admin.req('GET', '/api/defaults')).body, { myVersions: [] });
   /* the super admin can't set a plan for everyone any more */
   assert.strictEqual((await admin.req('PUT', '/api/admin/defaults', { schedule: null })).status, 404);
 

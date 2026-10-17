@@ -206,5 +206,5 @@ test('PR-PL-043: a damaged saved plan gets a plain message, never the parser’s
     assert.strictEqual(r.body.error, 'Your saved meal plan couldn’t be read – ask the person who runs this app to look at it', `${m} ${u}`);
   }
   assert.strictEqual((await cara('DELETE', '/api/my/defaults')).status, 200, 'deleting the whole plan still works');
-  assert.deepStrictEqual((await cara('GET', '/api/defaults')).body, { mine: null, myVersions: [] });
+  assert.deepStrictEqual((await cara('GET', '/api/defaults')).body, { myVersions: [] });
 });
