@@ -14,7 +14,7 @@ const AD_LEGACY={T:'Training',R:'Rest',S:'Saturday training'};   /* day types be
 const AD_MAX_TPL=12;
 let AD=null, AD_BASE=null, adSaved='', adType=null, adMsg='', adErrs=[], adBusy=false;
 let DEFS={mine:null,myVersions:[]};          /* your plan from the server: the change in effect today and every dated change */
-let DEFS_ON, adVer=null, adFrom='';          /* plan change applied now; the one being edited; the date a save takes effect from ('' = from the start) */
+let DEFS_ON, adVer=null, adFrom='', adFromToday=false;          /* plan change applied now; the one being edited; the date a save takes effect from ('' = from the start) */
 let adAi=null, adNotes=[], adSuper=false;
 const AD_TABS=['ai','people','email','options'];
 let adTab='ai';                              /* the super admin tab shown */
@@ -38,6 +38,7 @@ function adPick(v){
   const td=todayStr(), now=mineOn(td);
   if(v===undefined)v=now;
   adVer=v;adFrom=v&&v!==now?v.from||'':td;   /* a change to today's plan starts today; another change keeps its own date */
+  adFromToday=adFrom===td;   /* …today when it is saved, if the page is left open past midnight */
 }
 
 /* ---------- draft ---------- */
@@ -241,7 +242,7 @@ document.addEventListener('change',e=>{
   else if(a==='tname'){const t=adTpl(adType);if(t&&!t.name.trim())t.name='Day template';renderAdmin();}
   else if(a==='wday'){AD.schedule[+el.dataset.i]=el.value;}
   else if(a==='free'){AD.free[el.dataset.k]=el.checked;adTotals();}
-  else if(a==='from'){adFrom=isDate(el.value)?el.value:'';}
+  else if(a==='from'){adFrom=isDate(el.value)?el.value:'';adFromToday=false;}
   else if(a==='food'&&el.tagName==='SELECT'){AD.foods[el.dataset.id][el.dataset.k]=el.value;const s=$('#ad-fs-'+el.dataset.id);if(s)s.innerHTML=adFoodLine(AD.foods[el.dataset.id]);adTotals();}
   else return;
   adStatus();
@@ -322,6 +323,7 @@ window.addEventListener('beforeunload',e=>{if(adDirty()){e.preventDefault();e.re
 
 async function adSave(){
   adBusy=true;adStatus();
+  if(adFromToday&&adFrom<todayStr())adFrom=todayStr();
   try{const from=adFrom||null;adSaved_(await api('PUT','/api/my/defaults',{...adPayload(),from}),from);}
   catch(err){if(!err.signedOut){adErrs=[err.message];adMsg='Couldn’t save:';}}
   adBusy=false;renderAdmin();
