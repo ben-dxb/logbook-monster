@@ -33,11 +33,12 @@ const q = {
   moveWorkout: db.prepare('UPDATE workouts SET position = ? WHERE user_id = ? AND id = ?'),
   delWorkout: db.prepare('DELETE FROM workouts WHERE user_id = ? AND id = ?'),
 
-  setsFor: db.prepare('SELECT id, exercise_id AS e, reps, kg, note, at FROM sets WHERE user_id = ? AND exercise_id = ? ORDER BY at, id'),
-  setsOn: db.prepare(`SELECT id, exercise_id AS e, reps, kg, note, at FROM sets WHERE user_id = ? AND at >= ? AND at < ? ORDER BY at, id`),
-  set: db.prepare('SELECT id, exercise_id AS e, reps, kg, note, at FROM sets WHERE user_id = ? AND id = ?'),
+  /* updated: the version an edit is checked against (server/version.js); null until the set is first changed */
+  setsFor: db.prepare('SELECT id, exercise_id AS e, reps, kg, note, at, updated_at AS updated FROM sets WHERE user_id = ? AND exercise_id = ? ORDER BY at, id'),
+  setsOn: db.prepare(`SELECT id, exercise_id AS e, reps, kg, note, at, updated_at AS updated FROM sets WHERE user_id = ? AND at >= ? AND at < ? ORDER BY at, id`),
+  set: db.prepare('SELECT id, exercise_id AS e, reps, kg, note, at, updated_at AS updated FROM sets WHERE user_id = ? AND id = ?'),
   addSet: db.prepare('INSERT INTO sets (user_id, exercise_id, reps, kg, note, at) VALUES (?, ?, ?, ?, ?, ?)'),
-  putSet: db.prepare('UPDATE sets SET exercise_id = ?, reps = ?, kg = ?, note = ?, at = ? WHERE user_id = ? AND id = ?'),
+  putSet: db.prepare('UPDATE sets SET exercise_id = ?, reps = ?, kg = ?, note = ?, at = ?, updated_at = ? WHERE user_id = ? AND id = ?'),
   delSet: db.prepare('DELETE FROM sets WHERE user_id = ? AND id = ?'),
   countSets: db.prepare('SELECT COUNT(*) AS n FROM sets WHERE user_id = ?'),
   sessions: db.prepare(`SELECT substr(at, 1, 10) AS date, COUNT(*) AS sets, SUM(reps * kg) AS volume,
@@ -91,7 +92,8 @@ function cleanSet(b, user) {
   return { e, reps, kg: Math.round(kg * 100) / 100, note: text(b.note, 300, 'Note'), at };
 }
 
-/* Workout items point at exercises; anything that isn't one of yours is refused. */
+/* Workout items point at exercises; anything that isn't one of yours is refused. An item can name a new exercise
+   instead ({name}): it is made only when the whole workout is saved (workoutItems, in the same transaction). */
 function cleanWorkout(b, user) {
   if (!isObj(b)) throw fail('Workout must be an object');
   const name = text(b.name, 80, 'Workout name', true);
@@ -99,15 +101,21 @@ function cleanWorkout(b, user) {
   if (!Array.isArray(b.items)) throw fail('Workout needs a list of exercises');
   if (b.items.length > MAX.items) throw fail(`A workout can have ${MAX.items} exercises at most`);
   const items = b.items.map(i => {
-    const e = idOf(isObj(i) ? i.e : NaN);
-    if (!q.exercise.get(user.id, e)) throw fail('One of the exercises in this workout doesn’t exist');
-    const out = { e };
+    let out;
+    if (isObj(i) && i.e == null && i.name != null) out = { name: text(i.name, 80, 'Exercise name', true) };
+    else {
+      const e = idOf(isObj(i) ? i.e : NaN);
+      if (!q.exercise.get(user.id, e)) throw fail('One of the exercises in this workout doesn’t exist');
+      out = { e };
+    }
     const target = text(i.target, 200, 'Target');
     if (target) out.target = target;
     return out;
   });
-  return { name, description, items: JSON.stringify(items) };
+  return { name, description, items };
 }
+/* the items as stored, making the new exercises named in them (call inside tx) */
+const workoutItems = (user, items) => JSON.stringify(items.map(({ name, ...i }) => (name == null ? i : { e: exerciseCreate(user, name), ...i })));
 
 function exerciseCreate(user, name, notes) {
   const n = text(name, 80, 'Exercise name', true);
@@ -253,8 +261,7 @@ router.post('/workouts', send(req => {
   const w = cleanWorkout(req.body, req.user);
   const c = q.countWorkouts.get(req.user.id);
   if (c.n >= MAX.workouts) throw fail(`You can have ${MAX.workouts} workouts at most`);
-  const id = Number(q.addWorkout.run(req.user.id, w.name, w.description, w.items, c.pos + 1).lastInsertRowid);
-  return { id };
+  return tx(() => ({ id: Number(q.addWorkout.run(req.user.id, w.name, w.description, workoutItems(req.user, w.items), c.pos + 1).lastInsertRowid) }));
 }));
 router.put('/workouts/:id', send(req => {
   const id = idOf(req.params.id);
@@ -263,7 +270,7 @@ router.put('/workouts/:id', send(req => {
   const w = cleanWorkout(req.body, req.user);
   version.check(req, old.updated_at);
   const updated = version.stamp();
-  q.putWorkout.run(w.name, w.description, w.items, updated, req.user.id, id);
+  tx(() => q.putWorkout.run(w.name, w.description, workoutItems(req.user, w.items), updated, req.user.id, id));
   return { id, updated };
 }));
 router.delete('/workouts/:id', send(req => { q.delWorkout.run(req.user.id, idOf(req.params.id)); return { ok: true }; }));
@@ -289,10 +296,11 @@ router.post('/sets', send(req => {
   return q.set.get(req.user.id, Number(q.addSet.run(req.user.id, s.e, s.reps, s.kg, s.note, s.at).lastInsertRowid));
 }));
 router.put('/sets/:id', send(req => {
-  const id = idOf(req.params.id);
-  if (!q.set.get(req.user.id, id)) throw notFound('set');
+  const id = idOf(req.params.id), old = q.set.get(req.user.id, id);
+  if (!old) throw notFound('set');
   const s = cleanSet(req.body, req.user);
-  q.putSet.run(s.e, s.reps, s.kg, s.note, s.at, req.user.id, id);
+  version.check(req, old.updated);
+  q.putSet.run(s.e, s.reps, s.kg, s.note, s.at, version.stamp(), req.user.id, id);
   return q.set.get(req.user.id, id);
 }));
 router.delete('/sets/:id', send(req => { q.delSet.run(req.user.id, idOf(req.params.id)); return { ok: true }; }));
@@ -327,7 +335,7 @@ router.post('/import', send(req => {
       });
       const c = cleanWorkout({ name: w.name, description: w.description, items }, req.user);
       if (q.countWorkouts.get(req.user.id).n >= MAX.workouts) throw fail(`You can have ${MAX.workouts} workouts at most`);
-      q.addWorkout.run(req.user.id, c.name, c.description, c.items, ++pos);
+      q.addWorkout.run(req.user.id, c.name, c.description, workoutItems(req.user, c.items), ++pos);
     }
   });
   return overview(req.user);

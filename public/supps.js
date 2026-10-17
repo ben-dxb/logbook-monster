@@ -31,6 +31,18 @@ async function sSetTrend(el){
   try{const r=await api('PUT','/api/supps/trend',{name,on});sTrends(r.trends);}
   catch(e){sync(!on);if(!e.signedOut)alert(e.message);}
 }
+/* back to this tab: the library and the day's log again, in case another tab or device changed them (forms being filled in stay) */
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden||!SUPPS)return;
+  Object.keys(SLOG).forEach(d=>{delete SLOG[d];});
+  if(view!=='supps')return;
+  const tok=sTok, onLog=!!$('#s-log'), onList=!!$('#s-list');
+  sLoad().then(async()=>{
+    if(tok!==sTok||view!=='supps')return;
+    if(onList&&$('#s-list'))renderSuppList();
+    if(onLog&&$('#s-log')){await sLogOn(sDate);if(tok===sTok&&view==='supps')renderSuppLog();}
+  }).catch(()=>{});
+});
 async function sLogOn(d){if(!SLOG[d])SLOG[d]=((await api('GET','/api/supps/log?date='+d))||{}).entries||[];return SLOG[d];}
 
 async function renderSupps(args){
@@ -41,11 +53,13 @@ async function renderSupps(args){
   try{
     if(!SUPPS){box.innerHTML=tabs+'<p class="note">Loading…</p>';await sLoad();if(tok!==sTok||view!=='supps')return;}
     if(lib&&(a==='new'||/^\d+$/.test(a||''))){
-      const s=a==='new'?null:sById(+a);
+      let s=a==='new'?null:sById(+a);
+      if(a!=='new'&&!(s&&s.mine)){await sLoad();if(tok!==sTok||view!=='supps')return;s=sById(+a);}   /* added in another tab since? */
       if(a!=='new'&&!(s&&s.mine)){box.innerHTML=tabs+gHead('#supps/lib','Supplement')+gEmpty('That supplement isn’t in your library.');return;}
       box.innerHTML=tabs+sEditPage(s);$('#s-name').focus();return;
     }
     if(lib){box.innerHTML=tabs+sLibPage();renderSuppList();return;}
+    if(p&&!isDate(p)){box.innerHTML=tabs+gHead('#supps','Supplements')+gEmpty(`There’s no such day as “${p}”.`)+'<p><a class="ghost" href="#supps">Go to today</a></p>';return;}
     if(isDate(p))sDate=p;
     box.innerHTML=tabs+sLogPage();
     await sLogOn(sDate);if(tok!==sTok||view!=='supps')return;
@@ -109,7 +123,8 @@ async function sSubmit(form){
   try{
     if(save){
       /* the entry is logged even if the library copy can't be made; a copy made before a failed log is used again, not made twice */
-      let n=sMade&&sMade.name===desc?sById(sMade.id):null, libErr='';
+      const same=desc.replace(/\s+/g,' ').toLowerCase();   /* one of yours by that name already: use it (the server refuses a second) */
+      let n=sMade&&sMade.name===desc?sById(sMade.id):SUPPS.find(x=>x.mine&&x.name.toLowerCase()===same)||null, libErr='';
       if(!n)try{n=await api('POST','/api/supps',{name:desc,amount,unit,notes:'',public:false});SUPPS.push(n);sSort();sMade={name:desc,id:n.id};}
         catch(e){if(e.signedOut)throw e;libErr=e.message;}
       await sAdd(n?{date:sDate,supplement:n.id,amount,unit}:{date:sDate,name:desc,amount,unit});
@@ -237,7 +252,7 @@ async function sSaveLib(form){
     const s=await api(id?'PUT':'POST','/api/supps'+(id?'/'+id:''),body);
     SUPPS=SUPPS.filter(x=>x.id!==s.id);SUPPS.push(s);sSort();
     sMsg=id?`Saved “${s.name}”.`:`Added “${s.name}” to your library.`;go('supps/lib');
-  }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message;err.hidden=false;}}
+  }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message;err.hidden=false;if(/No such/.test(e.message))sLoad().catch(()=>{});}}
 }
 async function sDeleteLib(id){
   const s=sById(id);if(!s)return;

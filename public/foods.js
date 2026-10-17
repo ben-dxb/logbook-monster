@@ -98,15 +98,27 @@ async function renderFoods(args){
   if(view!=='foods')return;
   const tok=++fTok, box=$('#f-body'), [p]=args||[];
   if(p==='new'||/^\d+$/.test(p||'')){
-    const food=p==='new'?null:fById(+p);
-    if(p!=='new'&&!(food&&food.mine)){box.innerHTML=gHead('#foods','Food')+gEmpty('That food isn’t in your library.');return;}
+    let food=p==='new'?null:fById(+p);
+    if(p!=='new'&&!(food&&food.mine)){   /* added in another tab since the list was read? read it again before saying it isn't there */
+      box.innerHTML=gHead('#foods','Food')+'<p class="note">Loading…</p>';
+      try{await fFetch();}catch(e){if(e.signedOut)return;}
+      if(tok!==fTok||view!=='foods')return;
+      food=fById(+p);
+      if(!(food&&food.mine)){box.innerHTML=gHead('#foods','Food')+gEmpty('That food isn’t in your library.');return;}
+    }
     fEdit={ai:food&&food.ai?JSON.parse(JSON.stringify(food.ai)):null,unitSet:!!food};
     box.innerHTML=fEditPage(food);fPaintAi();fPaintState();$('#f-name').focus();return;
   }
   box.innerHTML=fListPage();renderFoodList();
-  try{const r=await api('GET','/api/foods');if(tok!==fTok||view!=='foods'||!r)return;LIB=r.foods;fAiOn=!!r.ai;fSort();renderFoodList();}
+  try{if(!await fFetch()||tok!==fTok||view!=='foods')return;renderFoodList();}
   catch(e){if(!e.signedOut&&tok===fTok){fMsg='Couldn’t refresh the library: '+e.message;renderFoodList();}}
 }
+async function fFetch(){const r=await api('GET','/api/foods');if(!r)return false;LIB=r.foods;fAiOn=!!r.ai;fSort();return true;}
+/* back to this tab: the library again, in case another tab or device changed it (the list only – a form being filled in stays) */
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden||view!=='foods'||$('#f-form'))return;
+  const tok=fTok;fFetch().then(ok=>{if(ok&&tok===fTok&&view==='foods'&&!$('#f-form'))renderFoodList();}).catch(()=>{});
+});
 
 /* ---------- filters ---------- */
 const TAGS=[['hp','High protein'],['lc','Low calorie'],['recipe','Has recipe'],['ai','AI estimates']];
@@ -292,7 +304,8 @@ async function fSave(form){
     const food=await api(id?'PUT':'POST','/api/foods'+(id?'/'+id:''),body,id&&form.dataset.ver||undefined);
     LIB=LIB.filter(x=>x.id!==food.id);LIB.push(food);fSort();
     fMsg=id?`Saved “${food.name}”.`:`Added “${food.name}” to your library.`;go('foods');
-  }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message+(fAiOn&&/calories or macros/.test(e.message)?' – or tap “Fill blanks with AI”.':'');err.hidden=false;}}
+  }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message+(fAiOn&&/calories or macros/.test(e.message)?' – or tap “Fill blanks with AI”.':'');err.hidden=false;
+    if(e.conflict||/No such/.test(e.message))fFetch().catch(()=>{});}}   /* changed or gone elsewhere: the list shows it as it is now */
 }
 async function fDelete(id){
   const f=fById(id);if(!f)return;
@@ -322,7 +335,7 @@ document.addEventListener('click',e=>{
   else if(a==='clear'){Object.assign(fF,{kind:'all',who:'all',tags:[],group:''});fQuery='';fKeep();$('#f-q').value='';$('#f-who').value='all';
     document.querySelectorAll('[data-fa=tag]').forEach(x=>x.setAttribute('aria-pressed','false'));renderFoodList();}
   else if(a==='wtall'){fF.wt=b.dataset.v;fWt.clear();fKeep();$('#f-wt').innerHTML=fWtSeg(fF.wt,'wtall','');renderFoodList();}
-  else if(a==='wt'){fWt.set(b.dataset.id,b.dataset.v);if(fAdding&&fAdding.id===b.dataset.id)fAdding=null;renderFoodList();
+  else if(a==='wt'){fWt.set(b.dataset.id,b.dataset.v);if(fAdding&&String(fAdding.id)===b.dataset.id)fAdding=null;renderFoodList();   /* your own foods have number ids */
     const nb=document.querySelector(`.fcard[data-id="${b.dataset.id}"] [data-fa=wt][data-v=${b.dataset.v}]`);if(nb)nb.focus();}
   else if(a==='add'){const f=fShown(fById(b.dataset.id));if(!f)return;fAdding={id:f.id,date:S.cur,qty:libDefault(f.unit),where:'off'};renderFoodList();const q=$('#f-aqty');if(q)q.focus();}
   else if(a==='cancel'){fAdding=null;renderFoodList();}

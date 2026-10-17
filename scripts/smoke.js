@@ -256,6 +256,96 @@ async function phase1c(browser) {
   await ctx.close();
 }
 
+/* Phase 2C, gym / foods / supplements / photos: lists read again when the tab comes back and before saying a deep link's item isn't
+   there, set edits checked against the version loaded, 🏆 for less assistance and a Records tab that loads with only assisted sets,
+   Raw/Cooked closes your own food's Add form, an impossible #supps day says so, the photo form's date stops at today, an AI pose
+   saved from the form stays the AI's, and one punctuation mark at the end of the Dashboard's photo error. */
+async function phase2cLibrary(browser) {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } }), pg = await ctx.newPage(), errs = [];
+  pg.on('pageerror', e => errs.push(e.message));
+  const hash = async (h, sel) => { await pg.evaluate(h => { location.hash = h; }, h); if (sel) await pg.waitForSelector(sel, { timeout: 5000 }); };
+  const back = () => pg.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));   /* the tab shown again */
+  await pg.goto(BASE + '/login'); await signIn(pg); await pg.waitForSelector('#v-dash:not([hidden])');
+  /* the Dashboard's photo card: "…still running? Reload…", not "running?. Reload" */
+  await pg.route('**/api/photos', r => r.abort());
+  await pg.reload(); await pg.waitForFunction(() => /Couldn’t load your photos/.test(document.querySelector('#d-body').textContent), null, { timeout: 5000 });
+  const dt = await pg.textContent('#d-body');
+  expect(/still running\? Reload/.test(dt) && !/\?\./.test(dt), 'the photo card error should end one sentence once: ' + dt.slice(0, 200));
+  await pg.unroute('**/api/photos');
+
+  /* gym: assisted sets, less assistance is a 🏆; Records loads */
+  const ex = await pg.evaluate(async () => {
+    const e = await api('POST', '/api/gym/exercises', { name: 'Smoke assisted pull-up' });
+    await api('POST', '/api/gym/sets', { exercise: e.id, reps: 8, kg: -30, at: addDays(todayStr(), -2) + 'T10:00' });
+    await api('POST', '/api/gym/sets', { exercise: e.id, reps: 8, kg: -20, at: addDays(todayStr(), -1) + 'T10:00' });
+    return e.id;
+  });
+  await hash('#gym/e/' + ex, '#g-quick');
+  expect(await pg.locator('#g-body .gtro').count() === 1, 'less assistance should get a 🏆');
+  await pg.click('[data-g=tab][data-t=records]'); await pg.waitForSelector('#g-body .wstats', { timeout: 5000 });
+  expect(!/Couldn’t load/.test(await pg.textContent('#g-body')), 'Records should load with only assisted sets');
+  await pg.click('[data-g=tab][data-t=sets]'); await pg.waitForSelector('#g-body .gday');
+  /* a set logged in another tab shows when this one is shown again; a workout made elsewhere opens */
+  await pg.evaluate(ex => api('POST', '/api/gym/sets', { exercise: ex, reps: 8, kg: -10, at: todayStr() + 'T09:00' }), ex);
+  await back();
+  await pg.waitForFunction(() => document.querySelectorAll('#g-body .gset').length === 3, null, { timeout: 5000 });
+  const w = await pg.evaluate(ex => api('POST', '/api/gym/workouts', { name: 'Smoke other tab workout', items: [{ e: ex }] }), ex);
+  await hash('#gym/w/' + w.id); await pg.waitForFunction(() => /Smoke other tab workout/.test(document.querySelector('#g-body h2').textContent), null, { timeout: 5000 });
+  /* a set changed in another tab since this one loaded it: the save is refused and says why */
+  const sid = await pg.evaluate(ex => api('GET', '/api/gym/sets?exercise=' + ex).then(l => l[0].id), ex);
+  await hash('#gym/s/' + sid, '#g-setform');
+  await pg.evaluate(async ([id, ex]) => api('PUT', '/api/gym/sets/' + id, { exercise: ex, reps: 6, kg: -30, note: 'other tab', at: addDays(todayStr(), -2) + 'T10:00' }), [sid, ex]);
+  await pg.fill('#g-sr', '9'); await pg.click('#g-setform button[type=submit]');
+  await pg.waitForFunction(() => /another tab or device/.test(document.querySelector('#g-smsg').textContent), null, { timeout: 5000 });
+  expect(await pg.evaluate(id => api('GET', '/api/gym/sets/' + id).then(s => s.reps === 6 && s.note === 'other tab'), sid), 'the other tab’s edit should stay');
+
+  /* foods: Raw/Cooked on your own food closes its Add form; a food made in another tab opens by its link */
+  const f = await pg.evaluate(() => api('POST', '/api/foods', { name: 'Smoke thigh (raw)', unit: 'g', kind: 'ingredient', k: 180, p: 20, c: 0, f: 10, state: 'raw', yield: 75 }));
+  await hash('#foods', '#f-list');
+  const card = `.fcard[data-id="${f.id}"]`;
+  await pg.waitForSelector(card, { timeout: 5000 });
+  await pg.click(card + ' [data-fa=add]'); await pg.waitForSelector('#f-addform');
+  await pg.click(card + ' [data-fa=wt][data-v=cooked]');
+  await pg.waitForFunction(() => !document.querySelector('#f-addform'), null, { timeout: 5000 });
+  const f2 = await pg.evaluate(() => api('POST', '/api/foods', { name: 'Smoke other tab food', unit: 'g', kind: 'ingredient', k: 100 }));
+  await hash('#foods/' + f2.id, '#f-form');
+  expect(await pg.inputValue('#f-name') === 'Smoke other tab food', 'a food made in another tab should open by its link');
+
+  /* supplements: the same for the library, an impossible day says so, another tab's entry shows when this tab is shown again */
+  await hash('#supps/lib', '#s-list');
+  const s2 = await pg.evaluate(() => api('POST', '/api/supps', { name: 'Smoke other tab supp', amount: 1, unit: 'g' }));
+  await hash('#supps/lib/' + s2.id, '#s-lform');
+  await hash('#supps/2026-02-31'); await pg.waitForFunction(() => /no such day/.test(document.querySelector('#s-body').textContent), null, { timeout: 5000 });
+  await hash('#supps', '#s-log .empty, #s-log .orow');
+  await pg.evaluate(() => api('POST', '/api/supps/log', { date: todayStr(), name: 'Smoke other tab entry', amount: 2, unit: 'g' }));
+  await back();
+  await pg.waitForFunction(() => /Smoke other tab entry/.test(document.querySelector('#s-log').textContent), null, { timeout: 5000 });
+
+  /* photos: one uploaded in another tab shows when this one is shown again and opens by its link; the form's date stops at today */
+  await hash('#photos', '#p-list');
+  const up = () => pg.evaluate(async () => {
+    const c = document.createElement('canvas'); c.width = c.height = 16;
+    const b = await new Promise(r => c.toBlob(r, 'image/jpeg'));
+    return pSend('POST', '/api/photos?date=' + todayStr() + '&pose=front', b);
+  });
+  const ph = await up();
+  await back();
+  await pg.waitForSelector(`#p-list [data-pid="${ph.id}"]`, { timeout: 5000 });
+  const ph2 = await up();
+  await hash('#photos/' + ph2.id, '#p-eform');
+  expect(await pg.getAttribute('#p-edate', 'max') === await pg.evaluate(() => todayStr()), 'the photo date should stop at today');
+  /* the AI's answer saved from the form is sent as the AI's */
+  await pg.evaluate(() => { document.querySelector('#p-eform').dataset.ai = JSON.stringify({ pose: 'back', style: '' }); });
+  await pg.selectOption('#p-epose', 'back'); await pg.selectOption('#p-estyle', '');
+  const put = pg.waitForRequest(r => r.method() === 'PUT' && /\/api\/photos\/\d+$/.test(r.url()));
+  await pg.click('#p-eform button[type=submit]');
+  expect((await put).postDataJSON().ai === true, 'saving the AI’s answer should say so');
+  expect(await pg.evaluate(() => !pUntagged({ poseAi: true, aiSaw: true, pose: 'other', style: '' }) && pUntagged({ poseAi: true, aiSaw: false, pose: 'other', style: '' })),
+    'a photo the AI already called Other is not untagged');
+  expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
+  await ctx.close();
+}
+
 async function recheck(browser) {
   const { DatabaseSync } = require('node:sqlite');
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } }), pg = await ctx.newPage(), errs = [];
@@ -1149,6 +1239,7 @@ async function recheck(browser) {
     }
     await recheck(browser);
     await phase1c(browser);
+    await phase2cLibrary(browser);
     console.log('smoke: ok (desktop + phone)');
   } catch (e) { await browser.close(); return fail(e.stack); }
   await browser.close(); cleanup();
