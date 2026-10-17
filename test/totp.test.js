@@ -134,7 +134,7 @@ test('setting it up: a key and otpauth URI, confirmed with one code, 10 recovery
   assert.strictEqual(s.body.uri, `otpauth://totp/Logbook%20Monster:ann%40example.com?secret=${s.body.secret}&issuer=Logbook%20Monster&algorithm=SHA1&digits=6&period=30`);
   const stored = sql('SELECT secret, enabled FROM totp WHERE user_id = ?', userId('ann@example.com'))[0];
   assert.strictEqual(stored.enabled, 0, 'not on until a code is confirmed');
-  assert.match(stored.secret, /^v1\.[\w-]{16}\.[\w-]{22}\.[\w-]+$/, 'AES-256-GCM: version, iv, tag, ciphertext');
+  assert.match(stored.secret, /^v2\.[0-9a-f]{12}\.[\w-]{16}\.[\w-]{22}\.[\w-]+$/, 'AES-256-GCM: version, data key id, iv, tag, ciphertext');
   for (const plain of [s.body.secret, unbase32(s.body.secret).toString('hex'), unbase32(s.body.secret).toString('base64url')]) assert.ok(!stored.secret.includes(plain));
   assert.strictEqual((await ann('GET', '/api/me')).body.totp, false);
 

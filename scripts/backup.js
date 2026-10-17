@@ -24,7 +24,7 @@ if (!out || out.startsWith('-')) {
   process.exit(1);
 }
 const config = require('../server/config');                      /* loads .env */
-const hadSecret = (process.env.SESSION_SECRET || '').length >= 32;   /* otherwise the app uses .session-secret beside the database */
+const hadSecret = (process.env.SESSION_SECRETS || process.env.SESSION_SECRET || '').length >= 32;   /* otherwise the app uses .session-secret beside the database */
 const t0 = Date.now();
 const mb = n => `${(n / 1048576).toFixed(1)} MB`;
 const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
@@ -73,7 +73,7 @@ if (copy.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'p
 copy.close();
 fs.chmodSync(dbFile, 0o600);
 
-let secretNote = 'SESSION_SECRET is set (in .env or the environment): keep a copy of .env – it isn’t in this backup.';
+let secretNote = 'SESSION_SECRETS (or SESSION_SECRET) is set (in .env or the environment): keep a copy of .env – it isn’t in this backup.';
 if (!hadSecret) {
   const file = path.join(path.dirname(config.dbPath), '.session-secret');
   if (fs.existsSync(file)) {
