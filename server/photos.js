@@ -159,9 +159,9 @@ Mirror selfies show the person reversed: judge by which of the person's own side
 "style" – the pose type:
 - "front_relaxed": facing the camera, standing relaxed (arms down, not flexing hard)
 - "back_relaxed": back to the camera, standing relaxed
-- "front_double_biceps": facing the camera, both arms up and bent, flexing the biceps
-- "back_double_biceps": back to the camera, both arms up and bent, flexing the biceps and back
-- "most_muscular": facing the camera, leaning in with arms in front of the body, flexing everything (crab or hands-on-hips most muscular)
+- "front_double_biceps": facing the camera, both arms raised with the upper arms out to the sides at or above shoulder height, elbows bent, flexing the biceps
+- "back_double_biceps": back to the camera, both arms raised with the upper arms at or above shoulder height, elbows bent, flexing the biceps and back
+- "most_muscular": facing the camera and flexing hard with the arms held LOW – below shoulder height, in front of the body or hands on hips (crab or hands-on-hips most muscular). A front flexed shot with the arms below shoulder height is always "most_muscular", never "front_double_biceps", even if the biceps are flexed
 - "relaxed": standing relaxed side-on, or relaxed in any other way not listed above
 - "": none of these (another flexing pose such as side chest, or you can't tell)
 

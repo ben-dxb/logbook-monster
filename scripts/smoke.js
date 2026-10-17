@@ -390,12 +390,18 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         expect(await pg.locator('#p-epose').inputValue() !== 'left', 'the photo should not start as left side');
         await pg.click('[data-pa=aione]');
         await pg.waitForFunction(() => document.querySelector('#p-epose').value === 'left' && document.querySelector('#p-estyle').value === 'relaxed' &&
-          /AI says Left side · Relaxed/.test(document.querySelector('#p-aisay').textContent), null, { timeout: 5000 });
+          /AI says Side – Left · Relaxed/.test(document.querySelector('#p-aisay').textContent), null, { timeout: 5000 });
         await pg.selectOption('#p-epose', 'front'); await pg.selectOption('#p-estyle', 'front_double_biceps');
       }
       await pg.fill('#p-enote', 'smoke edited ' + w); await pg.click('#p-eform button[type=submit]');
       await pg.waitForFunction(() => /Saved/.test((document.querySelector('#p-list') || {}).textContent || ''), null, { timeout: 5000 });
-      if (!first) expect(/Front · Front double biceps/.test(await pg.textContent('#p-list')), 'the catalog should show the pose type picked');
+      if (!first) expect(/Front · Double biceps/.test(await pg.textContent('#p-list')), 'the catalog should show the pose type picked');
+      if (first) {
+        /* the pose type drops the way the body faces when the pose says it; an older plain Side counts as untagged */
+        const l = await pg.evaluate(() => [pLabel({ pose: 'back', style: 'back_double_biceps' }), pLabel({ pose: 'other', style: 'back_double_biceps' }),
+          pLabel({ pose: 'right', style: 'relaxed' }), pUntagged({ pose: 'side', style: 'relaxed', poseAi: false })]);
+        expect(l.join('|') === 'Back · Double biceps|Other · Back double biceps|Side – Right · Relaxed|true', `photo labels: ${l.join(' | ')}`);
+      }
       /* bodyweight: the latest weigh-in is today's 80.5 kg, so only 1 October (80.4) is within 1 kg; then 85 kg finds 1 September */
       await pg.check('#p-near');
       await pg.waitForFunction(() => document.querySelectorAll('#p-list .pday').length === 1 && document.querySelector('#p-d-2026-10-01'));
@@ -420,7 +426,7 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         pg.off('dialog', answer);
         expect(/1 of the \d+ photos shown has a pose you set yourself/.test(asked[0]), `"Tag poses with AI" should ask about the one pose set by hand, asked: ${asked[0]}`);
         /* "Tag only untagged" leaves out every photo that has a pose already – here the one set by hand – and doesn't ask about it */
-        const untagged = await pg.evaluate(() => PHOTOS.filter(p => pShown().includes(p) && p.poseAi && p.pose === 'other' && !p.style).map(p => p.id));
+        const untagged = await pg.evaluate(() => PHOTOS.filter(p => pShown().includes(p) && (p.poseAi && p.pose === 'other' && !p.style || p.pose === 'side')).map(p => p.id));
         const sent = [], seen = r => { const m = r.url().match(/photos\/(\d+)\/ai-pose/); if (m) sent.push(+m[1]); };
         const asked2 = [], ok = d => { asked2.push(d.message()); return d.accept(); };
         await pg.evaluate(() => { document.querySelector('#p-list .fmsg')?.remove(); });

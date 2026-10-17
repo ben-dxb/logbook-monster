@@ -17,7 +17,7 @@ let pNear=false, pNearKg='', pTol=1;              /* only days when you weighed 
 const P_MAX=2000, P_THUMB=480;                     /* longest side in pixels: the photo, the thumbnail */
 const P_MAX_TOTAL=5*1024**3, P_MAX_PHOTOS=3000;     /* most picked in one go (the originals; they're shrunk before upload), most an account keeps */
 const P_PARALLEL=3;                                /* photos shrunk and uploaded at a time */
-const P_NAME={front:'Front',left:'Left side',right:'Right side',side:'Side',back:'Back',other:'Other'}, P_TOLS=[0.5,1,2,3];
+const P_NAME={front:'Front',left:'Side – Left',right:'Side – Right',side:'Side',back:'Back',other:'Other'}, P_TOLS=[0.5,1,2,3];
 const P_STYLE={relaxed:'Relaxed',front_relaxed:'Front relaxed',back_relaxed:'Back relaxed',front_double_biceps:'Front double biceps',
   back_double_biceps:'Back double biceps',most_muscular:'Most muscular'};
 const P_NEAR_DAYS=3;                               /* a day without a weigh-in takes the closest one this many days either side */
@@ -27,8 +27,10 @@ const pSrc=p=>`/api/photos/${p.id}/file?v=${encodeURIComponent(p.v)}`;
 const pThumb=p=>p.tv?`/api/photos/${p.id}/thumb?v=${encodeURIComponent(p.tv)}`:pSrc(p);
 const pPoseName=p=>P_NAME[p]||p;
 const pStyleName=s=>P_STYLE[s]||s;
+/* the pose type without the way the body faces when the pose already says it: Back · Double biceps, not Back · Back double biceps */
+const pStyleIn=(pose,s)=>s.startsWith(pose+'_')?pStyleName(s).replace(/^\w+ (.)/,(m,c)=>c.toUpperCase()):pStyleName(s);
 /* "Front · Most muscular", or just the pose when there's no pose type */
-const pLabel=p=>pPoseName(p.pose)+(p.style?' · '+pStyleName(p.style):'');
+const pLabel=p=>pPoseName(p.pose)+(p.style?' · '+pStyleIn(p.pose,p.style):'');
 function pSort(){PHOTOS.sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id);}
 async function pLoad(){
   const [r,w]=await Promise.all([api('GET','/api/photos'),api('GET','/api/weights')]);
@@ -122,7 +124,7 @@ function pCatalogPage(){
         <label class="f pjump"><span class="lbl">Jump to date</span><input id="p-jump" type="date"${days.length?` min="${days[days.length-1]}" max="${days[0]}"`:' disabled'}></label>
         <button class="ghost" type="button" data-pa="select" id="p-selbtn" aria-pressed="${pSel}"${PHOTOS.length<2?' disabled':''}>Compare two photos</button>
         ${pAi?`<button class="ghost" type="button" data-pa="aitag" id="p-aibtn"${PHOTOS.length&&!pAiBusy?'':' disabled'} title="Let the AI set the pose of the photos shown">${pAiBusy?'Tagging…':'Tag poses with AI'}</button>
-        <button class="ghost" type="button" data-pa="aiuntag" id="p-aiuntag"${PHOTOS.some(pUntagged)&&!pAiBusy?'':' disabled'} title="Let the AI set the pose of the photos shown that have none yet, leaving tagged ones as they are">Tag only untagged</button>`:''}
+        <button class="ghost" type="button" data-pa="aiuntag" id="p-aiuntag"${PHOTOS.some(pUntagged)&&!pAiBusy?'':' disabled'} title="Let the AI set the pose of the photos shown that have none yet (or say only Side, not which side), leaving tagged ones as they are">Tag only untagged</button>`:''}
       </div>
       <div class="prow pweight">
         <label class="tog"><input type="checkbox" id="p-near"${pNear?' checked':''}${latest?'':' disabled'}> Same weight as</label>
@@ -340,11 +342,12 @@ async function pDelete(id){
 }
 
 
-/* untagged: still under Other with no pose type, and not put there by hand (uploads with no pose picked go in like this) */
-const pUntagged=p=>p.poseAi&&p.pose==='other'&&!p.style;
+/* untagged: still under Other with no pose type, and not put there by hand (uploads with no pose picked go in like this),
+   or an older photo that says only Side, not which side */
+const pUntagged=p=>p.poseAi&&p.pose==='other'&&!p.style||p.pose==='side';
 /* "Tag poses with AI": the AI sets the pose of the photos the catalog shows (so pick Other first to sort only those).
    Poses the person set themselves (poseAi false) are redone only if they say so. "Tag only untagged" (onlyNew) skips
-   every photo that already has a pose or pose type, whoever set it. */
+   every photo that already has a pose or pose type, whoever set it – except an older plain Side, which needs a left or right. */
 async function pAiTagAll(onlyNew){
   if(pAiBusy)return;
   let list=pShown();if(!list.length)return;
