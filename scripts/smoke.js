@@ -305,7 +305,7 @@ async function twoTabsOneDay(ctx) {
 async function twoStep(browser, w, h) {
   const totp = require('../server/totp'), email = `smoke2fa${w}@example.com`;
   const ctx = await browser.newContext({ viewport: { width: w, height: h } }), pg = await ctx.newPage(), errs = [];
-  pg.on('pageerror', e => errs.push(e.message));   /* (wrong codes are refused on purpose, so no console-error check here) */
+  pg.on('pageerror', e => errs.push(e.message)); pg.on('dialog', d => { errs.push('browser dialog: ' + d.message()); d.dismiss(); });   /* (wrong codes are refused on purpose, so no console-error check here) */
   const overflow = async what => { const x = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth); expect(x <= 1, `horizontal overflow of ${x}px ${what} at ${w}px wide`); };
   const login = async () => { await pg.goto(BASE + '/login'); await pg.fill('#email', email); await pg.fill('#password', 'tidy-pass-phrase-1'); await pg.click('#submit'); };
   await login(); await pg.waitForSelector('#v-dash:not([hidden])');
@@ -347,9 +347,12 @@ async function twoStep(browser, w, h) {
   await pg.fill('#code', code(1)); await pg.click('#codebtn');
   await pg.waitForSelector('#v-dash:not([hidden])');
   await pg.click('#acct>summary'); await pg.click('#logout'); await pg.waitForURL(/\/login/);
-  let said = ''; pg.once('dialog', d => { said = d.message(); d.accept(); });
   await login(); await pg.waitForSelector('#second:not([hidden]) #code');
   await pg.fill('#code', recovery); await pg.click('#codebtn');
+  /* the app's own notice (one button), not a browser alert */
+  await pg.waitForSelector('#ask[open]', { timeout: 5000 });
+  expect(await pg.isHidden('#ask-no') && await pg.evaluate(() => document.activeElement.id) === 'ask-yes', 'the recovery-code notice should have one button, focused');
+  const said = await pg.textContent('#ask-t'); await pg.click('#ask-yes');   /* Continue goes on to the app */
   await pg.waitForSelector('#v-dash:not([hidden])');
   expect(/recovery code/.test(said), 'using a recovery code should say it won’t work again');
   await pg.click('#acct>summary'); await pg.click('#tfbox>summary');
@@ -2198,6 +2201,13 @@ async function formKit(browser) {
       expect(errs.length === 0, `page errors at ${w}px: ${errs.join(' | ')}`);
       const scroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(scroll <= 1, `horizontal overflow of ${scroll}px at ${w}px wide`);
+      if (!first) {   /* the narrowest phone: the day-template picker ("Training (this weekday)") shrinks to fit */
+        const vp = pg.viewportSize(); await pg.setViewportSize({ width: 320, height: vp.height });
+        await pg.evaluate(() => { document.querySelector('#dtpl option:checked').textContent = 'Heavy training day, upper body (this weekday)'; }); await pg.waitForTimeout(100);
+        const s320 = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        expect(!(await pg.isHidden('#dtpl')) && s320 <= 1, `horizontal overflow of ${s320}px on the Daily Tracker at 320px wide`);
+        await pg.setViewportSize(vp);
+      }
       if (first) {
         /* signed out while a change is waiting: it must survive sign-in */
         await ctx.clearCookies();

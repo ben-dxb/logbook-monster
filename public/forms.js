@@ -83,7 +83,8 @@ function errToField(err,pairs){
 }
 
 /* ---------- confirm dialog ----------
-   ask(text, {yes, no, danger, title}) → Promise<boolean>: a modal <dialog> with buttons named for what they do. Focus moves in
+   ask(text, {yes, no, danger, title, only}) → Promise<boolean>: a modal <dialog> with buttons named for what they do (only: just
+   the yes button, a notice in place of alert()). Focus moves in
    (to the safe button when danger), Tab stays inside, Escape is "no", and focus goes back to what had it. */
 let ASKD=null;
 function askDialog(){
@@ -93,7 +94,7 @@ function askDialog(){
   d.innerHTML='<h2 id="ask-h"></h2><p id="ask-t"></p><div class="askbtns"><button type="button" class="btn" id="ask-yes"></button><button type="button" class="ghost" id="ask-no"></button></div>';
   document.body.appendChild(d);
   d.addEventListener('keydown',e=>{if(e.key!=='Tab')return;
-    const bs=[...d.querySelectorAll('button')],i=bs.indexOf(document.activeElement);
+    const bs=[...d.querySelectorAll('button')].filter(b=>!b.hidden),i=bs.indexOf(document.activeElement);
     if(e.shiftKey&&i<=0){e.preventDefault();bs[bs.length-1].focus();}
     else if(!e.shiftKey&&i===bs.length-1){e.preventDefault();bs[0].focus();}});
   return ASKD=d;
@@ -106,7 +107,7 @@ function ask(text,opts={}){
     const yes=d.querySelector('#ask-yes'),no=d.querySelector('#ask-no');
     d.querySelector('#ask-h').textContent=opts.title||(opts.danger?'Are you sure?':'Please confirm');
     d.querySelector('#ask-t').textContent=text;
-    yes.textContent=opts.yes||'OK';no.textContent=opts.no||'Cancel';
+    yes.textContent=opts.yes||'OK';no.textContent=opts.no||'Cancel';no.hidden=!!opts.only;
     yes.className='btn'+(opts.danger?' danger':'');
     const done=v=>{d._done=null;yes.onclick=no.onclick=null;d.oncancel=null;if(d.open)d.close();
       if(back&&back.isConnected&&typeof back.focus==='function')try{back.focus();}catch{}

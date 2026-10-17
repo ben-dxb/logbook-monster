@@ -102,7 +102,7 @@
       });
       const j = await r.json().catch(() => ({}));
       if (r.ok) {
-        if (j.recovery) alert('You used a recovery code – it won’t work again. If you’ve lost your authenticator app, switch the second step off and set it up again from the account menu.');
+        if (j.recovery) await ask('You used a recovery code – it won’t work again. If you’ve lost your authenticator app, switch the second step off and set it up again from the account menu.', { title: 'Recovery code used', yes: 'Continue', only: true });
         location.replace(home()); return;
       }
       if (j.restart || (r.status === 403 && /session/i.test(j.error || ''))) { location.reload(); return; }
