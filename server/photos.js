@@ -8,7 +8,6 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
-const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const config = require('./config');
 const ai = require('./ai');
@@ -218,11 +217,7 @@ Mirror selfies show the person reversed: judge by which of the person's own side
 - "": none of these (another flexing pose such as side chest, or you can't tell)
 
 Reply with only {"pose": "front" | "back" | "left" | "right" | "other", "style": "front_relaxed" | "back_relaxed" | "front_double_biceps" | "back_double_biceps" | "most_muscular" | "relaxed" | ""}.`;
-const poseLimit = rateLimit({
-  windowMs: 60 * 60 * 1000, limit: 200, standardHeaders: 'draft-7', legacyHeaders: false,
-  keyGenerator: req => 'u' + req.user.id,
-  message: { error: 'That’s a lot of photos for the AI – wait a while and try again.' },
-});
+const poseLimit = ai.limiter(200, 'That’s a lot of photos for the AI – wait a while and try again.');
 router.post('/:id/ai-pose', poseLimit, async (req, res) => {
   try {
     const id = idOf(req.params.id), row = q.files.get(req.user.id, id);
