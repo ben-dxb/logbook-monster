@@ -96,10 +96,29 @@ function remove(id, admin, isAdmin) {
   if (user.id === admin.id) { const e = new Error('You can’t remove your own account'); e.status = 400; throw e; }
   /* ADMIN_EMAILS can't be turned off from here, so an admin account stays; take them out of ADMIN_EMAILS first. */
   if (isAdmin(user)) { const e = new Error('That account is an admin. Take it out of ADMIN_EMAILS first.'); e.status = 400; throw e; }
-  /* the account's rows go together or not at all (its photo files are the caller's, after this commits) */
+  drop(user.id);
+  return { ok: true };
+}
+/* the account's rows go together or not at all (its photo files are the caller's, after this commits) */
+function drop(id) {
   db.exec('BEGIN');
-  try { q.remove.run(user.id); endSessions(user.id); db.exec('COMMIT'); } catch (e) { db.exec('ROLLBACK'); throw e; }
-  trendCache.drop(user.id);   /* the admin's request bumps only the admin's own kept trends */
+  try { q.remove.run(id); endSessions(id); db.exec('COMMIT'); } catch (e) { db.exec('ROLLBACK'); throw e; }
+  trendCache.drop(id);   /* a request bumps only its caller's kept trends */
+}
+
+/* Deleting your own account (Account admin). A super admin may, unless no other account would be one afterwards: then the
+   Super admin page would have nobody (or, without ADMIN_EMAILS, whichever account is oldest next). */
+function removeOwn(user, isAdmin) {
+  if (isAdmin(user)) {
+    const others = config.adminEmails.length ? q.list.all().filter(u => u.id !== user.id && config.adminEmails.includes(u.email)).length : 0;
+    if (!others) {
+      const e = new Error(config.adminEmails.length
+        ? 'You’re the only super admin. Add another person’s address to ADMIN_EMAILS (and let them sign in) before you delete your account.'
+        : 'You’re the super admin here (ADMIN_EMAILS isn’t set, so the first account is). Set ADMIN_EMAILS to someone else’s address before you delete your account.');
+      e.status = 409; throw e;
+    }
+  }
+  drop(user.id);
   return { ok: true };
 }
 
@@ -112,4 +131,4 @@ const endSessions = (userId, keepSid = null) => q.endSessions.run(userId, keepSi
 /* Still waiting on an invite: no password, no Google link, never signed in. */
 const isPending = id => { const u = q.byId.get(id); return !!u && pending(u); };
 
-module.exports = { list, invite, resend, remove, findInvite, clearInvites, claimInvite, endSessions, isPending };
+module.exports = { list, invite, resend, remove, removeOwn, findInvite, clearInvites, claimInvite, endSessions, isPending };

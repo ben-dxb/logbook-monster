@@ -168,13 +168,13 @@ test('an invite is taken once even when two accepts race (auth-code-011)', async
   addInvite(userId('race@example.com'), tok);
   const a = browser(), b = browser();
   await a('GET', '/auth/config'); await b('GET', '/auth/config');
-  const r = await Promise.all([a('POST', '/auth/invite/accept', { token: tok, password: 'racer-password-a' }),
-    b('POST', '/auth/invite/accept', { token: tok, password: 'racer-password-b' })]);
+  const r = await Promise.all([a('POST', '/auth/invite/accept', { token: tok, password: 'rival-password-a' }),
+    b('POST', '/auth/invite/accept', { token: tok, password: 'rival-password-b' })]);
   assert.deepStrictEqual(r.map(x => x.status).sort(), [200, 404]);
   const won = r[0].status === 200 ? a : b;
   assert.strictEqual((await won('GET', '/api/me')).body.email, 'race@example.com');
   assert.strictEqual((await (r[0].status === 200 ? b : a)('GET', '/api/me')).status, 401);
-  await signIn('race@example.com', r[0].status === 200 ? 'racer-password-a' : 'racer-password-b');
+  await signIn('race@example.com', r[0].status === 200 ? 'rival-password-a' : 'rival-password-b');
 });
 
 test('create-user resetting a password signs the account out everywhere and drops its invites', async () => {
