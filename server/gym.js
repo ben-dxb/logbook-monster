@@ -27,6 +27,7 @@ const q = {
 
   workouts: db.prepare('SELECT id, name, description, items, updated_at AS updated FROM workouts WHERE user_id = ? ORDER BY position, id'),
   workout: db.prepare('SELECT id, updated_at FROM workouts WHERE user_id = ? AND id = ?'),
+  workoutRow: db.prepare('SELECT id, name, description, items, updated_at AS updated FROM workouts WHERE user_id = ? AND id = ?'),
   countWorkouts: db.prepare('SELECT COUNT(*) AS n, COALESCE(MAX(position), 0) AS pos FROM workouts WHERE user_id = ?'),
   addWorkout: db.prepare('INSERT INTO workouts (user_id, name, description, items, position) VALUES (?, ?, ?, ?, ?)'),
   putWorkout: db.prepare('UPDATE workouts SET name = ?, description = ?, items = ?, updated_at = ? WHERE user_id = ? AND id = ?'),
@@ -138,6 +139,9 @@ function overview(user) {
   return { exercises, workouts };
 }
 
+/* a workout as GET /api/gym lists it, so the app can show a save without reading everything again */
+function workoutOut(user, id) { const w = q.workoutRow.get(user.id, id); return w && { ...w, items: JSON.parse(w.items) }; }
+
 function tx(fn) {
   db.exec('BEGIN');
   try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
@@ -244,14 +248,15 @@ function exStats(sets) {
   const max = (f, l = sets) => l.reduce((b, s) => (f(s) > f(b) ? s : b), l[0]);
   const heavy = sets.filter(s => s.kg > 0), reps = [];
   for (let r = 1; r <= 15; r++) { const ok = sets.filter(s => s.reps >= r); if (ok.length) reps.push([r, slim(ok.reduce((b, s) => (s.kg > b.kg ? s : b), ok[0]))]); }
-  const stats = { n: sets.length, nd: days.size, assisted: sets.some(s => s.kg < 0), days: chart,
+  const stats = { n: sets.length, nd: days.size, pr: [...pr], assisted: sets.some(s => s.kg < 0), days: chart,
     records: sets.length ? { b1: slim(max(e1rm)), bk: slim(max(s => s.kg * 10000 + s.reps)), br: slim(max(s => s.reps * 10000 + s.kg)),
       bv: heavy.length ? slim(max(s => s.reps * s.kg, heavy)) : null, bd, bdv, reps } : null };
-  return { stats, pr };
+  return stats;
 }
 /* GET /api/gym/sets?exercise=5[&before=2026-09-01]: the newest sets of an exercise from before that date, whole days, at least
    PAGE sets unless there are no more; before: the date to ask from for the next page (null when there is none). The first page
-   (no before) also carries the stats. */
+   (no before) also carries the stats, whose pr lists the ids of the 🏆 sets. &stats=1: the stats alone – what the app reads after
+   it logs, edits or deletes a set, instead of the pages again. */
 const PAGE = 200;
 function setsPage(uid, ex, before) {
   const to = before || '9999-12-31~';
@@ -259,9 +264,9 @@ function setsPage(uid, ex, before) {
   const from = end ? end.d : '0000';
   const sets = q.page.all(uid, ex, from, to);
   const more = !!(end && q.older.get(uid, ex, from));
-  const { stats, pr } = exStats(q.lite.all(uid, ex));
-  return { sets: sets.map(s => (pr.has(s.id) ? { ...s, pr: true } : s)), more, before: more ? from : null, ...(before ? {} : { stats }) };
+  return { sets, more, before: more ? from : null, ...(before ? {} : { stats: exStats(q.lite.all(uid, ex)) }) };
 }
+const statsOf = (uid, ex) => ({ stats: exStats(q.lite.all(uid, ex)) });
 
 const send = fn => (req, res) => {
   try { res.json(fn(req)); }
@@ -324,7 +329,8 @@ router.post('/workouts', send(req => {
   const w = cleanWorkout(req.body, req.user);
   const c = q.countWorkouts.get(req.user.id);
   if (c.n >= MAX.workouts) throw fail(`You can have ${MAX.workouts} workouts at most`);
-  return tx(() => ({ id: Number(q.addWorkout.run(req.user.id, w.name, w.description, workoutItems(req.user, w.items), c.pos + 1).lastInsertRowid) }));
+  const id = tx(() => Number(q.addWorkout.run(req.user.id, w.name, w.description, workoutItems(req.user, w.items), c.pos + 1).lastInsertRowid));
+  return { id, workout: workoutOut(req.user, id) };
 }));
 router.put('/workouts/:id', send(req => {
   const id = idOf(req.params.id);
@@ -334,7 +340,7 @@ router.put('/workouts/:id', send(req => {
   version.check(req, old.updated_at);
   const updated = version.stamp();
   tx(() => q.putWorkout.run(w.name, w.description, workoutItems(req.user, w.items), updated, req.user.id, id));
-  return { id, updated };
+  return { id, updated, workout: workoutOut(req.user, id) };
 }));
 router.delete('/workouts/:id', send(req => { q.delWorkout.run(req.user.id, idOf(req.params.id)); return { ok: true }; }));
 /* The list order: every workout id, top first. */
@@ -349,6 +355,7 @@ router.get('/sets', send(req => {
   if (req.query.exercise !== undefined) {
     const before = req.query.before;
     if (before !== undefined && !isDate(before)) throw fail('Bad date');
+    if (req.query.stats === '1') return statsOf(req.user.id, idOf(req.query.exercise));
     return setsPage(req.user.id, idOf(req.query.exercise), before);
   }
   const d = String(req.query.date || '');

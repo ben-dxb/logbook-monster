@@ -97,11 +97,27 @@ test('2,000 sets of one exercise: pages of whole days, newest first, every set o
   assert.strictEqual(got[0].note, 'set 5 felt fine, slept 6 h', 'notes still come with the sets');
 
   const all = got.slice().reverse(), want = oldWay(all), S = pages[0].stats;
-  assert.deepStrictEqual(got.filter(s => s.pr).map(s => s.id).sort((a, b) => a - b), want.pr, '🏆 on the same sets');
+  assert.deepStrictEqual(S.pr.slice().sort((a, b) => a - b), want.pr, '🏆 on the same sets');
   assert.deepStrictEqual(S.days.filter(p => p.vp).map(p => p.d), want.volPr, '🏆 Volume on the same days');
   assert.deepStrictEqual(S.days.map(({ d, e, k }) => ({ d, e, k })), want.chart, 'chart points');
   assert.deepStrictEqual([S.n, S.nd, S.assisted], [2000, 400, true]);
   assert.deepStrictEqual(S.records, want.records, 'Records');
+  const { pr, ...rest } = S;
+  assert.deepStrictEqual(Object.keys(rest).sort(), ['assisted', 'days', 'n', 'nd', 'records']);
+
+  /* after a set is logged, edited or deleted the app reads the stats alone (&stats=1), not the pages: they match the change */
+  const st = async () => { const r = await ann('GET', `/api/gym/sets?exercise=${ex}&stats=1`); assert.deepStrictEqual(Object.keys(r.body), ['stats']); return r.body.stats; };
+  assert.deepStrictEqual(await st(), S);
+  const big = (await ann('POST', '/api/gym/sets', { exercise: ex, reps: 3, kg: 200, note: '', at: '2026-02-10T10:00:00' })).body;
+  let T = await st();
+  assert.deepStrictEqual([T.n, T.pr.includes(big.id), T.records.b1.kg], [2001, true, 200]);
+  const later = (await ann('POST', '/api/gym/sets', { exercise: ex, reps: 3, kg: 199, note: '', at: '2026-02-11T10:00:00' })).body;
+  assert.ok(!(await st()).pr.includes(later.id), 'not a 🏆 after a heavier set');
+  assert.strictEqual((await ann('PUT', `/api/gym/sets/${big.id}`, { exercise: ex, reps: 3, kg: 60, note: '', at: big.at }, )).status, 200);
+  T = await st();
+  assert.deepStrictEqual([T.pr.includes(big.id), T.pr.includes(later.id), T.records.b1.kg], [false, true, 199], 'an edit moves the 🏆 to the next best set');
+  await ann('DELETE', `/api/gym/sets/${big.id}`); await ann('DELETE', `/api/gym/sets/${later.id}`);
+  assert.deepStrictEqual(await st(), S, 'back as it was');
 
   /* a bad cursor is refused; another account sees none of it */
   assert.strictEqual((await ann('GET', `/api/gym/sets?exercise=${ex}&before=soon`)).status, 400);

@@ -40,6 +40,10 @@
   `freshDay(weekday, templateId)`). Only rice pudding (values from the batch) is built in. Keep the solver behaviour unless asked.
 - `public/app.js` – views (Daily Tracker, History calendar), saving, routing. A day keeps its template (`D.type`; the weekday's unless switched on the Daily Tracker) and its summary the name (`tname`). A meal marked eaten (`m.eaten`) is locked whole – the solver never moves it, its controls
   are disabled – and undoing it asks for confirmation. Shared by every page: a button or form that POSTs/PUTs runs through `once(el, fn)` (no double submits), and a number box the browser can't read ("80e") or outside its min/max is put back with a note before any page listener sees it, and letters typed into one (which Chromium drops after wiping the selection, leaving a truly empty box) are refused as typed – only a box really emptied means delete / 0; the server refuses non-numbers with 400 (`server/num.js`).
+  Optimistic changes (own data, cheap to undo – checklist ticks, Trend boxes, workout order, logging a set or supplement, removing a supplement entry) show at once,
+  keep one request in flight per item and send the latest wanted state when it returns (`optToggle(...)` for on/off boxes); a failure puts the
+  change back and says so next to the control with `noteBy(el, text, retry)` (role=status, never `alert()`). The Tracker's weight goes through the day
+  save queue (`pending` key `@weight:<date>`). Anything version-checked, AI, uploads, imports, admin and sign-in settings still wait for the server.
 - `public/admin.js` – Account admin (`#account`, anyone: own plan – day templates, meals, week, targets, foods) and Super admin
   (`#admin`, in tabs: `#admin/ai`, `#admin/people`, `#admin/email`, `#admin/options`, `#admin/log` (Security log); no plan editor) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope,
   `data-adtab` per super admin tab. AI settings (OpenRouter key, default model and a model per task – `TASKS` in `server/ai.js`:
