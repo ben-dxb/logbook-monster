@@ -25,6 +25,7 @@ app.use(helmet({
       'img-src': ["'self'", 'data:'],
       'connect-src': ["'self'"],
       'form-action': ["'self'"],
+      'base-uri': ["'none'"],
       'frame-ancestors': ["'none'"],
       'upgrade-insecure-requests': config.cookieSecure ? [] : null,
     },
@@ -32,6 +33,13 @@ app.use(helmet({
   strictTransportSecurity: config.cookieSecure ? undefined : false,
   crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
 }));
+/* No powerful browser features the app doesn't use (it does use Web Share, clipboard and notifications).
+   API and auth answers carry health data and the CSRF token: never cached (photos set their own). */
+app.use((req, res, next) => {
+  res.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), hid=()');
+  if (/^\/(api|auth)\//.test(req.path)) res.set('Cache-Control', 'no-store');
+  next();
+});
 
 app.use(session({
   name: 'logbookmonster.sid',

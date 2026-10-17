@@ -14,7 +14,7 @@ let srv;
 
 before(async () => {
   const env = { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', BASE_URL: BASE, DB_PATH: path.join(dir, 't.db'),
-    SESSION_SECRET: 'x'.repeat(40), GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '' };
+    SESSION_SECRET: 'x'.repeat(40), GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', TRUST_PROXY: '' };
   delete env.AUTH_RATE_LIMIT;
   srv = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', path.join(__dirname, '..', 'server', 'index.js')], { env, stdio: 'ignore' });
   for (let i = 0; i < 50; i++) {
@@ -29,9 +29,11 @@ test('sign-in attempts are limited to 20 per 15 minutes by default', async () =>
   const cfg = await fetch(BASE + '/auth/config');
   const cookie = cfg.headers.get('set-cookie').split(';')[0];
   const { csrf } = await cfg.json();
-  const login = () => fetch(BASE + '/auth/login', { method: 'POST',
-    headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrf },
+  const login = (xff) => fetch(BASE + '/auth/login', { method: 'POST',
+    headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrf, ...(xff ? { 'x-forwarded-for': xff } : {}) },
     body: JSON.stringify({ email: 'nobody@example.com', password: 'wrong-password-1' }) }).then(r => r.status);
   for (let i = 0; i < 20; i++) assert.strictEqual(await login(), 401, `attempt ${i + 1}`);
   assert.strictEqual(await login(), 429);
+  /* without TRUST_PROXY a forged X-Forwarded-For is ignored: still the same bucket */
+  assert.strictEqual(await login('203.0.113.7'), 429);
 });
