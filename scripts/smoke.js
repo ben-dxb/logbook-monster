@@ -690,6 +690,15 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await pg.click('#acct>summary'); await pg.click('#adminlink');
         await pg.click('#ad-tabs [data-adt=options]'); await pg.waitForSelector('[data-adtab=options]:not([hidden]) #ad-planfiles');
         await pg.check('#ad-planfiles'); await pg.waitForFunction(() => !document.querySelector('#v-admin').classList.contains('nofiles') && !document.querySelector('#ad-planfiles').disabled, null, { timeout: 5000 });
+        /* daily AI caps and private providers only: filled in from the server, saved with the form */
+        await pg.waitForFunction(() => document.querySelector('#ad-capuser').value !== '', null, { timeout: 5000 });
+        expect(await pg.inputValue('#ad-capuser') === '100' && await pg.inputValue('#ad-capall') === '1000' && await pg.isChecked('#ad-aiprivate'), 'AI caps should show their defaults');
+        for (const v of ['150', '100']) {
+          await pg.evaluate(() => { document.querySelector('#ad-capmsg').textContent = ''; });
+          await pg.fill('#ad-capuser', v); await pg.click('#ad-capform button[type=submit]');
+          await pg.waitForFunction(() => /saved/.test(document.querySelector('#ad-capmsg').textContent), null, { timeout: 5000 });
+        }
+        expect(await pg.inputValue('#ad-capuser') === '100', 'saved cap should show');
         await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
         expect(!(await pg.isHidden('[data-ad=csv]')), 'plan file buttons should be back when switched on');
       }

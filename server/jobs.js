@@ -24,7 +24,7 @@ const q = {
   get: db.prepare('SELECT * FROM ai_jobs WHERE user_id = ? AND id = ?'),
   list: db.prepare(`SELECT id, kind, label, status, error, seen, created_at, finished_at FROM ai_jobs
     WHERE user_id = ? AND (status = 'running' OR seen = 0) ORDER BY id DESC LIMIT 20`),
-  running: db.prepare("SELECT id FROM ai_jobs WHERE user_id = ? AND kind = ? AND status = 'running'"),
+  running: db.prepare("SELECT kind FROM ai_jobs WHERE user_id = ? AND status = 'running' LIMIT 1"),
   seen: db.prepare('UPDATE ai_jobs SET seen = 1 WHERE user_id = ? AND id = ?'),
   old: db.prepare(`DELETE FROM ai_jobs WHERE status <> 'running' AND created_at < datetime('now', '-${KEEP_DAYS} days')`),
 };
@@ -32,6 +32,13 @@ const q = {
 db.prepare("UPDATE ai_jobs SET status = 'failed', error = 'The server restarted while the AI was reading it – try again', finished_at = datetime('now') WHERE status = 'running'").run();
 
 const lastAsked = new Map();   /* user id -> when the app last asked for its jobs */
+const reading = new Map();     /* user id -> kind of the read running without ?bg=1 */
+
+/* One file read at a time per account, in the background or not. */
+function idle(user) {
+  const kind = reading.get(user.id) || (q.running.get(user.id) || {}).kind;
+  if (kind) throw Object.assign(new Error(`The AI is still reading your ${KINDS[kind] ? KINDS[kind].name : 'last file'} – wait for that one first`), { status: 409 });
+}
 
 const view = r => ({ id: r.id, kind: r.kind, label: r.label, status: r.status, error: r.error || null, seen: !!r.seen,
   created: r.created_at, finished: r.finished_at || null });
@@ -48,10 +55,10 @@ function tell(user, kind, label, error) {
   });
 }
 
-/* Start work() as a job for this person; returns the job. One of each kind at a time. */
+/* Start work() as a job for this person; returns the job. One read at a time. */
 function start(user, kind, label, work) {
   if (!KINDS[kind]) throw new Error('Unknown job kind ' + kind);
-  if (q.running.get(user.id, kind)) throw Object.assign(new Error(`The AI is still reading your last ${KINDS[kind].name} – wait for that one first`), { status: 409 });
+  idle(user);
   q.old.run();
   const id = Number(q.add.run(user.id, kind, String(label || '').slice(0, 120)).lastInsertRowid);
   Promise.resolve().then(work).then(
@@ -74,7 +81,9 @@ async function respond(req, res, kind, precheck, work) {
       try { label = decodeURIComponent(String(req.get('x-file-name') || '')).replace(/[\x00-\x1f]/g, ''); } catch {}
       return res.status(202).json({ job: start(req.user, kind, label, work) });
     }
-    res.json(await work());
+    idle(req.user);
+    reading.set(req.user.id, kind);
+    try { res.json(await work()); } finally { reading.delete(req.user.id); }
   } catch (e) { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); }
 }
 

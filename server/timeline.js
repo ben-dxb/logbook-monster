@@ -6,7 +6,6 @@
    kg × (1 + reps / 30); the strength index is how far each exercise's best is above its first, averaged
    over the exercises trained in the 60 days before. */
 const express = require('express');
-const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const ai = require('./ai');
 const photos = require('./photos');
@@ -243,11 +242,7 @@ function tidyReply(r) {
 }
 
 /* The OpenRouter key is the admin's, so each account gets a handful of summaries an hour. */
-const aiLimit = rateLimit({
-  windowMs: 60 * 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false,
-  keyGenerator: req => 'u' + req.user.id,
-  message: { error: 'That’s a lot of AI summaries – wait a while and try again.' },
-});
+const aiLimit = ai.limiter(20, 'That’s a lot of AI summaries – wait a while and try again.');
 
 /* ---------- routes ---------- */
 const router = express.Router();
