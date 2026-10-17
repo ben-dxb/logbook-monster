@@ -117,11 +117,16 @@ function trustedAi(a, user, old) {
 }
 const aiOf = r => { try { return r.ai ? cleanAi(JSON.parse(r.ai)) : null; } catch { return null; } };
 
-/* Other people's foods show their name, never their email. */
-function view(r, user) {
+/* Other people's foods show their name, never their email. Someone with no name gets a number instead ("another person
+   (#2)"), the same on everything of theirs in this list, so two people's items with the same name can be told apart. */
+function anonOf(rows, user) {
+  const ids = [...new Set(rows.filter(r => r.user_id !== user.id && !r.owner).map(r => r.user_id))].sort((a, b) => a - b);
+  return new Map(ids.map((id, i) => [id, i + 1]));
+}
+function view(r, user, anon) {
   const mine = r.user_id === user.id;
   return { id: r.id, name: r.name, unit: r.unit, kind: r.kind, k: r.k, p: r.p, c: r.c, f: r.f, recipe: r.recipe,
-    public: !!r.public, ai: aiOf(r), state: r.state || '', yield: r.yield == null ? null : r.yield, free: r.free || '', mine, by: mine ? null : r.owner || null, updated: r.updated_at };
+    public: !!r.public, ai: aiOf(r), state: r.state || '', yield: r.yield == null ? null : r.yield, free: r.free || '', mine, by: mine ? null : r.owner || null, ...(anon && anon.has(r.user_id) ? { anon: anon.get(r.user_id) } : {}), updated: r.updated_at };
 }
 
 /* ---------- AI fill ---------- */
@@ -201,7 +206,7 @@ const fillLimit = ai.limiter(40, 'That’s a lot of AI estimates – wait a whil
 const router = express.Router();
 const send = (res, e) => { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); };
 
-router.get('/', (req, res) => res.json({ foods: q.list.all(req.user.id).map(r => view(r, req.user)), ai: ai.status().configured }));
+router.get('/', (req, res) => { const rows = q.list.all(req.user.id), anon = anonOf(rows, req.user); res.json({ foods: rows.map(r => view(r, req.user, anon)), ai: ai.status().configured }); });
 
 /* Estimate the blank values of a food that is being entered. Nothing is saved here. */
 router.post('/ai-fill', fillLimit, async (req, res) => {

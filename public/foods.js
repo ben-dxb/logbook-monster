@@ -14,7 +14,7 @@ const fF={kind:'all',who:'all',order:'name',tags:[],group:''};      /* filters, 
 try{const s=JSON.parse(localStorage.getItem(F_KEY)||'null');if(s&&typeof s==='object')Object.assign(fF,s);if(!Array.isArray(fF.tags))fF.tags=[];}catch{}
 if(!FOOD_GROUPS.includes(fF.group))fF.group='';
 const fKeep=()=>{try{localStorage.setItem(F_KEY,JSON.stringify(fF));}catch{}};
-let fQuery='', fAdding=null, fMsg='', fTok=0, fAiOn=false, fEdit=null;
+let fQuery='', fAdding=null, fMsg='', fTok=0, fAiOn=false, fEdit=null, fDirty=false;   /* fDirty: the food form has changes not saved */
 const fOpen=new Set();                                     /* foods whose AI source is showing */
 const fWt=new Map();                                       /* raw/cooked chosen on one card, by food id */
 if(!['raw','cooked'].includes(fF.wt))fF.wt='raw';
@@ -77,7 +77,7 @@ const M_NAME={k:'calories',p:'protein',c:'carbs',f:'fat'};
 const fFlagged=(f,m)=>!!(f.ai&&f.ai.fields.includes(m));
 function fMacros(f,flags){
   const v=(m,txt)=>flags&&fFlagged(f,m)
-    ?`<button type="button" class="aiv" data-fa="src" data-id="${f.id}" aria-expanded="${fOpen.has(String(f.id))}" title="AI estimate – tap to see the source">⚑ ${txt}</button>`:txt;
+    ?`<button type="button" class="aiv" data-fa="src" data-id="${f.id}" aria-expanded="${fOpen.has(String(f.id))}" title="AI estimate – tap to see the source"><span aria-hidden="true">⚑</span><span class="vh">AI estimate:</span> ${txt}</button>`:txt;
   return `${v('k',`<b>${r0(f.k)}</b> kcal`)} · ${v('p','P '+r1(f.p))} · ${v('c','C '+r1(f.c))} · ${v('f','F '+r1(f.f))}`;
 }
 function fSort(){LIB.sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'})||a.id-b.id);libRegister();}
@@ -106,10 +106,12 @@ async function renderFoods(args){
       food=fById(+p);
       if(!(food&&food.mine)){box.innerHTML=gHead('#foods','Food')+gEmpty('That food isn’t in your library.');return;}
     }
-    fEdit={ai:food&&food.ai?JSON.parse(JSON.stringify(food.ai)):null,unitSet:!!food};
+    fEdit={ai:food&&food.ai?JSON.parse(JSON.stringify(food.ai)):null,unitSet:!!food};fDirty=false;
     box.innerHTML=fEditPage(food);fPaintAi();fPaintState();$('#f-name').focus();return;
   }
+  const lost=document.activeElement===document.body||box.contains(document.activeElement);
   box.innerHTML=fListPage();renderFoodList();
+  if(lost&&!fAdding)focusHead($('#f-body .gbar h2'),false);   /* back from a food's form: start at the list's heading */
   try{if(!await fFetch()||tok!==fTok||view!=='foods')return;renderFoodList();}
   catch(e){if(!e.signedOut&&tok===fTok){fMsg='Couldn’t refresh the library: '+e.message;renderFoodList();}}
 }
@@ -144,6 +146,7 @@ function fOrdered(list){
   const by={kcal:(a,b)=>a.k-b.k,protein:(a,b)=>b.p-a.p,ratio:(a,b)=>fRatio(b)-fRatio(a)}[fF.order];
   return list.slice().sort((a,b)=>(by?by(a,b):0)||a.name.localeCompare(b.name,undefined,{sensitivity:'base'}));
 }
+let fLastAdd=null;   /* the card whose "Add to plan" form was open last: focus goes back to its button when the form closes */
 const fBusy=()=>fF.who!=='all'||fF.tags.length||fF.group||fQuery.trim()||fF.kind!=='all';
 
 /* ---------- the list ---------- */
@@ -152,7 +155,8 @@ function fListPage(){
   const ord=ORDERS.map(([v,l])=>`<option value="${v}"${fF.order===v?' selected':''}>${l}</option>`).join('');
   const tags=TAGS.map(([v,l])=>`<button type="button" data-fa="tag" data-v="${v}" aria-pressed="${fF.tags.includes(v)}">${l}</button>`).join('');
   return `<div class="gbar"><h2>Food Library</h2><a class="btn" href="#foods/new">New food</a></div>
-    <p class="fintro">Your meal plan is already here – every meal in it and every food it uses, kept up to date with the plan – along with common fitness foods to start from. “Weights” shows foods per 100 g raw or cooked. Add your own meals and ingredients too, with a recipe if you like. Share one and everyone can add it to their plan. “Add to plan” puts it in a meal or the off-plan list of any day, and the rest of the day rebalances around it. In the Daily Tracker you’ll also find them under “+ Add a food…” in every meal. Values marked ⚑ were estimated by AI – tap one to see where it came from.</p>
+    <div class="fintro"><p>Your meal plan’s meals and foods, common starter foods and your own – “Add to plan” puts one in any day.</p>
+      <details><summary>More about the library</summary><p>Your meal plan is already here – every meal in it and every food it uses, kept up to date with the plan – along with common fitness foods to start from. “Weights” shows foods per 100 g raw or cooked. Add your own meals and ingredients too, with a recipe if you like. Share one and everyone can add it to their plan. “Add to plan” puts it in a meal or the off-plan list of any day, and the rest of the day rebalances around it. In the Daily Tracker you’ll also find them under “+ Add a food…” in every meal. Values marked <span aria-hidden="true">⚑</span><span class="vh">with a flag</span> were estimated by AI – tap one to see where it came from.</p></details></div>
     <div class="seg fkinds" id="f-kinds" role="group" aria-label="Type"></div>
     <div class="ftools"><input id="f-q" type="search" placeholder="Search names, recipes and people" aria-label="Search foods" value="${esc(fQuery)}">
       <label class="fsel"><span class="lbl">Show</span><select id="f-who">${who}</select></label>
@@ -168,12 +172,12 @@ function renderFoodList(){
   /* the type tabs count what the other filters leave */
   const all=fAll().map(fShown), base=all.filter(f=>fMatch(f,true));
   const n={all:base.length,meal:base.filter(f=>f.kind==='meal').length,ingredient:base.filter(f=>f.kind!=='meal').length};
-  $('#f-kinds').innerHTML=[['all','All'],['meal','Meals'],['ingredient','Ingredients']]
-    .map(([v,l])=>`<button type="button" data-fa="kind" data-v="${v}" aria-pressed="${fF.kind===v}">${l} <small>${n[v]}</small></button>`).join('');
+  redraw($('#f-kinds'),[['all','All'],['meal','Meals'],['ingredient','Ingredients']]
+    .map(([v,l])=>`<button type="button" data-fa="kind" data-v="${v}" aria-pressed="${fF.kind===v}">${l} <small>${n[v]}</small></button>`).join(''));
   /* the group chips count what the other filters leave too; tapping the one picked shows every group again */
   const inGroups=all.filter(f=>fMatch(f,false,true));
-  $('#f-groups').innerHTML=FOOD_GROUPS.map(g=>[g,inGroups.filter(f=>fGroup(f)===g).length]).filter(([g,c])=>c||fF.group===g)
-    .map(([g,c])=>`<button type="button" data-fa="group" data-v="${esc(g)}" aria-pressed="${fF.group===g}">${esc(g)} <small>${c}</small></button>`).join('');
+  redraw($('#f-groups'),FOOD_GROUPS.map(g=>[g,inGroups.filter(f=>fGroup(f)===g).length]).filter(([g,c])=>c||fF.group===g)
+    .map(([g,c])=>`<button type="button" data-fa="group" data-v="${esc(g)}" aria-pressed="${fF.group===g}">${esc(g)} <small>${c}</small></button>`).join(''));
   const list=fOrdered(base.filter(f=>fF.kind==='all'||f.kind===fF.kind));
   $('#f-count').textContent=all.length?`${list.length} of ${all.length} food${all.length===1?'':'s'}`:'';
   $('#f-clear').hidden=!fBusy();
@@ -189,11 +193,11 @@ function renderFoodList(){
     }
     h+=fCard(f);
   }
-  el.innerHTML=h;
+  redraw(el,h,k=>/data-fa="(add|cancel)"/.test(k.sel)||/^#f-a/.test(k.sel)?`.fcard[data-id="${CSS.escape(String(fLastAdd))}"] [data-fa=add]`:null);
 }
 function fCard(f){
   const tag=f.std?`<span class="chip std">Starter · ${esc(f.group)}</span>`:f.plan?`<span class="chip plan">Your meal plan${f.days?' · '+esc(f.days):''}</span>`:f.mine?(f.public?'<span class="chip ok">Shared</span>':'<span class="chip">Only you</span>')
-    :`<span class="chip info">Shared${f.by?' by '+esc(f.by):''}</span>`;
+    :`<span class="chip info">${esc(sharedBy(f))}</span>`;
   const kind=f.kind==='meal'?'<span class="chip kind">Meal</span>':'<span class="chip kind">Ingredient</span>';
   const canDel=!f.plan&&!f.std&&(f.mine||isAdmin);
   const adding=fAdding&&fAdding.id===f.id;
@@ -310,7 +314,7 @@ async function fSave(form){
   btn.disabled=true;
   try{
     const food=await api(id?'PUT':'POST','/api/foods'+(id?'/'+id:''),body,id&&form.dataset.ver||undefined);
-    LIB=LIB.filter(x=>x.id!==food.id);LIB.push(food);fSort();
+    LIB=LIB.filter(x=>x.id!==food.id);LIB.push(food);fSort();fDirty=false;
     fMsg=id?`Saved “${food.name}”.`:`Added “${food.name}” to your library.`;go('foods');
   }catch(e){btn.disabled=false;if(!e.signedOut){const m=e.message+(fAiOn&&/calories or macros/.test(e.message)?' – or tap “Fill blanks with AI”':'');
     /* a refusal about one box goes to that box */
@@ -320,13 +324,16 @@ async function fSave(form){
 }
 async function fDelete(id){
   const f=fById(id);if(!f)return;
-  if(!await ask(f.mine?`Delete “${f.name}” from your library? Days you've already added it to keep it.`:`Delete “${f.name}”${f.by?' (shared by '+f.by+')':''} from the library for everyone?`,
+  if(!await ask(f.mine?`Delete “${f.name}” from your library? Days you've already added it to keep it.`:`Delete “${f.name}” (${sharedBy(f).replace(/^S/,'s')}) from the library for everyone?`,
     {yes:f.mine?'Delete food':'Delete for everyone',no:'Keep it',danger:true}))return;
   if(!fById(id))return;
-  try{await api('DELETE','/api/foods/'+id);}catch(e){if(!e.signedOut)alert(e.message);return;}
-  LIB=LIB.filter(x=>x.id!==id);libRegister();fMsg=`Deleted “${f.name}”.`;
+  try{await api('DELETE','/api/foods/'+id);}catch(e){if(!e.signedOut){const b=document.querySelector(`[data-fa=del][data-id="${id}"]`);noteBy(b,'Couldn’t delete it: '+endStop(e.message));}return;}
+  LIB=LIB.filter(x=>x.id!==id);libRegister();fMsg=`Deleted “${f.name}”.`;fDirty=false;
   if(location.hash==='#foods')renderFoodList();else go('foods');
 }
+
+/* a food being added or edited isn't dropped by leaving it without a word (forms.js leaveGuard) */
+leaveGuard({dirty:()=>fDirty&&view==='foods'&&!!$('#f-form'),text:'You changed this food without saving it. Leave without saving?',drop:()=>{fDirty=false;}});
 
 /* ---------- events ---------- */
 document.addEventListener('click',e=>{
@@ -336,7 +343,7 @@ document.addEventListener('click',e=>{
     const nb=document.querySelector(`.fcard[data-id="${id}"] [data-fa=src]`);if(nb)nb.focus();return;}
   if(a==='fill'){fFill(b);return;}
   if(a==='fkind'){
-    const form=$('#f-form'),k=b.dataset.v;form.dataset.kind=k;
+    const form=$('#f-form'),k=b.dataset.v;form.dataset.kind=k;fDirty=true;
     form.querySelectorAll('[data-fa=fkind]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
     if(!fEdit.unitSet){$('#f-unit').value=k==='meal'?'each':'g';fPaintState();}
     $('#f-recipe-lbl').textContent=fNotesLabel(k);return;
@@ -350,7 +357,7 @@ document.addEventListener('click',e=>{
   else if(a==='wtall'){fF.wt=b.dataset.v;fWt.clear();fKeep();$('#f-wt').innerHTML=fWtSeg(fF.wt,'wtall','');renderFoodList();}
   else if(a==='wt'){fWt.set(b.dataset.id,b.dataset.v);if(fAdding&&String(fAdding.id)===b.dataset.id)fAdding=null;renderFoodList();   /* your own foods have number ids */
     const nb=document.querySelector(`.fcard[data-id="${b.dataset.id}"] [data-fa=wt][data-v=${b.dataset.v}]`);if(nb)nb.focus();}
-  else if(a==='add'){const f=fShown(fById(b.dataset.id));if(!f)return;fAdding={id:f.id,date:S.cur,qty:libDefault(f.unit),where:'off'};renderFoodList();const q=$('#f-aqty');if(q)q.focus();}
+  else if(a==='add'){const f=fShown(fById(b.dataset.id));if(!f)return;fAdding={id:f.id,date:S.cur,qty:libDefault(f.unit),where:'off'};fLastAdd=f.id;renderFoodList();const q=$('#f-aqty');if(q)q.focus();}
   else if(a==='cancel'){fAdding=null;renderFoodList();}
   else if(a==='del'){once(b,()=>fDelete(+b.dataset.id));}
 });
@@ -364,6 +371,7 @@ document.addEventListener('change',e=>{
 document.addEventListener('input',e=>{
   if(view!=='foods')return;
   const id=e.target.id;
+  if(e.target.closest&&e.target.closest('#f-form'))fDirty=true;
   if(id==='f-q'){fQuery=e.target.value;renderFoodList();}
   else if(fEdit&&fEdit.ai&&/^f-[kpcf]$/.test(id)){   /* your own number replaces the AI's */
     const m=id.slice(2);fEdit.ai.fields=fEdit.ai.fields.filter(x=>x!==m);if(!fEdit.ai.fields.length)fEdit.ai=null;fPaintAi();

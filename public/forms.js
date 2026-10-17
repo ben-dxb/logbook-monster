@@ -148,6 +148,87 @@ if(typeof document!=='undefined'){
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
 }
 
+/* ---------- drawing a part of the page again ----------
+   redraw(box, html, near): box.innerHTML = html without losing the keyboard's place. The control that had focus inside box is found
+   again in the new markup by its id or its data-* keys (data-g="iup" data-i="2"…) and focused, with the caret where it was; when it
+   is gone or switched off, near(key, el) can name another (a selector or element), else the first usable one of its kind (same
+   data-g/fa/sa… action). focusAgain(box, key, near) does the second half for a box drawn some other way (key from focusKey()). */
+const FKEYS=['g','fa','sa','sai','st','i','id','t','v','p','f','d','e','k'];
+function focusKey(el){
+  if(!el||el===document.body||!el.tagName)return null;
+  if(el.id)return {sel:'#'+CSS.escape(el.id),act:null,caret:el.selectionStart!=null?[el.selectionStart,el.selectionEnd]:null};
+  const ds=FKEYS.filter(k=>el.dataset&&el.dataset[k]!=null);if(!ds.length)return null;
+  const act=FKEYS.slice(0,5).find(k=>el.dataset[k]!=null);
+  return {sel:el.tagName.toLowerCase()+ds.map(k=>`[data-${k}="${CSS.escape(el.dataset[k])}"]`).join(''),
+    act:act?`${el.tagName.toLowerCase()}[data-${act}="${CSS.escape(el.dataset[act])}"]`:null,caret:el.selectionStart!=null?[el.selectionStart,el.selectionEnd]:null};
+}
+const fUsable=x=>x&&x.isConnected&&!x.disabled&&!x.closest('[hidden]')&&x.getClientRects().length;
+function focusAgain(box,key,near){
+  if(!key||!box)return false;
+  let el=box.querySelector(key.sel);
+  if(!fUsable(el)&&near){const n=near(key,el);el=typeof n==='string'?box.querySelector(n):n;}
+  if(!fUsable(el)&&key.act){const all=[...box.querySelectorAll(key.act)].filter(fUsable);el=all[0]||null;}
+  if(!fUsable(el))return false;
+  try{el.focus({preventScroll:false});if(key.caret&&el.setSelectionRange&&el===document.activeElement)el.setSelectionRange(...key.caret);}catch{}
+  return document.activeElement===el;
+}
+function redraw(box,html,near){
+  if(!box)return false;
+  const a=document.activeElement, key=a&&box.contains(a)?focusKey(a):null;
+  box.innerHTML=html;
+  return key?focusAgain(box,key,near):false;
+}
+/* Short news for screen readers ("Logged 8 × 100 kg", "Squat added"): one polite live region for the page. */
+let LIVE=null;
+function say(text){
+  if(typeof document==='undefined'||!document.body)return;
+  if(!LIVE){LIVE=document.createElement('div');LIVE.id='live';LIVE.className='vh';LIVE.setAttribute('aria-live','polite');LIVE.setAttribute('aria-atomic','true');document.body.appendChild(LIVE);}
+  LIVE.textContent='';setTimeout(()=>{LIVE.textContent=text;},50);
+}
+/* A heading the page moved you to (a preview that just opened, a new page): focusable from script only, scrolled into view. */
+function focusHead(h,scroll=true){if(!h)return;if(!h.hasAttribute('tabindex'))h.setAttribute('tabindex','-1');try{h.focus({preventScroll:true});if(scroll)h.scrollIntoView({block:'start',behavior:'smooth'});}catch{}}
+
+/* ---------- unsaved changes ----------
+   leaveGuard({dirty, text, drop}): while dirty() is true, a link to another #address asks first (ask(): Leave without saving / Stay),
+   Back, Forward or a typed address puts the address back before the page changes and asks the same, and closing or reloading the
+   tab asks too (beforeunload). Saying leave calls drop() – the page forgets its draft – and goes on. */
+const LEAVE=[];
+function leaveGuard(g){LEAVE.push(g);}
+const leaveDirty=()=>LEAVE.find(g=>{try{return g.dirty();}catch{return false;}});
+let leaveAsking=false;
+async function leaveAsk(g){
+  if(leaveAsking)return false;leaveAsking=true;
+  try{return await ask(g.text||'You have changes that aren’t saved. Leave without saving them?',{title:'Unsaved changes',yes:'Leave without saving',no:'Stay',danger:true});}
+  finally{leaveAsking=false;}
+}
+function leaveTo(g,to){try{if(g.drop)g.drop();}catch{}location.hash=to;}
+if(typeof document!=='undefined'){
+  document.addEventListener('click',e=>{
+    if(e.defaultPrevented||e.button!==0||e.ctrlKey||e.metaKey||e.shiftKey||e.altKey)return;
+    const a=e.target.closest&&e.target.closest('a[href^="#"]');if(!a)return;
+    const to=a.getAttribute('href');if(to===location.hash||to==='#main')return;
+    const g=leaveDirty();if(!g)return;
+    e.preventDefault();e.stopImmediatePropagation();
+    leaveAsk(g).then(yes=>{if(yes)leaveTo(g,to);});
+  },true);
+  /* registered before app.js's route(): stopping here means the page you were on is never drawn away */
+  window.addEventListener('hashchange',e=>{
+    const from=e.oldURL?new URL(e.oldURL).hash:'', to=location.hash;if(from===to)return;
+    const g=leaveDirty();if(!g)return;
+    e.stopImmediatePropagation();history.replaceState(null,'',from||'#');
+    leaveAsk(g).then(yes=>{if(yes)leaveTo(g,to);});
+  });
+  window.addEventListener('beforeunload',e=>{if(leaveDirty()){e.preventDefault();e.returnValue='';}});
+}
+
+/* ---------- a refusal with no words of its own ----------
+   httpText(status): what to say when the answer isn't the app's JSON (a proxy's 502 page, a cut-off body) – never "HTTP 502". */
+function httpText(s){
+  return s===413?'That’s too big to send.':s===429?'That’s a lot of requests – wait a minute and try again.'
+    :s>=502&&s<=504?'The server isn’t answering right now – try again in a minute.':s>=500?'Something went wrong on the server – try again.'
+    :`That didn’t work (error ${s}) – try again.`;
+}
+
 /* ---------- busy buttons ----------
    busyOn(button, 'Saving…') → a function that puts it back: aria-busy, the busy wording and disabled meanwhile. */
 function busyOn(b,text){

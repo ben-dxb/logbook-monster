@@ -11,6 +11,7 @@ let gCsv=null;                    /* a history CSV being checked: {file, text, r
 let gDraft=null, gAi=null, gMsg='', gReorder=false, gTab='sets', gShow=30, gQuick=null;
 let gPick={q:'',part:''}, gTagBusy='', gTagMsg='', gExOpen=false;   /* the exercise picker's search and body-part filter; AI tagging */
 let gKeep=null;                   /* 'e/5', 'w/3': the next page shows a change just made here from what's loaded, without reading it all again first */
+let gRecheck=null, gFocus=null, gDirty=false;   /* an exercise shown from what's loaded, read again behind it; where focus goes after the next draw (selectors, the first usable one); the workout being built has changes */
 
 /* ---------- helpers ---------- */
 const exById=id=>GY&&GY.exercises.find(e=>e.id===id);
@@ -26,6 +27,8 @@ function ago(d){if(!d)return '';const n=Math.round((parse(todayStr())-parse(d))/
 function dayLabel(d){const t=todayStr();if(d===t)return 'Today';if(d===addDays(t,-1))return 'Yesterday';
   return parse(d).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short',...(d.slice(0,4)!==t.slice(0,4)?{year:'numeric'}:{})});}
 const gEmpty=t=>`<p class="empty">${esc(t)}</p>`;   /* plain text */
+/* who shared a food or supplement (plain text): their name, or "another person (#2)" for someone with none – never an email */
+const sharedBy=x=>x.by?'Shared by '+x.by:x.anon?`Shared by another person (#${x.anon})`:'Shared';
 /* ---------- body parts: chips, the filter bar, AI tagging ---------- */
 const partName=id=>{const p=(GY.parts||[]).find(x=>x.id===id);return p?p.name:id;};
 const gPartChips=ids=>ids.length?`<span class="gpts">${ids.map(id=>`<span class="chip gpart">${esc(partName(id))}</span>`).join('')}</span>`:'';
@@ -41,7 +44,7 @@ function gPartBar(){
 }
 function gTagRow(){
   const n=GY.exercises.filter(e=>!e.parts.length).length;
-  return `${n&&GY.ai?`<button type="button" class="ghost gtag" data-g="aitag"${gTagBusy?' disabled':''}>✦ ${gTagBusy?`Tagging body parts with AI ${esc(gTagBusy)}`:`Tag ${n} exercise${n===1?'':'s'} with body parts using AI`}</button>`:''}
+  return `${n&&GY.ai?`<button type="button" class="ghost gtag" data-g="aitag"${gTagBusy?' disabled':''}><span aria-hidden="true">✦</span> ${gTagBusy?`Tagging body parts with AI ${esc(gTagBusy)}`:`Tag ${n} exercise${n===1?'':'s'} with body parts using AI`}</button>`:''}
     <p id="g-tagmsg" class="sub" role="status">${esc(gTagMsg)}</p>`;
 }
 async function gTagAi(ids){
@@ -96,15 +99,18 @@ function gAnalyse(X){
 /* ---------- routing ---------- */
 async function renderGym(args){
   const keep=gKeep;gKeep=null;
-  if(args){gArgs=args;if(!gTagBusy)gTagMsg='';if(args[0]==='e'&&keep!==args.slice(0,2).join('/'))delete GSETS[+args[1]];}   /* opening an exercise reads its sets again: another tab may have logged some */
+  const was=gArgs.join('/');
+  /* opening an exercise shows the sets already read at once and reads them again behind it: another tab may have logged some */
+  if(args){gArgs=args;if(!gTagBusy)gTagMsg='';if(args[0]==='e'&&keep!==args.slice(0,2).join('/'))gRecheck=GSETS[+args[1]]?+args[1]:null;}
   if(view!=='gym')return;
+  const moved=!!args&&args.join('/')!==was;
   const tok=++gTok, box=$('#g-body'), [p,a,b]=gArgs, kept=!!GY&&keep===gArgs.slice(0,2).join('/');
   clearInterval(gTimer);gTimer=null;
   document.querySelectorAll('#g-tabs a').forEach(x=>{const on=x.dataset.g===(p==='sessions'||p==='d'?'sessions':p==='x'?'x':'');
     if(on)x.setAttribute('aria-current','page');else x.removeAttribute('aria-current');});
   if(p!=='e'&&p!=='s')gBackE='#'+['gym',...gArgs].join('/');
   if(p!=='e'){gQuick=null;gExOpen=false;}
-  if(p!=='new'&&!(p==='w'&&b==='edit'))gDraft=null;
+  if(p!=='new'&&!(p==='w'&&b==='edit')){gDraft=null;gDirty=false;}
   try{
     if(!GY){box.innerHTML='<p class="note">Loading…</p>';await gLoad();}
     else if(!kept&&(gStale||isStale(gReadAt))&&p!=='new'&&!(p==='w'&&b==='edit')||(p==='w'||p==='e')&&a&&!(p==='w'?GY.workouts.some(w=>w.id===+a):exById(+a)))await gLoad();   /* made in another tab? */
@@ -112,16 +118,40 @@ async function renderGym(args){
     let html;
     if(p==='new'||(p==='w'&&b==='edit'))html=gEditPage(p==='new'?null:+a);
     else if(p==='w')html=await gWorkoutPage(+a);
-    else if(p==='e')html=await gExercisePage(+a,kept);
+    else if(p==='e'){
+      if(!GSETS[+a]&&exById(+a)&&moved)box.innerHTML=gHead(gBackE,exById(+a).name)+'<p class="note" role="status">Loading sets…</p>';
+      html=await gExercisePage(+a,kept||gRecheck===+a);}
     else if(p==='s')html=await gSetPage(+a);
     else if(p==='sessions'){if(!gSessions||isStale(GREAD.s)){gSessions=await api('GET','/api/gym/sessions');GREAD.s=Date.now();}html=gSessionsPage();}
     else if(p==='d')html=await gDayPage(a);
     else if(p==='x')html=gExercisesPage();
     else html=gHomePage();
     if(tok!==gTok)return;                    /* you moved on while this loaded */
-    box.innerHTML=html;
-    if(p==='e')gAfterExercise(+a);
+    const to=gFocus;gFocus=null;
+    const kept2=redraw(box,html,gNear);
+    if(to){const el=[].concat(to).map(x=>$('#g-body '+x)).find(x=>x&&!x.disabled);if(el)el.focus();}
+    else if(!kept2&&moved&&(document.activeElement===document.body||box.contains(document.activeElement)))focusHead($('#g-body .gbar h2'),false);   /* another page of the Gym: start at its heading */
+    if(p==='e'){gAfterExercise(+a);if(gRecheck===+a){gRecheck=null;gRefreshSets(+a);}}
   }catch(e){if(tok===gTok&&!e.signedOut)box.innerHTML=`<p class="note">Couldn’t load this: ${esc(e.message)}</p>`;}
+}
+
+/* where focus goes when the control it was on is gone or off after a draw: a move arrow switched off at the end of the list
+   goes to the row's other arrow */
+function gNear(key,el){
+  if(el&&el.disabled){const o=el.parentNode.querySelector('button:not([disabled])');if(o)return o;}
+  return null;
+}
+/* the exercise's newest sets again, behind the page drawn from what was loaded: drawn again only if something changed */
+async function gRefreshSets(id){
+  const X=GSETS[id];if(!X||gSending.size)return;
+  let r;try{r=await api('GET','/api/gym/sets?exercise='+id);}catch{return;}
+  if(GSETS[id]!==X||gSending.size||!r)return;
+  GREAD['e'+id]=Date.now();
+  const sig=l=>l.map(s=>[s.id,s.updated,s.reps,s.kg,s.note,s.at].join(',')).join('|');
+  const fresh=r.sets.slice().reverse(), have=X.sets.slice(-fresh.length);
+  if(sig(fresh)===sig(have)&&r.stats.n===X.stats.n&&JSON.stringify(r.stats.records)===JSON.stringify(X.stats.records))return;
+  GSETS[id]={sets:fresh,more:r.more,before:r.before,stats:r.stats,pr:new Set(r.stats.pr)};gCount(id);
+  if(view==='gym'&&gArgs[0]==='e'&&+gArgs[1]===id&&!$('#g-body details[open]')){gKeep='e/'+id;renderGym();}
 }
 
 /* Back to this tab after a while in another: what was loaded may be out of date. Pages with a form being filled in keep it on screen. */
@@ -137,9 +167,9 @@ document.addEventListener('visibilitychange',()=>{
 function gHomePage(){
   const ws=GY.workouts;
   const gAiBusy=jobBusy('workout'), aiRow=GY.ai
-    ?`<label class="grow gadd gfile${gAiBusy?' off':''}"><span>✦ ${gAiBusy?'Reading your plan – this can take a minute or two. You can leave this page; you’ll be told when it’s ready.':'Read a workout plan with AI (PDF or photo)…'}</span>
+    ?`<label class="grow gadd gfile${gAiBusy?' off':''}"><span><span aria-hidden="true">✦</span> ${gAiBusy?'Reading your plan – this can take a minute or two. You can leave this page; you’ll be told when it’s ready.':'Read a workout plan with AI (PDF or photo)…'}</span>
         <input id="g-aifile" type="file" accept=".pdf,application/pdf,image/png,image/jpeg,image/webp"${gAiBusy?' disabled':''}></label>`
-    :`<div class="grow gadd off"><span>✦ Read a workout plan with AI – ${isAdmin?'add an OpenRouter key on the <a href="#admin">Super admin page</a> to turn this on':'the super admin needs to add an OpenRouter key first'}</span></div>`;
+    :`<div class="grow gadd off"><span><span aria-hidden="true">✦</span> Read a workout plan with AI – ${isAdmin?'add an OpenRouter key on the <a href="#admin">Super admin page</a> to turn this on':'the super admin needs to add an OpenRouter key first'}</span></div>`;
   return `<div class="gbar"><h2>My workouts</h2>${ws.length>1?`<button class="ghost" type="button" data-g="reorder" aria-pressed="${gReorder}">${gReorder?'Done':'Reorder'}</button>`:''}</div>
     <div class="glist">
       <a class="grow gadd" href="#gym/new"><span>+ New workout…</span></a>
@@ -156,7 +186,7 @@ function gHomePage(){
 }
 function gAiPreview(){
   const n=gAi.workouts.filter(w=>w.on).length;
-  return `<section class="panel gai" aria-labelledby="g-aih"><h2 id="g-aih">From ${esc(gAi.file)}</h2>
+  return `<section class="panel gai" aria-labelledby="g-aih"><h2 id="g-aih" tabindex="-1">From ${esc(gAi.file)}</h2>
     <p>Check what the AI found. Exercises marked <span class="chip ok">yours</span> already have history and keep it; the rest are added to My exercises. You can change anything afterwards with Edit.</p>
     ${gAi.workouts.map((w,i)=>`<div class="gaiw"><label class="tog"><input type="checkbox" id="g-aion-${i}" data-g="aion" data-i="${i}"${w.on?' checked':''}> <b>${esc(w.name)}</b> <span class="sub">${w.exercises.length} exercises</span></label>
       ${w.description?`<p>${esc(w.description)}</p>`:''}
@@ -175,7 +205,7 @@ async function gWorkoutPage(id){
     +(w.description?`<p class="gdesc">${esc(w.description)}</p>`:'')
     +`<div class="glist">${w.items.map(i=>{const e=exById(i.e), n=today.filter(s=>s.e===i.e).length;
       return `<a class="grow" href="#gym/e/${i.e}"><span class="gt"><b>${esc(e.name)}</b>${i.target?`<small>${esc(i.target)}</small>`:''}</span>
-        ${n?`<span class="chip ok">✓ ${n} today</span>`:`<span class="gwhen">${esc(ago(e.last&&e.last.slice(0,10)))}</span>`}<i class="gch">›</i></a>`;}).join('')
+        ${n?`<span class="chip ok"><span aria-hidden="true">✓</span> ${n} <span class="vh">set${n===1?'':'s'} </span>today</span>`:`<span class="gwhen">${esc(ago(e.last&&e.last.slice(0,10)))}</span>`}<i class="gch">›</i></a>`;}).join('')
       ||'<p class="empty grow">No exercises yet – tap Edit to add some.</p>'}</div>`;
 }
 
@@ -183,7 +213,7 @@ async function gWorkoutPage(id){
 function gEditPage(id){
   const w=id==null?null:GY.workouts.find(x=>x.id===id);
   if(id!=null&&!w)return gHead('#gym','Workout')+gEmpty('This workout doesn’t exist any more.');
-  if(!gDraft||gDraft.id!==id){gDraft=w?{id,ver:w.updated,name:w.name,description:w.description,items:w.items.map(i=>({e:i.e,target:i.target||''}))}:{id:null,name:'',description:'',items:[]};gPick.q='';gTagMsg='';}
+  if(!gDraft||gDraft.id!==id){gDraft=w?{id,ver:w.updated,name:w.name,description:w.description,items:w.items.map(i=>({e:i.e,target:i.target||''}))}:{id:null,name:'',description:'',items:[]};gPick.q='';gTagMsg='';gDirty=false;}
   const D=gDraft, back=w?`#gym/w/${w.id}`:'#gym';
   return gHead(back,w?'Edit workout':'New workout')+`<section class="panel">
     <label class="f"><span class="lbl">Name</span><input id="g-wname" data-g="wf" data-k="name" value="${esc(D.name)}" maxlength="80" placeholder="e.g. Monday — Upper"></label>
@@ -221,8 +251,12 @@ function gPickList(){
 /* after picking: redraw the workout's list and the picker without losing the picker's scroll */
 function gPickRefresh(){
   const ed=$('#g-body .gedit'), pl=$('#g-picklist');if(!ed||!pl){renderGym();return;}
-  const top=pl.scrollTop;ed.innerHTML=gEditItems();pl.innerHTML=gPickList();pl.scrollTop=top;
+  const top=pl.scrollTop;redraw(ed,gEditItems());redraw(pl,gPickList());pl.scrollTop=top;
 }
+const gItemName=i=>i.e?exName(i.e):i.name;
+function gSayAdded(){const it=gDraft.items,x=it[it.length-1];if(x)say(`${gItemName(x)} added – ${it.length} exercise${it.length===1?'':'s'} in this workout.`);}
+/* a workout being built or edited isn't dropped by leaving it without a word (forms.js leaveGuard) */
+leaveGuard({dirty:()=>gDirty&&!!gDraft&&view==='gym'&&!!$('#g-wname'),text:'You changed this workout without saving it. Leave without saving?',drop:()=>{gDirty=false;gDraft=null;}});
 async function gSaveDraft(){
   const D=gDraft, msg=$('#g-emsg');
   msg.textContent='';
@@ -230,7 +264,7 @@ async function gSaveDraft(){
   try{   /* new exercises go by name: the server makes them only if it takes the whole workout */
     const body={name:D.name,description:D.description,items:D.items.map(i=>i.e?{e:i.e,target:i.target}:{name:i.name,target:i.target})};
     const r=D.id==null?await api('POST','/api/gym/workouts',body):await api('PUT','/api/gym/workouts/'+D.id,body,D.ver);
-    gDraft=null;
+    gDraft=null;gDirty=false;
     if(!r.workout||body.items.some(i=>i.e==null))await gLoad();   /* new exercises: their ids come with the list */
     else{const ws=GY.workouts,ix=ws.findIndex(w=>w.id===r.id);if(ix<0)ws.push(r.workout);else ws[ix]=r.workout;gKeep='w/'+r.id;}
     go('gym/w/'+r.id);
@@ -254,12 +288,15 @@ async function gExercisePage(id,kept){
     const days=[...A.days.keys()].reverse();
     body=days.length?`<div class="gdays">${days.slice(0,gShow).map((d,di)=>{const ss=A.days.get(d), prev=A.days.get(days[di+1]);
       const cmp=(v,ix,k)=>{const p=prev&&prev[ix];return !p||v===p[k]?'':v>p[k]?' up':' down';};
-      return `<section class="gday"><h3><a href="#gym/d/${d}">${esc(dayLabel(d))} ›</a>${A.volPr.has(d)?'<span class="chip gvol">🏆 Volume</span>':''}</h3>
+      /* more or less than the same set last time: an arrow and words, not colour alone */
+      const mark=(c,up,down)=>c===' up'?`<span class="gcmp" aria-hidden="true">▲</span><span class="vh"> (${up} than last time)</span>`:c===' down'?`<span class="gcmp" aria-hidden="true">▼</span><span class="vh"> (${down} than last time)</span>`:'';
+      return `<section class="gday"><h3><a href="#gym/d/${d}">${esc(dayLabel(d))} ›</a>${A.volPr.has(d)?'<span class="chip gvol"><span aria-hidden="true">🏆</span> Best volume<span class="vh"> of any day so far</span></span>':''}</h3>
         ${ss.map((s,ix)=>{const isPr=A.pr.has(s.id);return `${s.tmp?'<div class="gset" aria-busy="true" title="Saving…">':`<a class="gset" href="#gym/s/${s.id}">`}<span class="gi">${ix+1}</span>
-          <span class="gtm">${ix?`<span class="grest">+${fmtDur(atMs(s.at)-atMs(ss[ix-1].at))}</span>`:esc(s.at.slice(11,16))}${isPr?` <span class="gtro" title="${s.kg>0?'Best estimated 1RM so far':'Least assistance so far'}">🏆</span>`:''}</span>
-          <span class="gnum${isPr?' pr':cmp(s.reps,ix,'reps')}">${s.reps}<small>rep</small></span><span class="gnum${isPr?' pr':cmp(s.kg,ix,'kg')}">${kgTxt(s.kg)}<small>kg</small></span><i class="gch">›</i>
+          <span class="gtm">${ix?`<span class="grest">+${fmtDur(atMs(s.at)-atMs(ss[ix-1].at))}</span>`:esc(s.at.slice(11,16))}${isPr?` <span class="gtro" role="img" aria-label="${s.kg>0?'Record: best estimated 1RM so far':'Record: least assistance so far'}" title="${s.kg>0?'Best estimated 1RM so far':'Least assistance so far'}">🏆</span>`:''}</span>
+          ${(c=>`<span class="gnum${isPr?' pr':c}">${s.reps}<small>rep</small>${isPr?'':mark(c,'more reps','fewer reps')}</span>`)(cmp(s.reps,ix,'reps'))}${(c=>`<span class="gnum${isPr?' pr':c}">${kgTxt(s.kg)}<small>kg</small>${isPr?'':mark(c,'heavier','lighter')}</span>`)(cmp(s.kg,ix,'kg'))}<i class="gch" aria-hidden="true">›</i>
           ${s.note?`<span class="gnote">${esc(s.note)}</span>`:''}${s.tmp?'</div>':'</a>'}`;}).join('')}</section>`;}).join('')}
-      ${days.length>gShow||X.more?`<button class="ghost" type="button" data-g="more">Show older sets</button>`:''}</div>`
+      ${days.length>gShow||X.more?`<button class="ghost" type="button" data-g="more">Show older sets</button>`:''}</div>
+      <p class="sub glegend"><span aria-hidden="true">🏆</span> a record so far (best estimated 1RM, or least assistance) · <span aria-hidden="true">▲ ▼</span> more or fewer reps or kg than the same set last time</p>`
       :gEmpty('No sets yet – log your first one below.');
   }
   const Q=gQuick;
@@ -272,21 +309,23 @@ async function gExercisePage(id,kept){
         <span class="gstep two"><button type="button" data-g="adj" data-f="kg" data-d="-1" aria-label="1 kg less">−1</button><button type="button" data-g="adj" data-f="kg" data-d="1" aria-label="1 kg more">+1</button>
           <button type="button" data-g="adj" data-f="kg" data-d="-5" aria-label="5 kg less">−5</button><button type="button" data-g="adj" data-f="kg" data-d="5" aria-label="5 kg more">+5</button></span></div>
       <div class="gqrow"><input id="g-note" value="${esc(Q.note)}" maxlength="300" placeholder="Add note" aria-label="Note"><span id="g-rest" class="sub" aria-live="off"></span>
-        <button class="btn gok" type="submit">✓ Log set</button></div>
+        <button class="btn gok" id="g-log" type="submit"><span aria-hidden="true">✓</span> Log set</button></div>
     </form>
     <details class="panel gexset"${gExOpen?' open':''}><summary>Exercise settings</summary>
       <form id="g-exform" class="gexform"><label class="f"><span class="lbl">Name</span><input id="g-exn" value="${esc(e.name)}" maxlength="80" required></label>
         <label class="f"><span class="lbl">Notes (seat height, grip…)</span><textarea id="g-exnotes" rows="2" maxlength="1000">${esc(e.notes||'')}</textarea></label>
         <fieldset class="gpartset"><legend class="lbl">Body parts it trains</legend>
           ${GY.parts.map(p=>`<label class="tog"><input type="checkbox" name="g-part" value="${p.id}"${e.parts.includes(p.id)?' checked':''}> ${esc(p.name)}</label>`).join('')}
-          ${GY.ai?`<button class="ghost" type="button" data-g="aitag1" data-id="${e.id}"${gTagBusy?' disabled':''}>✦ ${gTagBusy?'Asking AI…':'Ask AI'}</button>`:''}</fieldset>
+          ${GY.ai?`<button class="ghost" type="button" data-g="aitag1" data-id="${e.id}"${gTagBusy?' disabled':''}><span aria-hidden="true">✦</span> ${gTagBusy?'Asking AI…':'Ask AI'}</button>`:''}</fieldset>
         <p class="sub" role="status">${esc(gTagMsg)}</p>
         <div class="gactions"><button class="btn" type="submit">Save</button><button class="ghost" type="button" data-g="exdel">Delete exercise and its ${X.stats.n} set${X.stats.n===1?'':'s'}</button></div>
         <p id="g-exmsg" class="sub" role="status"></p></form>
     </details>`;
 }
+const gRO=typeof ResizeObserver==='function'?new ResizeObserver(es=>{for(const e of es)if(e.target.isConnected)document.documentElement.style.setProperty('--gq-h',Math.ceil(e.target.offsetHeight)+'px');}):null;
 function gAfterExercise(id){
-  const X=GSETS[id];
+  const X=GSETS[id], q=$('#g-quick');
+  if(gRO&&q){gRO.disconnect();gRO.observe(q);}
   if(gTab==='chart')gChart(X?X.stats.days:[]);
   const last=X&&X.sets[X.sets.length-1], el=$('#g-rest');
   if(!last||!el)return;
@@ -379,7 +418,7 @@ function gExercisesPage(){
 /* ---------- history from Setgraph (or another tracker) as CSV ---------- */
 function gCsvRow(){
   const busy=gCsv&&gCsv.busy;
-  return `<label class="grow gadd gfile${busy?' off':''}"><span>⇪ ${busy?'Importing…':'Import history from Setgraph (CSV)…'}</span>
+  return `<label class="grow gadd gfile${busy?' off':''}"><span><span aria-hidden="true">⇪</span> ${busy?'Importing…':'Import history from a CSV file (Setgraph, Strong, Hevy…)…'}</span>
     <input id="g-csvfile" type="file" accept=".csv,.txt,text/csv,text/plain"${busy?' disabled':''}></label>`;
 }
 function gCsvRead(){
@@ -390,14 +429,14 @@ function gCsvRead(){
 function gCsvPanel(){
   if(!gCsv)return '';
   const C=gCsv, R=C.res;
-  if(C.done)return `<section class="panel gai" aria-labelledby="g-csvh"><h2 id="g-csvh">Imported ${esc(C.file)}</h2><p class="admsg" role="status">${esc(C.done)}</p>
+  if(C.done)return `<section class="panel gai" aria-labelledby="g-csvh"><h2 id="g-csvh" tabindex="-1">Imported ${esc(C.file)}</h2><p class="admsg" role="status">${esc(C.done)}</p>
     <div class="gactions"><button class="ghost" type="button" data-g="csvdrop">Close</button></div></section>`;
-  if(!R)return `<section class="panel gai" aria-labelledby="g-csvh"><h2 id="g-csvh">${esc(C.file)}</h2><ul class="aderr" role="alert"><li>${esc(C.err)}</li></ul>
+  if(!R)return `<section class="panel gai" aria-labelledby="g-csvh"><h2 id="g-csvh" tabindex="-1">${esc(C.file)}</h2><ul class="aderr" role="alert"><li>${esc(C.err)}</li></ul>
     <div class="gactions"><button class="ghost" type="button" data-g="csvdrop">Close</button></div></section>`;
   const mine=new Set(GY.exercises.map(e=>e.name.toLowerCase())), fresh=R.names.filter(n=>!mine.has(n.toLowerCase()));
   const colNames={exercise:'Exercise',date:'Date',time:'Time',reps:'Reps',weight:'Weight',unit:'Unit',note:'Notes',label:'Label',order:'Set order'};
   const fmtAt=a=>`${fmtShort(a.slice(0,10))} ${a.slice(0,4)} ${a.slice(11,16)}`;
-  return `<section class="panel gai" aria-labelledby="g-csvh"><h2 id="g-csvh">From ${esc(C.file)}</h2>
+  return `<section class="panel gai" aria-labelledby="g-csvh"><h2 id="g-csvh" tabindex="-1">From ${esc(C.file)}</h2>
     <p><b>${R.sets.length.toLocaleString()} sets</b> of ${R.names.length} exercise${R.names.length===1?'':'s'}${R.from?`, ${esc(fmtShort(R.from))} ${R.from.slice(0,4)} to ${esc(fmtShort(R.to))} ${R.to.slice(0,4)}`:''}.
       ${R.names.length-fresh.length} match${R.names.length-fresh.length===1?'es':''} exercises you have; ${fresh.length} will be added. Sets you already have are skipped, so importing the same file again is safe.</p>
     <p class="sub">Columns used: ${Object.entries(R.columns).map(([k,v])=>`${colNames[k]} ← “${esc(v)}”`).join(' · ')}</p>
@@ -440,11 +479,16 @@ async function gLogSet(){
   gShowSets(t.e);
   let failed=null;
   try{const s=await api('POST','/api/gym/sets',{exercise:t.e,reps,kg,note,at:t.at});
-    gDropSet(t.id);if(!(GSETS[s.e]?GSETS[s.e].sets:[]).some(x=>x.id===s.id))gPut(s);gChanged();await gRestat(s.e);}
+    gDropSet(t.id);if(!(GSETS[s.e]?GSETS[s.e].sets:[]).some(x=>x.id===s.id))gPut(s);gChanged();await gRestat(s.e);
+    say(`Logged ${reps} × ${kgTxt(kg)} kg${GSETS[s.e]&&GSETS[s.e].pr.has(s.id)?' – a record':''}.`);}
   catch(err){gDropSet(t.id);if(!err.signedOut)failed=err;}
   gSending.delete(key);
   await gShowSets(t.e);
-  if(failed)noteBy(view==='gym'&&gArgs[0]==='e'&&+gArgs[1]===t.e?$('#g-quick .gok'):null,`Couldn’t log ${reps} × ${kgTxt(kg)} kg: ${endStop(failed.message)}`,()=>{
+  const here=view==='gym'&&gArgs[0]==='e'&&+gArgs[1]===t.e;
+  /* the server refused a value: back in its box, said under it */
+  if(failed&&here&&failed.status===400){$('#g-reps').value=reps;$('#g-kg').value=kgTxt(kg);$('#g-note').value=note;Object.assign(gQuick,{reps,kg,note});
+    if(errToField(failed,[[/^reps/i,$('#g-reps')],[/^weight|kg/i,$('#g-kg')],[/note/i,$('#g-note')]]))return;}
+  if(failed)noteBy(here?$('#g-log'):null,`Couldn’t log ${reps} × ${kgTxt(kg)} kg: ${endStop(failed.message)}`,()=>{
     if(!exById(t.e))return;if(gArgs[0]!=='e'||+gArgs[1]!==t.e){go('gym/e/'+t.e);return;}
     $('#g-reps').value=reps;$('#g-kg').value=kgTxt(kg);$('#g-note').value=note;Object.assign(gQuick,{reps,kg,note});gLogSet();});
 }
@@ -466,7 +510,7 @@ J_BUSY.workout=()=>{if(view==='gym'&&!gArgs[0])renderGym();};
 J_OPEN.workout=job=>{
   if(job.status!=='done'){gAi=null;gMsg='The AI couldn’t read that: '+(job.error||'Something went wrong');}
   else{const j=job.result;gMsg='';gAi={file:job.label||'your plan',notes:j.notes||[],workouts:j.workouts.map(w=>({...w,on:true}))};}
-  renderGym();
+  renderGym().then(()=>{if(view!=='gym'||gArgs[0])return;if(gAi)focusHead($('#g-aih'));else{const m=$('#g-msg');if(m)say(m.textContent.trim());}});
 };
 async function gAiAdd(){
   const list=gAi.workouts.filter(w=>w.on).map(w=>({name:w.name,description:w.description,exercises:w.exercises.map(x=>({name:x.name,target:x.target,parts:x.parts||[]}))}));
@@ -484,30 +528,35 @@ document.addEventListener('click',async e=>{
     el.value=b.dataset.f==='reps'?Math.round(v):kgTxt(v);gQuick[b.dataset.f]=+el.value;}
   else if(g==='reorder'){gReorder=!gReorder;renderGym();}
   else if(g==='wup'||g==='wdown')gMove(i,g==='wup'?i-1:i+1,g);
-  else if(g==='iup'||g==='idown'){const it=gDraft.items,j=g==='iup'?i-1:i+1;if(j<0||j>=it.length)return;[it[i],it[j]]=[it[j],it[i]];renderGym();}
-  else if(g==='idel'){gDraft.items.splice(i,1);renderGym();}
+  else if(g==='iup'||g==='idown'){const it=gDraft.items,j=g==='iup'?i-1:i+1;if(j<0||j>=it.length)return;[it[i],it[j]]=[it[j],it[i]];gDirty=true;
+    /* focus goes with the exercise you moved */
+    gFocus=[`[data-g="${g}"][data-i="${j}"]`,`[data-g="${g==='iup'?'idown':'iup'}"][data-i="${j}"]`];
+    renderGym();say(`${gItemName(it[j])} moved to ${j+1} of ${it.length}.`);}
+  else if(g==='idel'){const it=gDraft.items,[x]=it.splice(i,1);gDirty=true;
+    gFocus=it.length?`[data-g="idel"][data-i="${Math.min(i,it.length-1)}"]`:'#g-exname';
+    renderGym();say(`${gItemName(x)} taken out of the workout.`);}
   else if(g==='wsave'){once(b,gSaveDraft);}
   else if(g==='wdel'){const D=gDraft;if(!await ask(`Delete the workout “${D.name}”? Your exercises and sets stay.`,{yes:'Delete workout',no:'Keep it',danger:true})||gDraft!==D)return;
-    try{await api('DELETE','/api/gym/workouts/'+D.id);gDraft=null;await gLoad();go('gym');}catch(err){if(!err.signedOut)alert(err.message);}}
+    once(b,async()=>{try{await api('DELETE','/api/gym/workouts/'+D.id);gDraft=null;gDirty=false;await gLoad();go('gym');}catch(err){if(!err.signedOut)noteBy(b,'Couldn’t delete the workout: '+endStop(err.message));}});}
   else if(g==='sdel'){if(!await ask('Delete this set?',{yes:'Delete set',no:'Keep it',danger:true}))return;const id=+b.dataset.id,ex=+b.dataset.e;
     once(b,async()=>{try{await api('DELETE','/api/gym/sets/'+id);gDropSet(id);gChanged();await gRestat(ex);gKeep='e/'+ex;go('gym/e/'+ex);}
       catch(err){if(!err.signedOut)$('#g-smsg').textContent='Couldn’t delete the set: '+err.message;}});}
   else if(g==='exdel'){const id=+gArgs[1],ex=exById(id);if(!ex||!await ask(`Delete ${ex.name} and all ${ex.sets} of its sets? This can’t be undone.`,{yes:'Delete exercise and sets',no:'Keep it',danger:true})||!exById(id))return;
-    try{await api('DELETE','/api/gym/exercises/'+id);delete GSETS[id];gChanged();await gLoad();go('gym/x');}catch(err){if(!err.signedOut)alert(err.message);}}
+    once(b,async()=>{try{await api('DELETE','/api/gym/exercises/'+id);delete GSETS[id];gChanged();await gLoad();go('gym/x');}catch(err){if(!err.signedOut)noteBy(b,'Couldn’t delete the exercise: '+endStop(err.message));}});}
   else if(g==='aiadd'){once(b,gAiAdd);}
   else if(g==='part'){gPick.part=b.dataset.p===gPick.part?'':b.dataset.p;renderGym();}
-  else if(g==='pick'&&gDraft){gDraft.items.push({e:+b.dataset.id,target:''});gPickRefresh();}
-  else if(g==='picknew'&&gDraft){const v=gPick.q.replace(/\s+/g,' ').trim();if(!v)return;gDraft.items.push({e:null,name:v,target:''});gPick.q='';$('#g-exname').value='';gPickRefresh();}
+  else if(g==='pick'&&gDraft){gDraft.items.push({e:+b.dataset.id,target:''});gDirty=true;gPickRefresh();gSayAdded();}
+  else if(g==='picknew'&&gDraft){const v=gPick.q.replace(/\s+/g,' ').trim();if(!v)return;gDraft.items.push({e:null,name:v,target:''});gDirty=true;gPick.q='';$('#g-exname').value='';gPickRefresh();$('#g-exname').focus();gSayAdded();}
   else if(g==='aitag'){gTagAi(GY.exercises.filter(x=>!x.parts.length).map(x=>x.id));}
   else if(g==='aitag1'){gExOpen=true;gTagAi([+b.dataset.id]);}
   else if(g==='csvgo'){if(gCsv&&!gCsv.busy)gCsvImport();}
-  else if(g==='csvdrop'){gCsv=null;renderGym();}
-  else if(g==='aidrop'){gAi=null;gMsg='';jobSeen('workout');renderGym();}
+  else if(g==='csvdrop'){gCsv=null;gFocus='#g-csvfile';renderGym();}
+  else if(g==='aidrop'){gAi=null;gMsg='';jobSeen('workout');gFocus=$('#g-aifile')?'#g-aifile':null;renderGym();}
 });
 document.addEventListener('input',e=>{
   const el=e.target;if(view!=='gym')return;
-  if(el.dataset.g==='wf'&&gDraft)gDraft[el.dataset.k]=el.value;
-  else if(el.dataset.g==='wt'&&gDraft)gDraft.items[+el.dataset.i].target=el.value;
+  if(el.dataset.g==='wf'&&gDraft){gDraft[el.dataset.k]=el.value;gDirty=true;}
+  else if(el.dataset.g==='wt'&&gDraft){gDraft.items[+el.dataset.i].target=el.value;gDirty=true;}
   else if(gQuick&&el.id==='g-reps')gQuick.reps=+el.value;
   else if(gQuick&&el.id==='g-kg')gQuick.kg=+el.value;
   else if(gQuick&&el.id==='g-note')gQuick.note=el.value;
@@ -518,7 +567,8 @@ document.addEventListener('change',e=>{
   const el=e.target;if(view!=='gym')return;
   if(el.id==='g-csvfile'){const f=el.files&&el.files[0];el.value='';if(!f||(gCsv&&gCsv.busy))return;
     if(f.size>20*1024*1024){gCsv={file:f.name,res:null,err:'That file is over 20 MB.'};renderGym();return;}
-    f.text().then(t=>{gCsv={file:f.name,text:t};gCsvRead();renderGym();},()=>{gCsv={file:f.name,res:null,err:'Couldn’t read that file.'};renderGym();});}
+    const open=()=>renderGym().then(()=>focusHead($('#g-csvh')));
+    f.text().then(t=>{gCsv={file:f.name,text:t};gCsvRead();open();},()=>{gCsv={file:f.name,res:null,err:'Couldn’t read that file.'};open();});}
   else if(el.id==='g-csvorder'&&gCsv){gCsv.dateOrder=el.value;gCsv.dateOrderAsked=true;gCsvRead();renderGym();}
   else if(el.id==='g-csvunit'&&gCsv){gCsv.unit=el.value;gCsv.unitAsked=true;gCsvRead();renderGym();}
   else if(el.id==='g-aifile'){const f=el.files&&el.files[0];el.value='';if(f&&!jobBusy('workout'))gAiRead(f);}
@@ -563,7 +613,7 @@ document.addEventListener('submit',async e=>{
   if(f.id!=='g-addex')return once(f,()=>gSubmit(f));
   const v=$('#g-exname').value.replace(/\s+/g,' ').trim();if(!v)return;
   const ex=GY.exercises.find(x=>x.name.toLowerCase()===v.toLowerCase());
-  gDraft.items.push(ex?{e:ex.id,target:''}:{e:null,name:v,target:''});gPick.q='';await renderGym();$('#g-exname').focus();
+  gDraft.items.push(ex?{e:ex.id,target:''}:{e:null,name:v,target:''});gDirty=true;gPick.q='';await renderGym();$('#g-exname').focus();gSayAdded();
 });
 async function gSubmit(f){
   if(f.id==='g-newex'){const v=$('#g-find').value.replace(/\s+/g,' ').trim();if(!v)return fieldError($('#g-find'),'Type the exercise’s name');
