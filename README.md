@@ -187,10 +187,19 @@ are only created for emails allowed by `ALLOWED_EMAILS` / `ALLOW_REGISTRATION`.
 
 On the Super admin page:
 
-1. **Email** – the account the app sends from. For Gmail: turn on 2-Step Verification on the
-   Google account, create an app password at <https://myaccount.google.com/apppasswords>, then
-   enter the Gmail address under *Send from* and the 16-letter app password. Server
-   `smtp.gmail.com` and port `465` are filled in already. Save, then **Send test email**.
+1. **Email** – the account the app sends from. Use a mailbox of its own on the app's domain, e.g.
+   `noreply@yourdomain` from your domain's email host (the owner's is Spacemail, Spaceship's email hosting):
+   1. Add the domain's **SPF, DKIM and DMARC** records, so mail from it isn't marked as spam. If the
+      provider hosts the domain's DNS it can add them for you (Spaceship lists the Spacemail records under
+      Advanced DNS); otherwise copy them to where the DNS is held.
+   2. Under *Provider* pick **Other (SMTP)** and enter the SMTP host and port your provider shows, the
+      mailbox address under *Send from* (and as the user name) and the mailbox's password. Save.
+   3. **Send test email**, and check it arrives in the inbox, not spam.
+   4. If the app sent from Gmail before, revoke that app password at
+      <https://myaccount.google.com/apppasswords>.
+
+   Gmail still works (2-Step Verification on, an app password, server `smtp.gmail.com`, port `465`) but
+   isn't recommended: an app password opens the whole Google mailbox, not just the sending of the app's mail.
 2. **People** – enter someone's email and **Send invite**. They get a link (valid 7 days, works
    once) to pick a password or use Google with that address. If email isn't set up, or the send
    fails, the link is shown so you can pass it on yourself. You're emailed when they set their
@@ -351,7 +360,7 @@ Each user can also download their own data from the account menu (photo details 
   | Data keys | AES-256 keys | database, wrapped by `SEAL_KEY` | with `SEAL_KEY`: as above | automatic, every 30 days |
   | `AUDIT_HASH_KEY` | HMAC key | `.env` | link masked emails in the security log | only if leaked (no schedule – breaks linking) |
   | OpenRouter API key | API key | database, sealed (or `.env`) | spending on the OpenRouter account | Save as next, Test, Promote, revoke at OpenRouter, Test old |
-  | SMTP (Gmail app) password | password | database, sealed (or `.env`) | email sent as the app's account | same, revoke at myaccount.google.com/apppasswords |
+  | SMTP password (the app's own mailbox) | password | database, sealed (or `.env`) | email sent as the app's account – and, for a Gmail app password, the whole mailbox | same: change the mailbox password at the email host (or revoke the Gmail app password) |
   | `GOOGLE_CLIENT_SECRET` | OAuth client secret | `.env` (only if Google sign-in is on) | impersonate the app to Google's OAuth | add a secret in Google Cloud console, restart, delete the old |
   | GitHub deploy key | SSH key | the server's `~/.ssh` | push to the repository if write-enabled | remove (the repository is public) or replace on GitHub |
   | Coach links | 256-bit bearer secret | the coach (only a hash stored) | read-only view of one account | 90-day default, reminder a week before, Renew |

@@ -334,6 +334,42 @@ test('backstop: day 25 an email, day 30 a stale row and the banner count, day 35
   } finally { await stop(srv); }
 });
 
+/* an unknown age: one sentence on the start-up log, and the step for where the key is held */
+test('unknown age: the log line says so once, then the step for a key in .env or one saved on Super admin', async () => {
+  const DB = path.join(dir, 'unknown.db'), sql = sqlOn(DB);
+  mkUser('adm@example.com', { DB_PATH: DB, SESSION_SECRETS: S1 });
+  const env = { DB_PATH: DB, SESSION_SECRETS: `${daysAgo(1)}:${S1}`, ADMIN_EMAILS: 'adm@example.com', SEAL_KEY: `${daysAgo(1)}:${'k'.repeat(40)}` };
+  const keys = async () => { const adm = await client().signIn('adm@example.com'); return (await adm('GET', '/api/admin/keys')).body.credentials; };
+
+  /* in .env with no date: the date prefix or OPENROUTER_API_KEY_SET – never "save it again" */
+  let srv = await serve({ ...env, OPENROUTER_API_KEY: 'sk-or-v1-env-key-0000000' });
+  try {
+    const c = (await keys()).find(x => x.name === 'OPENROUTER');
+    assert.match(c.next, /^To record its age, add the date it was set in \.env – OPENROUTER_API_KEY=YYYY-MM-DD:<value> or OPENROUTER_API_KEY_SET=YYYY-MM-DD – and restart\. Or save one on Super admin/);
+    assert.doesNotMatch(c.next, /save it again|isn’t known/);
+    assert.match(out, /OpenRouter API key \(OPENROUTER\) has no recorded age\. To record its age, add the date/);
+    assert.doesNotMatch(out, /recorded age – |age isn’t known/);
+  } finally { await stop(srv); }
+
+  /* saved on Super admin, its record lost: save it again or promote a new one */
+  live.add('sk-or-v1-db-key-00000000');
+  srv = await serve(env);
+  try {
+    const adm = await client().signIn('adm@example.com');
+    assert.strictEqual((await adm('PUT', '/api/admin/ai', { key: 'sk-or-v1-db-key-00000000' })).status, 200);
+  } finally { await stop(srv); }
+  const s = JSON.parse(sql("SELECT data FROM app_config WHERE key = 'secrets'")[0].data);
+  delete s.OPENROUTER;
+  sql("UPDATE app_config SET data = ? WHERE key = 'secrets'", JSON.stringify(s));
+  srv = await serve(env);
+  try {
+    const c = (await keys()).find(x => x.name === 'OPENROUTER');
+    assert.match(c.next, /^To record its age, save it again on Super admin › AI or promote a new one\./);
+    assert.match(out, /OpenRouter API key \(OPENROUTER\) has no recorded age\. To record its age, save it again on Super admin › AI/);
+    assert.doesNotMatch(out, /recorded age – |age isn’t known/);
+  } finally { await stop(srv); }
+});
+
 /* ---------- 5. coach links ---------- */
 test('coach links: a reminder a week before one runs out, Renew swaps the secret, and unused links are flagged', async () => {
   const DB = path.join(dir, 'coach.db'), sql = sqlOn(DB);
