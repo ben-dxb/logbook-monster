@@ -885,7 +885,8 @@ $('#acct').addEventListener('focusout',e=>{const d=$('#acct'),to=e.relatedTarget
 /* two-step sign-in: set up (a QR code of the otpauth link, the key and the link, confirmed with one code, then 10 recovery
    codes to copy or download) and switch off */
 let TF=null,tfNew=null,tfCodes=null;
-async function tfLoad(){try{TF=await api('GET','/api/totp');}catch(e){TF=null;}tfRender();}
+let tfNote='';   /* tfShow's message, kept while the box stays open (its toggle loads it again) */
+async function tfLoad(){try{TF=await api('GET','/api/totp');}catch(e){TF=null;}tfRender(tfNote);}
 function tfRender(msg=''){
   const b=$('#tfbody');let h='';
   if(tfCodes)h=`<p class="sub">Two-step sign-in is on. Save these recovery codes somewhere safe – each one works once, if you lose your phone. They won’t be shown again.</p>
@@ -908,10 +909,14 @@ function tfRender(msg=''){
 /* the set-up link as a QR code (qr.js, inline SVG); without it, the key and the link still work */
 function tfQr(uri){try{return typeof QR==='object'?`<div class="tfqr">${QR.svg(uri,{label:'QR code of the set-up link – scan it with your authenticator app'})}</div>`:'';}catch{return '';}}
 const tfText=()=>`Logbook Monster recovery codes for ${ME}\nEach one works once, in place of a code from your authenticator app.\n\n${(tfCodes||[]).join('\n')}\n`;
-function tfShow(){$('#acct').open=true;$('#tfbox').open=true;tfLoad();}
-$('#tfbox').addEventListener('toggle',()=>{if($('#tfbox').open&&!tfNew&&!tfCodes)tfLoad();});
+function tfShow(msg){tfNote=typeof msg==='string'?msg:'';$('#acct').open=true;$('#tfbox').open=true;tfLoad();}
+/* Account admin › Security & data points to the account menu's Change password and Two-step sign-in (stopPropagation: the
+   document's click handler would close the menu again) */
+for(const [b,box] of [['#ad-pwopen','#pwbox'],['#ad-tfopen','#tfbox']])$(b).addEventListener('click',e=>{e.stopPropagation();
+  if(box==='#tfbox')tfShow();else{$('#acct').open=true;$(box).open=true;}$(box+'>summary').focus();});
+$('#tfbox').addEventListener('toggle',()=>{if(!$('#tfbox').open)tfNote='';else if(!tfNew&&!tfCodes)tfLoad();});
 $('#tfbody').addEventListener('click',async e=>{
-  const a=e.target.closest('button[data-tf]');if(!a)return;
+  const a=e.target.closest('button[data-tf]');if(!a)return;tfNote='';
   if(a.dataset.tf==='start'){await once(a,async()=>{try{tfNew=await api('POST','/api/totp/setup',{});tfRender();$('#tf-code').focus();}catch(err){if(!err.signedOut)tfRender(err.message);}},'Setting up…');}
   else if(a.dataset.tf==='done'){tfCodes=null;tfLoad();}
   else if(a.dataset.tf==='copy'){try{await navigator.clipboard.writeText(tfText());$('#tfmsg').textContent='Codes copied.';}
@@ -920,7 +925,7 @@ $('#tfbody').addEventListener('click',async e=>{
     l.download='logbook-monster-recovery-codes.txt';l.hidden=true;$('#tfbody').appendChild(l);   /* inside the menu, so its click doesn't close it */l.click();l.remove();setTimeout(()=>URL.revokeObjectURL(l.href),1000);$('#tfmsg').textContent='Codes downloaded.';}
 });
 $('#tfbody').addEventListener('submit',e=>{
-  e.preventDefault();const form=e.target,f=form.dataset.tf;
+  e.preventDefault();const form=e.target,f=form.dataset.tf;tfNote='';
   if(f==='on'){const inp=$('#tf-code'),code=inp.value.replace(/\s/g,'');
     if(!/^\d{6}$/.test(code))return fieldError(inp,code?'The code is 6 digits':'Enter the 6-digit code');
     once(form,async()=>{try{const r=await api('POST','/api/totp/enable',{code,signOutOthers:$('#tf-out').checked});tfNew=null;tfCodes=r.codes;tfRender(r.signedOut?'Signed out everywhere else.':'');}
@@ -945,7 +950,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
   try{
     const me=await BOOT_ME;csrf=me.csrf;ME=me.email;UID=me.id;
     $('#who').textContent=me.name||me.email;$('#who').title=me.email;$('#acct>summary').setAttribute('aria-label','Account menu – '+me.email);
-    if(!me.hasPassword){pwRow($('#pw-cur')).hidden=true;$('#pwbox').querySelector('summary').textContent='Set a password';}
+    if(!me.hasPassword){pwRow($('#pw-cur')).hidden=true;$('#pwbox').querySelector('summary').textContent=$('#ad-pwopen').textContent='Set a password';}
     if(me.contact){$('#contactlink').href='mailto:'+me.contact;$('#contactlink').hidden=false;}
     isAdmin=!!me.admin;aiOn=!!me.ai;planFiles=me.planFiles!==false;$('#adminlink').hidden=!isAdmin;
     const [settings,sums,weights,defs,lib]=await BOOT_DATA;
@@ -966,4 +971,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
   if(pending.size)flush();   /* changes kept from a sign-out go now, whatever page you land on */
   if(skipped.length)bootNote(`Changes you made before you were signed out weren’t put back, because ${skipped.join(', ')} changed on another device or tab since. The newer copy is kept.`);
   jobsInit();
+  /* signed in with a recovery code (login.js): say so where the second step can be switched off and set up again */
+  let rec=false;try{rec=!!sessionStorage.getItem('lm-recovered');sessionStorage.removeItem('lm-recovered');}catch{}
+  if(rec){tfShow('You signed in with a recovery code – it won’t work again. If you’ve lost your authenticator app, switch two-step sign-in off here and set it up again.');$('#tfbox>summary').focus();}
 });
