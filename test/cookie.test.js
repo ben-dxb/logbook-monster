@@ -66,6 +66,18 @@ test('a new sign-in stores only the hash of its id', async () => {
   assert.ok(!sids().includes(sid), 'raw id not stored');
 });
 
+test('over https the signed-out CSRF cookie is __Host-logbookmonster.pre (Secure, Path=/, no Domain); the old name is not taken', async () => {
+  const c = await fetch(BASE + '/auth/config', { headers: HTTPS });
+  const set = c.headers.getSetCookie(), { csrf } = await c.json();
+  const pre = set.find(x => /^__Host-logbookmonster\.pre=/.test(x));
+  assert.ok(pre && /; Path=\//.test(pre) && /; Secure/.test(pre) && /; HttpOnly/.test(pre) && !/Domain=/i.test(pre), set.join('\n'));
+  const value = pre.split(';')[0].split('=')[1];
+  const login = cookie => fetch(BASE + '/auth/login', { method: 'POST', headers: { ...HTTPS, cookie, 'content-type': 'application/json', 'x-csrf-token': csrf },
+    body: JSON.stringify({ email: 'ann@example.com', password: 'long-password-1' }) });
+  assert.strictEqual((await login('logbookmonster.pre=' + value)).status, 403, 'a cookie a sibling subdomain could set is refused');
+  assert.strictEqual((await login('__Host-logbookmonster.pre=' + value)).status, 200);
+});
+
 test('the old cookie name works only for 30 days from the first start that had the limit, then it is ignored (NEW-SEC-05)', async () => {
   const db = new DatabaseSync(DB);
   const start = JSON.parse(db.prepare("SELECT data FROM app_config WHERE key = 'cookieMigration'").get().data).start;
