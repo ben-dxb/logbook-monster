@@ -71,6 +71,9 @@ function clean(input) {
       group: ['p', 'c', 'x'].includes(r.group) ? r.group : '',
       free: FREE_KINDS.includes(r.free) ? r.free : '',
     };
+    const o = out.foods[id];
+    if (o.min != null && o.max != null && o.min > o.max) throw new Error(`${o.n}: the min serving (${o.min}) is more than the max serving (${o.max})`);
+    if (o.d > o.p) throw new Error(`${o.n}: direct protein (${o.d}) is more than its protein (${o.p})`);
   }
 
   /* day templates: named day types (training, rest, high carb…). Without a list, the old day types T/R/S a file uses. */
@@ -149,14 +152,17 @@ const MAX_VERSIONS = 100;
 /* the whole plan history together: a plan is tens of KB, so this is many versions of a large one */
 const MAX_PLAN_BYTES = config.quota.plan;
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-/* no plan at all from that date */
-const isEmpty = d => !Object.keys(d.foods || {}).length && !(d.templates || []).length && !Object.keys(d.free || {}).length;
+/* no plan at all from that date: no foods and no day templates (sauces / green veg ticked as free mean nothing on their own) */
+const isEmpty = d => !Object.keys(d.foods || {}).length && !(d.templates || []).length;
 
 /* The account's own plan changes, oldest first. A layer saved before versions is one version from the start. */
+const DAMAGED = 'Your saved meal plan couldn’t be read – ask the person who runs this app to look at it';
 function myVersions(user) {
   const row = q.mine.get(user.id);
   if (!row) return [];
-  const doc = JSON.parse(row.data);
+  let doc;
+  try { doc = JSON.parse(row.data); if (!isObj(doc)) throw new Error('not an object'); }
+  catch (e) { console.error(`The plan of account ${user.id} couldn’t be read: ${e.message}`); throw Object.assign(new Error(DAMAGED), { status: 500 }); }
   if (!Array.isArray(doc.versions)) return [{ from: null, ...doc, updatedAt: row.updated_at }];
   return doc.versions;
 }
@@ -183,7 +189,7 @@ function storeMine(user, list, grow) {
 /* With a from date (null = from the start) this saves the change taking effect then, replacing one with the
    same date; changes dated later still apply from their dates. An empty change means "no plan from then on".
    Without a date it replaces everything. */
-function putMine(input, user) {
+function putMine(input, user, today) {
   const data = clean(input);
   const has = isObj(input) && Object.prototype.hasOwnProperty.call(input, 'from');
   const from = has && input.from != null && input.from !== '' ? input.from : null;
@@ -192,53 +198,74 @@ function putMine(input, user) {
   if (list.length >= MAX_VERSIONS) throw new Error('Too many plan changes – delete some old ones first');
   list.push({ from, ...data, updatedAt: stamp() });
   storeMine(user, list, true);
-  return forUser(user);
+  return forUser(user, today);
 }
 /* Without a date: no plan for any day. With one ('start' for the first): delete that change,
    so the one before it applies again. */
-function delMine(user, from) {
-  if (from === undefined) { q.delMine.run(user.id); return forUser(user); }
+function delMine(user, from, today) {
+  if (from === undefined) { q.delMine.run(user.id); return forUser(user, today); }
   const key = from === 'start' ? null : from;
   if (key !== null && !isDate(key)) throw new Error('Bad date');
   const list = myVersions(user);
   const rest = list.filter(x => x.from !== key);
   if (rest.length === list.length) throw Object.assign(new Error('There is no plan change from that date'), { status: 404 });
   storeMine(user, rest);
-  return forUser(user);
+  return forUser(user, today);
 }
-/* What the browser gets: the plan in effect today and all its dated changes. */
-function forUser(user) { return { mine: mine(user), myVersions: myVersions(user) }; }
+/* What the browser gets: the plan in effect today (the person's date, server/dates.js) and all its dated changes. */
+function forUser(user, today) { return { mine: mine(user, today || undefined), myVersions: myVersions(user) }; }
 /* What the account's days start from on a date (today by default). */
 function effective(user, date) { return mine(user, date) || clean({}); }
 
 /* Once: app defaults used to sit under every account's own changes. Every account that has used the app (saved a
    day or a plan of its own) gets what it was using as its own plan – each dated change folded over the app defaults
    and the built-in plan – so nothing changes for it. Accounts that never used it start with no plan, like new ones. */
-/* a bad old app food (or an own one) leaves that layer out rather than stopping the server */
-function carry(app, v) {
-  for (const [a, m] of [[app, v], [{}, v], [{}, {}]]) {
-    try { return clean(legacy.effective(a, m)); } catch (e) { console.error('Plan carry-over:', e.message); }
+/* A part that doesn't pass (a bad food, targets, a template's meals, the week) is left out with a log line – never the whole
+   own layer, which would leave the account on the built-in plan alone. Returns undefined when even what's left won't pass. */
+function carry(app, v, who) {
+  const e = legacy.effective(app, v);
+  try { return clean(e); } catch (err) { console.error(`Plan carry-over (${who}): ${err.message} – leaving out what doesn’t pass`); }
+  const keep = (what, fn) => { try { fn(); return true; } catch (err) { console.error(`Plan carry-over (${who}): left out ${what}: ${err.message}`); return false; } };
+  const foods = {};
+  for (const [id, r] of Object.entries(e.foods)) if (keep(`food ${String(id).slice(0, 40)}`, () => clean({ foods: { [id]: r } }))) foods[id] = r;
+  const base = { foods, templates: e.templates, free: e.free }, targets = {}, plan = {};
+  for (const { id } of e.templates) {
+    if (keep(`the ${id} targets`, () => clean({ ...base, targets: { [id]: e.targets[id] } }))) targets[id] = e.targets[id];
+    const meals = (e.plan[id] || []).map(m => ({ ...m, ...Object.fromEntries(['p', 'c', 'x'].map(b => [b, (m[b] || []).filter(i => i.f === 'pudding' || Object.hasOwn(foods, i.f))])) }));
+    if (keep(`the ${id} meals`, () => clean({ ...base, plan: { [id]: meals } }))) plan[id] = meals;
   }
+  const schedule = keep('the week', () => clean({ ...base, schedule: e.schedule })) ? e.schedule : null;
+  try { return clean({ ...base, targets, plan, schedule }); } catch (err) { console.error(`Plan carry-over (${who}): skipped: ${err.message}`); }
 }
+/* a damaged row (not JSON, a version that won't pass) is skipped with a log line and left as it was: it never stops the start */
 function migrate() {
   if (q.flag.get()) return;
   const row = q.appGet.get();
-  const app = row ? JSON.parse(row.data) : {};
+  let app = {};
+  try { app = row ? JSON.parse(row.data) : {}; } catch (e) { console.error(`Plan carry-over: the old app defaults couldn’t be read (${e.message}) – carried over without them`); }
   db.exec('BEGIN');
   try {
     for (const u of q.users.all()) {
-      const r = q.mine.get(u.id);
-      if (!r && !u.days) continue;
-      const doc = r ? JSON.parse(r.data) : null;
-      const list = !doc ? [{ from: null }] : Array.isArray(doc.versions) ? doc.versions : [{ from: null, ...doc }];
-      const versions = list.map(v => ({ from: v.from || null, ...carry(app, v),
-        updatedAt: v.updatedAt || (r && r.updated_at) || new Date().toISOString().replace('T', ' ').slice(0, 19) }));
-      q.putMine.run(u.id, JSON.stringify({ versions }));
+      try {
+        const r = q.mine.get(u.id);
+        if (!r && !u.days) continue;
+        const doc = r ? JSON.parse(r.data) : null;
+        const list = !doc ? [{ from: null }] : Array.isArray(doc.versions) ? doc.versions : [{ from: null, ...doc }];
+        const versions = [];
+        for (const v of list) {
+          const who = `account ${u.id}, from ${(v && v.from) || 'the start'}`;
+          const data = carry(app, v, who);
+          if (!data) { console.error(`Plan carry-over (${who}): this plan change was skipped`); continue; }
+          versions.push({ from: (v && v.from) || null, ...data, updatedAt: (v && v.updatedAt) || (r && r.updated_at) || new Date().toISOString().replace('T', ' ').slice(0, 19) });
+        }
+        if (versions.length) q.putMine.run(u.id, JSON.stringify({ versions }));
+        else if (r) console.error(`Plan carry-over: account ${u.id} kept its saved plan as it was – none of it could be carried over`);
+      } catch (e) { console.error(`Plan carry-over: account ${u.id} skipped – its saved plan couldn’t be read: ${e.message}`); }
     }
     q.appDel.run();
     q.setFlag.run();
     db.exec('COMMIT');
-  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  } catch (e) { db.exec('ROLLBACK'); console.error('Plan carry-over failed – it will run again on the next start:', e); }
 }
 migrate();
 

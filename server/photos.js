@@ -33,7 +33,7 @@ const q = {
   add: db.prepare('INSERT INTO photos (user_id, date, pose, style, pose_ai, note, file, type, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
   put: db.prepare('UPDATE photos SET date = ?, pose = ?, style = ?, pose_ai = ?, note = ?, updated_at = ? WHERE user_id = ? AND id = ?'),
   /* the AI's pose: only while the pose is still the one the request was asked about, or still the AI's – never over a hand edit made meanwhile */
-  aiPose: db.prepare('UPDATE photos SET pose = ?, style = ?, pose_ai = 1, updated_at = ? WHERE user_id = ? AND id = ? AND (pose_ai = 1 OR (pose = ? AND style = ?))'),
+  aiPose: db.prepare('UPDATE photos SET pose = ?, style = ?, pose_ai = 2, updated_at = ? WHERE user_id = ? AND id = ? AND (pose_ai > 0 OR (pose = ? AND style = ?))'),
   thumb: db.prepare('UPDATE photos SET thumb = ?, thumb_size = ? WHERE user_id = ? AND id = ?'),
   del: db.prepare('DELETE FROM photos WHERE user_id = ? AND id = ?'),
   delRange: db.prepare('DELETE FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? RETURNING file, thumb'),
@@ -133,7 +133,8 @@ function meta(b) {
 /* File names are random and never come from the request, so they can't point outside the folder. */
 const newName = ext => crypto.randomBytes(16).toString('hex') + ext;
 const fileAt = name => path.join(config.photoDir, path.basename(name));
-const unlink = name => { if (name) fs.promises.unlink(fileAt(name)).catch(() => {}); };
+/* a file that can't be deleted is logged, not an error for the person – its row is gone already */
+const unlink = name => { if (name) fs.promises.unlink(fileAt(name)).catch(e => { if (e.code !== 'ENOENT') console.error(`Couldn’t delete photo file ${path.basename(name)}:`, e.code || e.message); }); };
 
 const router = express.Router();
 const send = (res, e) => { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); };
@@ -206,11 +207,12 @@ router.put('/:id', (req, res) => {
     if (!old) throw fail('No such photo', 404);
     const m = meta(req.body);
     version.check(req, old.updated);
-    /* a pose (or pose type) the person changes is theirs; keeping the AI's (e.g. only the note changed) leaves it the AI's.
+    /* a pose (or pose type) the person changes is theirs; keeping the AI's (e.g. only the note changed) leaves it the AI's, and so does
+       saving the answer "Ask AI" gave (ai: true – the app sends it only when the pose and type saved are the AI's answer).
        An older client that doesn't send a pose type keeps the one there is. */
     if ((req.body || {}).style === undefined) m.style = old.style;
     const same = m.pose === old.pose && m.style === old.style;
-    q.put.run(m.date, m.pose, m.style, same ? old.pose_ai : 0, m.note, version.stamp(), req.user.id, id);
+    q.put.run(m.date, m.pose, m.style, same ? old.pose_ai : (req.body || {}).ai === true ? 2 : 0, m.note, version.stamp(), req.user.id, id);
     res.json(view(q.get.get(req.user.id, id)));
   } catch (e) { send(res, e); }
 });
@@ -299,7 +301,7 @@ router.get('/:id/thumb', serve('thumb'));
 /* v and tv are a piece of each file's random name: the app puts them in the picture URLs, so a replaced
    thumbnail or a reused id is never served from the browser's cache. */
 function view(r) {
-  return { id: r.id, date: r.date, pose: r.pose, style: r.style || '', poseAi: !!r.pose_ai, note: r.note, size: r.size, created: r.created, updated: r.updated,
+  return { id: r.id, date: r.date, pose: r.pose, style: r.style || '', poseAi: !!r.pose_ai, aiSaw: r.pose_ai === 2, note: r.note, size: r.size, created: r.created, updated: r.updated,
     v: r.file.slice(0, 8), tv: r.thumb ? r.thumb.slice(0, 8) : null };
 }
 

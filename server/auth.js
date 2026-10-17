@@ -63,10 +63,15 @@ function csrfProtect(req, res, next) {
 /* ALLOWED_EMAILS limits who may sign in, but an account an admin invited is always let in. */
 const accountAllowed = user => !!user && (!!user.invited_by || config.emailAllowed(user.email));
 
+/* A session for an account that may no longer sign in (removed, or left out of ALLOWED_EMAILS) is ended, not kept: otherwise the
+   pages see it as signed in and the API doesn't, and the browser goes round between / and /login. */
+const GONE = 'This account can’t sign in here any more.';
+const refused = req => !!(req.session && req.session.userId) && !accountAllowed(q.byId.get(req.session.userId));
 function requireAuth(req, res, next) {
   if (req.session && req.session.userId) {
     const user = q.byId.get(req.session.userId);
     if (accountAllowed(user)) { req.user = user; return next(); }
+    return req.session.destroy(() => res.status(401).json({ error: GONE, gone: true }));
   }
   res.status(401).json({ error: 'Not signed in' });
 }
@@ -142,17 +147,18 @@ router.get('/config', (req, res) => {
     google: config.google.enabled,
     registration: config.allowRegistration || config.allowedEmails.length > 0,
     csrf: csrfToken(req, res),
-    signedIn: !!req.session.userId,
+    signedIn: !!req.session.userId && !refused(req),
     second: !req.session.userId && !!halfOf(req),
   });
 });
 
+const LOCKED = 'Too many tries from here – wait 15 minutes and try again.';
 router.post('/login', limiter, csrfProtect, needBody, async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
   const valid = EMAIL_RE.test(email);
   /* On top of the per-IP limit: ACCOUNT_FAIL_LIMIT wrong passwords for one email from one address every 15 minutes lock that
-     address out (even the right password gets the usual answer); from many addresses they only slow the answers (failures.js). */
+     address out for that email (even the right password is refused, with LOCKED); from many addresses they only slow the answers (failures.js). */
   if (valid) await fails.wait(email);
   const locked = valid && fails.locked(email, req.ip);
   const user = valid ? q.byEmail.get(email) : null;
@@ -160,6 +166,8 @@ router.post('/login', limiter, csrfProtect, needBody, async (req, res) => {
   if (!ok || locked || !accountAllowed(user)) {
     if (!ok && valid && !locked) fails.note(email, req.ip);
     audit.log(req, locked ? 'signin.locked' : 'signin.failed', { email }, user ? user.id : null);
+    /* the lock is per address and counts tries for any email, known or not, so saying so tells nothing about the account */
+    if (locked) return res.status(429).json({ error: LOCKED });
     return res.status(401).json({ error: 'That email and password don’t match an account.' });
   }
   fails.clear(email, req.ip);
@@ -195,8 +203,17 @@ router.post('/register', limiter, csrfProtect, needBody, async (req, res) => {
   const problem = passwordProblem(password);
   if (problem) return res.status(400).json({ error: problem });
   if (!config.mayCreateAccount(email)) return res.status(403).json({ error: 'New accounts aren’t open for this email.' });
-  if (q.byEmail.get(email)) return res.status(409).json({ error: 'An account with this email already exists. Sign in instead.' });
-  const info = q.create.run(email, name, await hashPassword(password), null);
+  const exists = () => {
+    const u = q.byEmail.get(email);
+    /* invited but not joined yet: the invite email has the link that sets the password */
+    if (u && users.isPending(u.id)) return res.status(409).json({ error: 'This email has been invited – check your email for the invite and use its link to set your password.' });
+    return res.status(409).json({ error: 'An account with this email already exists. Sign in instead.' });
+  };
+  if (q.byEmail.get(email)) return exists();
+  const hash = await hashPassword(password);
+  let info;
+  /* two sign-ups for one email at once: the second finds it taken (users.email is unique) */
+  try { info = q.create.run(email, name, hash, null); } catch (e) { if (/UNIQUE/i.test(e.message)) return exists(); throw e; }
   await logIn(req, q.byId.get(info.lastInsertRowid));
   audit.log(req, 'signin.ok', { via: 'register' });
   res.json({ ok: true });
@@ -279,7 +296,16 @@ const GOOGLE_TOKEN = 'https://oauth2.googleapis.com/token';
 const redirectUri = `${config.baseUrl}/auth/google/callback`;
 const fail = (res, code) => res.redirect(`/login?error=${encodeURIComponent(code)}`);
 
-router.get('/google', limiter, (req, res) => {
+/* Google's routes are pages the browser opens, so too many tries go back to the sign-in page with a message, not raw JSON. */
+const googleLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: config.authRateLimit,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  handler: (req, res) => fail(res, 'rate'),
+});
+
+router.get('/google', googleLimiter, (req, res) => {
   if (!config.google.enabled) return fail(res, 'google_off');
   const verifier = randomToken();
   req.session.oauth = { state: randomToken(), nonce: randomToken(), verifier, at: Date.now() };
@@ -297,7 +323,7 @@ router.get('/google', limiter, (req, res) => {
   req.session.save(() => res.redirect(`${GOOGLE_AUTH}?${params}`));
 });
 
-router.get('/google/callback', limiter, async (req, res) => {
+router.get('/google/callback', googleLimiter, async (req, res) => {
   const pending = req.session.oauth;
   delete req.session.oauth;
   if (!config.google.enabled) return fail(res, 'google_off');
@@ -360,4 +386,4 @@ router.get('/google/callback', limiter, async (req, res) => {
   res.redirect('/#dash');
 });
 
-module.exports = { router, requireAuth, csrfProtect, csrfToken, q, accountAllowed };
+module.exports = { router, requireAuth, csrfProtect, csrfToken, q, accountAllowed, refused };

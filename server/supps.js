@@ -75,6 +75,11 @@ function clean(b) {
 }
 
 const visible = (row, user) => row && (row.user_id === user.id || row.public);
+/* one name per supplement in your library, whatever the case: a second is refused (the app uses the one you have) */
+function noTwin(user, name, id) {
+  const n = name.toLowerCase(), twin = q.mine.all(user.id).find(r => r.id !== id && r.name.toLowerCase() === n);
+  if (twin) throw fail(`You already have a supplement called ${twin.name}`, 409);
+}
 
 /* A log entry from the library takes its name from there unless you typed one; a free-text entry needs a
    description. keep is the entry being edited: its own link stays even if that supplement has since gone private. */
@@ -229,6 +234,7 @@ router.put('/trend', (req, res) => {
 router.post('/', (req, res) => {
   try {
     const d = clean(req.body);
+    noTwin(req.user, d.name);
     if (q.count.get(req.user.id).n >= MAX_SUPPS) throw fail(`Your supplement library is full (${MAX_SUPPS})`);
     const { lastInsertRowid } = q.add.run(req.user.id, d.name, d.amount, d.unit, d.notes, d.public);
     res.json(view(q.get.get(Number(lastInsertRowid)), req.user));
@@ -270,6 +276,7 @@ router.put('/:id', (req, res) => {
     if (!visible(row, req.user)) throw fail('No such supplement', 404);
     if (row.user_id !== req.user.id) throw fail('Only the person who added this supplement can change it', 403);
     const d = clean(req.body);
+    noTwin(req.user, d.name, row.id);
     q.put.run(d.name, d.amount, d.unit, d.notes, d.public, row.id, req.user.id);
     res.json(view(q.get.get(row.id), req.user));
   } catch (e) { send(res, e); }

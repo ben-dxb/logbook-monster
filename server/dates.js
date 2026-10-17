@@ -14,4 +14,20 @@ const WINDOW_MSG = 'Pick a date from 2000 to a year from today';
 /* '' when a date may be stored, else what to tell the person */
 const writeError = (s, bad = 'Bad date') => (inWindow(s) ? '' : isDate(s) ? WINDOW_MSG : bad);
 
-module.exports = { isDate, inWindow, writeError, lastDate, FIRST, WINDOW_MSG };
+/* "Today" is the person's date, not the server's: the app sends its time zone (x-time-zone, e.g. Asia/Dubai) with each
+   request and req.today is that zone's date (server/api.js). Without a usable zone, the server's UTC date. Stored
+   timestamps stay UTC. */
+const ZONE_RE = /^[A-Za-z][A-Za-z0-9_+\-]*(\/[A-Za-z0-9_+\-]+){0,2}$/;
+function todayIn(zone, now = new Date()) {
+  if (typeof zone === 'string' && zone.length <= 64 && ZONE_RE.test(zone)) {
+    try {
+      const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' })
+        .formatToParts(now).map(x => [x.type, x.value]));
+      const d = `${p.year}-${p.month}-${p.day}`;
+      if (isDate(d)) return d;
+    } catch {}
+  }
+  return now.toISOString().slice(0, 10);
+}
+
+module.exports = { isDate, inWindow, writeError, lastDate, todayIn, FIRST, WINDOW_MSG };

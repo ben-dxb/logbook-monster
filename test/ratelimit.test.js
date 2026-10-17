@@ -54,8 +54,9 @@ async function browser(ip) {
 
 test('sign-in attempts are limited to 20 per 15 minutes by default', async () => {
   const login = await browser('10.0.0.1');
-  for (let i = 0; i < 20; i++) assert.strictEqual((await login('nobody@example.com', 'wrong-password-1')).status, 401, `attempt ${i + 1}`);
-  assert.strictEqual((await login('nobody@example.com', 'wrong-password-1')).status, 429);
+  /* a different email each time, so the per-address lock (10 for one email) doesn't answer first */
+  for (let i = 0; i < 20; i++) assert.strictEqual((await login(`nobody${i}@example.com`, 'wrong-password-1')).status, 401, `attempt ${i + 1}`);
+  assert.match((await login('nobody@example.com', 'wrong-password-1')).body.error, /Too many attempts/);
 });
 
 test('10 wrong passwords for one account from one address lock that address for 15 minutes – across a restart', async () => {
@@ -63,11 +64,15 @@ test('10 wrong passwords for one account from one address lock that address for 
   const wrong = await a('real@example.com', 'wrong-password-1');
   assert.strictEqual(wrong.status, 401);
   for (let i = 1; i < 10; i++) assert.strictEqual((await a('real@example.com', 'wrong-password-1')).status, 401, `attempt ${i + 1}`);
-  /* the right password, from that address, gets exactly the wrong-password answer */
-  assert.deepStrictEqual(await a('real@example.com', PASSWORD), wrong);
-  assert.deepStrictEqual(await a('REAL@example.com', PASSWORD), wrong);
+  /* the right password, from that address, is told to wait – the same answer as for an address with no account */
+  const locked = { status: 429, body: { error: 'Too many tries from here – wait 15 minutes and try again.' } };
+  assert.deepStrictEqual(await a('real@example.com', PASSWORD), locked);
+  assert.deepStrictEqual(await a('REAL@example.com', PASSWORD), locked);
+  const c = await browser('10.0.3.1');
+  for (let i = 0; i < 10; i++) await c('nobody-here@example.com', 'wrong-password-1');
+  assert.deepStrictEqual(await c('nobody-here@example.com', PASSWORD), locked);
   await restart();
-  assert.deepStrictEqual(await (await browser('10.0.1.1'))('real@example.com', PASSWORD), wrong, 'still locked after a restart');
+  assert.deepStrictEqual(await (await browser('10.0.1.1'))('real@example.com', PASSWORD), locked, 'still locked after a restart');
   /* from anywhere else the owner signs in */
   assert.strictEqual((await b('real@example.com', PASSWORD)).status, 200);
   /* 15 minutes later the first address does too */
@@ -118,6 +123,6 @@ test('coach links: 30 broken tries from one address are cut off, but a working l
 test('without TRUST_PROXY a forged X-Forwarded-For is ignored: every address shares one bucket', async () => {
   env.TRUST_PROXY = '';
   await restart();
-  for (let i = 0; i < 20; i++) assert.strictEqual((await (await browser(`203.0.113.${i + 1}`))('nobody@example.com', 'wrong-password-1')).status, 401, `attempt ${i + 1}`);
-  assert.strictEqual((await (await browser('198.51.100.7'))('nobody@example.com', 'wrong-password-1')).status, 429);
+  for (let i = 0; i < 20; i++) assert.strictEqual((await (await browser(`203.0.113.${i + 1}`))(`nobody${i}@example.com`, 'wrong-password-1')).status, 401, `attempt ${i + 1}`);
+  assert.match((await (await browser('198.51.100.7'))('nobody@example.com', 'wrong-password-1')).body.error, /Too many attempts/);
 });

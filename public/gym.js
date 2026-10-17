@@ -6,7 +6,7 @@
 let GY=null;                     /* {exercises:[{id,name,notes,parts,sets,last}], workouts:[{id,name,description,items}], parts:[{id,name}], ai} */
 const GSETS={};                  /* exercise id -> its sets, oldest first */
 const GDAY={};                   /* date -> sets that day */
-let gSessions=null, gArgs=[], gTok=0, gTimer=null, gBackE='#gym';
+let gSessions=null, gArgs=[], gTok=0, gTimer=null, gBackE='#gym', gStale=false;   /* gStale: GY to load again before the next page */
 let gCsv=null;                    /* a history CSV being checked: {file, text, res, dateOrder, unit, busy, done, total} */
 let gDraft=null, gAi=null, gMsg='', gReorder=false, gTab='sets', gShow=30, gQuick=null;
 let gPick={q:'',part:''}, gTagBusy='', gTagMsg='', gExOpen=false;   /* the exercise picker's search and body-part filter; AI tagging */
@@ -65,18 +65,22 @@ async function gSetsOn(d){if(!GDAY[d])GDAY[d]=(await api('GET','/api/gym/sets?da
 /* after a set changes: counts on the list pages and the per-day caches are out of date */
 function gChanged(){gSessions=null;Object.keys(GDAY).forEach(k=>delete GDAY[k]);}
 
-/* Per exercise: sets by day, which sets beat the best estimated 1RM so far, which days beat the best volume. */
+/* A set's strength score for 🏆: the estimated 1RM of a weighted set; an assisted (negative kg) or bodyweight set of 1–20 reps
+   scores its weight the other way round (kg ÷ (1 + reps/30), never above 0), so less assistance – or more reps on the same – is progress,
+   and any weighted set beats every assisted one. null: says nothing (no reps, over 20 reps). */
+const gScore=s=>s.kg>0?(e1rm(s)||null):s.reps>=1&&s.reps<=20?s.kg/(1+s.reps/30):null;
+/* Per exercise: sets by day, which sets beat the best score so far, which days beat the best volume. */
 function gAnalyse(sets){
-  const days=new Map(), pr=new Set(), volPr=new Set();let best=-1,bestVol=-1;
+  const days=new Map(), pr=new Set(), volPr=new Set();let best=null,bestVol=-1;
   sets.forEach(s=>{const d=s.at.slice(0,10);if(!days.has(d))days.set(d,[]);days.get(d).push(s);
-    const v=e1rm(s);if(v>0){if(best>=0&&v>best+1e-9)pr.add(s.id);best=Math.max(best,v);}});
+    const v=gScore(s);if(v!=null){if(best!=null&&v>best+1e-9)pr.add(s.id);best=best==null?v:Math.max(best,v);}});
   for(const [d,ss] of days){const v=ss.reduce((a,s)=>a+s.reps*s.kg,0);if(bestVol>=0&&v>bestVol+1e-9)volPr.add(d);bestVol=Math.max(bestVol,v);}
   return {days,pr,volPr};
 }
 
 /* ---------- routing ---------- */
 async function renderGym(args){
-  if(args){gArgs=args;if(!gTagBusy)gTagMsg='';}
+  if(args){gArgs=args;if(!gTagBusy)gTagMsg='';if(args[0]==='e')delete GSETS[+args[1]];}   /* opening an exercise reads its sets again: another tab may have logged some */
   if(view!=='gym')return;
   const tok=++gTok, box=$('#g-body'), [p,a,b]=gArgs;
   clearInterval(gTimer);gTimer=null;
@@ -87,6 +91,8 @@ async function renderGym(args){
   if(p!=='new'&&!(p==='w'&&b==='edit'))gDraft=null;
   try{
     if(!GY){box.innerHTML='<p class="note">Loading…</p>';await gLoad();}
+    else if(gStale||(p==='w'||p==='e')&&a&&!(p==='w'?GY.workouts.some(w=>w.id===+a):exById(+a)))await gLoad();   /* made in another tab? */
+    gStale=false;
     let html;
     if(p==='new'||(p==='w'&&b==='edit'))html=gEditPage(p==='new'?null:+a);
     else if(p==='w')html=await gWorkoutPage(+a);
@@ -101,6 +107,15 @@ async function renderGym(args){
     if(p==='e')gAfterExercise(+a);
   }catch(e){if(tok===gTok&&!e.signedOut)box.innerHTML=`<p class="note">Couldn’t load this: ${esc(e.message)}</p>`;}
 }
+
+/* Back to this tab after a while in another: what was loaded may be out of date. Pages with a form being filled in keep it on screen. */
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden||!GY)return;
+  Object.keys(GSETS).forEach(k=>delete GSETS[k]);gChanged();gStale=true;
+  if(view!=='gym')return;
+  const [p,,b]=gArgs, busy=p==='new'||p==='s'||(p==='w'&&b==='edit')||$('#g-body details[open]')||(document.activeElement&&document.activeElement.closest('#g-body form'))||(gCsv&&gCsv.busy)||gTagBusy;
+  if(busy)gLoad().then(()=>{gStale=false;}).catch(()=>{});else renderGym();
+});
 
 /* ---------- workouts list ---------- */
 function gHomePage(){
@@ -195,9 +210,8 @@ function gPickRefresh(){
 async function gSaveDraft(){
   const D=gDraft, msg=$('#g-emsg');
   if(!D.name.trim()){msg.textContent='Give the workout a name.';$('#g-wname').focus();return;}
-  try{
-    for(const i of D.items){if(!i.e){const e=await api('POST','/api/gym/exercises',{name:i.name});i.e=e.id;delete i.name;}}
-    const body={name:D.name,description:D.description,items:D.items.map(i=>({e:i.e,target:i.target}))};
+  try{   /* new exercises go by name: the server makes them only if it takes the whole workout */
+    const body={name:D.name,description:D.description,items:D.items.map(i=>i.e?{e:i.e,target:i.target}:{name:i.name,target:i.target})};
     const r=D.id==null?await api('POST','/api/gym/workouts',body):await api('PUT','/api/gym/workouts/'+D.id,body,D.ver);
     gDraft=null;await gLoad();go('gym/w/'+r.id);
   }catch(e){if(!e.signedOut){await gLoad().catch(()=>{});msg.textContent=e.message;}}
@@ -219,7 +233,7 @@ async function gExercisePage(id){
       const cmp=(v,ix,k)=>{const p=prev&&prev[ix];return !p||v===p[k]?'':v>p[k]?' up':' down';};
       return `<section class="gday"><h3><a href="#gym/d/${d}">${esc(dayLabel(d))} ›</a>${A.volPr.has(d)?'<span class="chip gvol">🏆 Volume</span>':''}</h3>
         ${ss.map((s,ix)=>{const isPr=A.pr.has(s.id);return `<a class="gset" href="#gym/s/${s.id}"><span class="gi">${ix+1}</span>
-          <span class="gtm">${ix?`<span class="grest">+${fmtDur(atMs(s.at)-atMs(ss[ix-1].at))}</span>`:esc(s.at.slice(11,16))}${isPr?' <span class="gtro" title="Best estimated 1RM so far">🏆</span>':''}</span>
+          <span class="gtm">${ix?`<span class="grest">+${fmtDur(atMs(s.at)-atMs(ss[ix-1].at))}</span>`:esc(s.at.slice(11,16))}${isPr?` <span class="gtro" title="${s.kg>0?'Best estimated 1RM so far':'Least assistance so far'}">🏆</span>`:''}</span>
           <span class="gnum${isPr?' pr':cmp(s.reps,ix,'reps')}">${s.reps}<small>rep</small></span><span class="gnum${isPr?' pr':cmp(s.kg,ix,'kg')}">${kgTxt(s.kg)}<small>kg</small></span><i class="gch">›</i>
           ${s.note?`<span class="gnote">${esc(s.note)}</span>`:''}</a>`;}).join('')}</section>`;}).join('')}
       ${days.length>gShow?`<button class="ghost" type="button" data-g="more">Show older sets</button>`:''}</div>`
@@ -260,14 +274,14 @@ function gRecords(sets,A){
   const max=f=>sets.reduce((b,s)=>(f(s)>f(b)?s:b),sets[0]);
   const when=s=>`${s.reps} × ${kgTxt(s.kg)} kg · ${fmtShort(s.at.slice(0,10))}`;
   const b1=max(e1rm), bk=max(s=>s.kg*10000+s.reps), br=max(s=>s.reps*10000+s.kg), bv=max(s=>s.reps*s.kg);
-  let bd=null,bdv=-1;for(const [d,ss] of A.days){const v=ss.reduce((a,s)=>a+s.reps*s.kg,0);if(v>bdv){bdv=v;bd=d;}}
+  let bd=null,bdv=-Infinity;for(const [d,ss] of A.days){const v=ss.reduce((a,s)=>a+s.reps*s.kg,0);if(v>bdv){bdv=v;bd=d;}}
   const reps=[];for(let r=1;r<=15;r++){const ok=sets.filter(s=>s.reps>=r);if(ok.length)reps.push([r,ok.reduce((b,s)=>(s.kg>b.kg?s:b),ok[0])]);}
   return `<div class="wstats">${[
     e1rm(b1)>0?['Est. 1 rep max',`${kgTxt(Math.round(e1rm(b1)*10)/10)}<i>kg</i>`,when(b1)]:['Est. 1 rep max','–','needs a weighted set of 1–20 reps'],
     ['Heaviest',`${kgTxt(bk.kg)}<i>kg</i>`,when(bk)],
     ['Most reps',`${br.reps}<i>reps</i>`,when(br)],
     ['Best set volume',`${kgTxt(Math.round(bv.reps*bv.kg))}<i>kg</i>`,when(bv)],
-    ['Best day volume',`${kgTxt(Math.round(bdv))}<i>kg</i>`,fmtShort(bd)],
+    ['Best day volume',`${kgTxt(Math.round(bdv))}<i>kg</i>`,bd?fmtShort(bd):''],
     ['Logged',`${sets.length}<i>sets</i>`,`on ${A.days.size} day${A.days.size===1?'':'s'}`],
   ].map(([l,v,s])=>`<div class="stat"><span class="lbl">${l}</span><span class="num">${v}</span><span class="sub">${esc(s)}</span></div>`).join('')}</div>
   <section class="panel"><h2>Rep maxes</h2><p>The heaviest weight you’ve moved for at least that many reps.</p>
@@ -297,7 +311,7 @@ async function gSetPage(id){
   let s=null;for(const k in GSETS){s=GSETS[k].find(x=>x.id===id);if(s)break;}
   if(!s)s=await api('GET','/api/gym/sets/'+id);
   if(!s)return gHead(gBackE,'Edit set')+gEmpty('This set doesn’t exist any more.');
-  return gHead('#gym/e/'+s.e,'Edit set')+`<form id="g-setform" class="panel gsetform" data-id="${s.id}">
+  return gHead('#gym/e/'+s.e,'Edit set')+`<form id="g-setform" class="panel gsetform" data-id="${s.id}" data-ver="${esc(s.updated||'')}">
     <label class="f"><span class="lbl">Exercise</span><select id="g-se">${GY.exercises.map(e=>`<option value="${e.id}"${e.id===s.e?' selected':''}>${esc(e.name)}</option>`).join('')}</select></label>
     <div class="g2"><label class="f"><span class="lbl">Reps</span><input id="g-sr" type="number" inputmode="numeric" min="0" max="1000" step="1" value="${s.reps}" required></label>
       <label class="f"><span class="lbl">Weight kg</span><input id="g-sk" type="number" inputmode="decimal" min="-500" max="2000" step="any" value="${kgTxt(s.kg)}" required></label></div>
@@ -501,7 +515,9 @@ async function gSubmit(f){
     catch(err){if(!err.signedOut)$('#g-exmsg').textContent=err.message;}}
   else if(f.id==='g-setform'){const id=+f.dataset.id, t=$('#g-st').value;
     const body={exercise:+$('#g-se').value,reps:+$('#g-sr').value,kg:+$('#g-sk').value,note:$('#g-sn').value,at:`${$('#g-sd').value}T${t.length===5?t+':00':t}`};
-    try{const old=Object.keys(GSETS).find(k=>GSETS[k].some(s=>s.id===id));const s=await api('PUT','/api/gym/sets/'+id,body);
+    const old=Object.keys(GSETS).find(k=>GSETS[k].some(s=>s.id===id));
+    try{const s=await api('PUT','/api/gym/sets/'+id,body,f.dataset.ver||null);   /* changed (or deleted) in another tab since: 409 / 404 */
       if(old)delete GSETS[old];delete GSETS[s.e];gChanged();await gLoad();go('gym/e/'+s.e);}
-    catch(err){if(!err.signedOut)$('#g-smsg').textContent=err.message;}}
+    catch(err){if(err.signedOut)return;$('#g-smsg').textContent=err.message;
+      if(err.conflict||/No such/.test(err.message)){if(old)delete GSETS[old];gChanged();gLoad().catch(()=>{});}}}   /* the next look loads it as it is now */
 }

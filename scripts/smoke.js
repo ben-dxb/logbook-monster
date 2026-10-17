@@ -22,10 +22,19 @@ const noBrowser = why => {
 };
 if (!chromium) noBrowser('Playwright is not installed');
 
-const [PORT] = require('../test/_ports').freePorts(1), BASE = `http://127.0.0.1:${PORT}`;
+const [PORT, AI_PORT] = require('../test/_ports').freePorts(2), BASE = `http://127.0.0.1:${PORT}`;
+/* Stands in for OpenRouter where a read isn't faked in the browser (the workout plan read, end to end through the background job) */
+const fakeAi = require('node:http').createServer((req, res) => {
+  req.resume();
+  req.on('end', () => {
+    const program = { workouts: [{ name: 'Smoke AI upper', description: '', exercises: [{ name: 'Smoke AI press', target: '3 × 8' }] }], notes: [] };
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ model: 'test/model', choices: [{ message: { content: JSON.stringify(program) } }] }));
+  });
+}).listen(AI_PORT, '127.0.0.1');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'logbook-monster-smoke-'));
 const env = { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', BASE_URL: BASE, DB_PATH: path.join(dir, 's.db'),
-  SESSION_SECRET: 'x'.repeat(40), AUTH_RATE_LIMIT: '1000', ALLOWED_EMAILS: '', ALLOW_REGISTRATION: 'false', GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: '' };
+  SESSION_SECRET: 'x'.repeat(40), AUTH_RATE_LIMIT: '1000', ALLOWED_EMAILS: '', ALLOW_REGISTRATION: 'false', GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: '', OPENROUTER_BASE_URL: `http://127.0.0.1:${AI_PORT}` };
 const node = [process.execPath, '--disable-warning=ExperimentalWarning'];
 const root = path.join(__dirname, '..');
 /* future days nobody has saved, inside the dates the app stores (up to a year ahead): two Mondays a week apart, and the
@@ -40,7 +49,7 @@ for (const w of [1100, 390]) execSync(`"${node[0]}" ${node[1]} scripts/create-us
 const srv = spawn(node[0], [node[1], 'server/index.js'], { cwd: root, env, stdio: 'ignore' });
 
 const fail = msg => { console.error('smoke FAILED:', msg); cleanup(); process.exit(1); };
-function cleanup() { srv.kill(); fs.rmSync(dir, { recursive: true, force: true }); }
+function cleanup() { srv.kill(); fakeAi.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
 const signIn = async p => { await p.fill('#email', 'smoke@example.com'); await p.fill('#password', 'smoke-password-1'); await p.click('#submit'); };
 const until = async (fn, ms = 5000) => { for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 100))) if (await fn()) return true; return !!(await fn()); };
@@ -259,8 +268,8 @@ async function phase1c(browser) {
 /* Phase 2C tracker leftovers: a far "Takes effect from" date is refused (never read as "from the start"), an impossible month
    isn't rolled into another, Food Library's "Where" lists a saved day's own meals, a save for a day under another plan doesn't
    take that plan's foods away from the day on screen, the export is named by the browser's date, a tab left open past midnight
-   moves on at the next tap, a garbled coach link shows the "doesn't work" panel, a day stored under an impossible date can be
-   deleted from History, and a load error reads as one sentence. */
+   moves on at midnight, a garbled coach link shows the "doesn't work" panel, and a day stored under an impossible date can be
+   deleted from History. */
 async function phase2c(browser) {
   const ctx = await browser.newContext({ viewport: { width: 1100, height: 900 } }), pg = await ctx.newPage(), errs = [];
   pg.on('pageerror', e => errs.push(e.message)); pg.on('dialog', d => d.accept());
@@ -320,23 +329,17 @@ async function phase2c(browser) {
   expect(/2026-02-31: a day of 900 kcal/.test(await pg.textContent('#hbad')), 'the impossible date should be listed');
   await pg.click('#hbad [data-act=baddel]'); await pg.waitForSelector('#hbad', { state: 'hidden' });
   expect(!(await pg.evaluate(() => fetch('/api/days').then(r => r.json()))).some(d => d.date === '2026-02-31'), 'the impossible date should be deleted');
-  /* the doubled stop: "…still running?. Reload" */
-  await pg.route('**/api/photos', r => r.abort());
-  await pg.evaluate(() => { location.hash = '#dash'; }); await pg.waitForFunction(() => /Couldn’t load your photos/.test(document.querySelector('#d-body').textContent), null, { timeout: 5000 });
-  expect(/still running\? Reload/.test(await pg.textContent('#d-body')), 'a load error should end once: ' + await pg.textContent('#d-body'));
-  await pg.unroute('**/api/photos');
   /* PR-TL-029: a garbled coach link */
   await pg.goto(BASE + '/coach/abc%E0%A4'); await pg.waitForSelector('#c-gone:not([hidden])', { timeout: 5000 });
   expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
   await ctx.close();
-  /* PR-TR-047: far east of the server, the export is named by the browser's date (there already tomorrow, by the server's UTC) */
+  /* PR-TR-047: far east of the server, the export is named by the browser's date (its zone goes with the link, #80) */
   const c2 = await browser.newContext({ timezoneId: 'Pacific/Kiritimati', acceptDownloads: true }), p2 = await c2.newPage();
-  const tmr = new Date(Date.now() + 864e5); await p2.clock.install({ time: new Date(Date.UTC(tmr.getUTCFullYear(), tmr.getUTCMonth(), tmr.getUTCDate(), 1)) });
   await p2.goto(BASE + '/login'); await signIn(p2); await p2.waitForSelector('#v-dash:not([hidden])');
   await p2.click('#acct summary');
   const [dl] = await Promise.all([p2.waitForEvent('download'), p2.click('#exportlink')]);
   const local = await p2.evaluate(() => todayStr());
-  expect(local === tmr.toISOString().slice(0, 10) && dl.suggestedFilename() === `logbook-monster-${local}.json`, `the export should be named by the browser’s date ${local}: ${dl.suggestedFilename()}`);
+  expect(dl.suggestedFilename() === `logbook-monster-${local}.json`, `the export should be named by the browser’s date ${local}: ${dl.suggestedFilename()}`);
   await c2.close();
   /* NEW-03: a Daily Tracker left on Today past midnight moves on at the next tap, so food goes to the new day */
   const c3 = await browser.newContext({ viewport: { width: 1100, height: 900 } }), p3 = await c3.newPage();
@@ -360,6 +363,96 @@ async function phase2c(browser) {
   await p3.evaluate(async d => api('DELETE', '/api/days/' + d), day2);
   await c3.close();
   expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
+}
+
+/* Phase 2C, gym / foods / supplements / photos: lists read again when the tab comes back and before saying a deep link's item isn't
+   there, set edits checked against the version loaded, 🏆 for less assistance and a Records tab that loads with only assisted sets,
+   Raw/Cooked closes your own food's Add form, an impossible #supps day says so, the photo form's date stops at today, an AI pose
+   saved from the form stays the AI's, and one punctuation mark at the end of the Dashboard's photo error. */
+async function phase2cLibrary(browser) {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } }), pg = await ctx.newPage(), errs = [];
+  pg.on('pageerror', e => errs.push(e.message));
+  const hash = async (h, sel) => { await pg.evaluate(h => { location.hash = h; }, h); if (sel) await pg.waitForSelector(sel, { timeout: 5000 }); };
+  const back = () => pg.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));   /* the tab shown again */
+  await pg.goto(BASE + '/login'); await signIn(pg); await pg.waitForSelector('#v-dash:not([hidden])');
+  /* the Dashboard's photo card: "…still running? Reload…", not "running?. Reload" */
+  await pg.route('**/api/photos', r => r.abort());
+  await pg.reload(); await pg.waitForFunction(() => /Couldn’t load your photos/.test(document.querySelector('#d-body').textContent), null, { timeout: 5000 });
+  const dt = await pg.textContent('#d-body');
+  expect(/still running\? Reload/.test(dt) && !/\?\./.test(dt), 'the photo card error should end one sentence once: ' + dt.slice(0, 200));
+  await pg.unroute('**/api/photos');
+
+  /* gym: assisted sets, less assistance is a 🏆; Records loads */
+  const ex = await pg.evaluate(async () => {
+    const e = await api('POST', '/api/gym/exercises', { name: 'Smoke assisted pull-up' });
+    await api('POST', '/api/gym/sets', { exercise: e.id, reps: 8, kg: -30, at: addDays(todayStr(), -2) + 'T10:00' });
+    await api('POST', '/api/gym/sets', { exercise: e.id, reps: 8, kg: -20, at: addDays(todayStr(), -1) + 'T10:00' });
+    return e.id;
+  });
+  await hash('#gym/e/' + ex, '#g-quick');
+  expect(await pg.locator('#g-body .gtro').count() === 1, 'less assistance should get a 🏆');
+  await pg.click('[data-g=tab][data-t=records]'); await pg.waitForSelector('#g-body .wstats', { timeout: 5000 });
+  expect(!/Couldn’t load/.test(await pg.textContent('#g-body')), 'Records should load with only assisted sets');
+  await pg.click('[data-g=tab][data-t=sets]'); await pg.waitForSelector('#g-body .gday');
+  /* a set logged in another tab shows when this one is shown again; a workout made elsewhere opens */
+  await pg.evaluate(ex => api('POST', '/api/gym/sets', { exercise: ex, reps: 8, kg: -10, at: todayStr() + 'T09:00' }), ex);
+  await back();
+  await pg.waitForFunction(() => document.querySelectorAll('#g-body .gset').length === 3, null, { timeout: 5000 });
+  const w = await pg.evaluate(ex => api('POST', '/api/gym/workouts', { name: 'Smoke other tab workout', items: [{ e: ex }] }), ex);
+  await hash('#gym/w/' + w.id); await pg.waitForFunction(() => /Smoke other tab workout/.test(document.querySelector('#g-body h2').textContent), null, { timeout: 5000 });
+  /* a set changed in another tab since this one loaded it: the save is refused and says why */
+  const sid = await pg.evaluate(ex => api('GET', '/api/gym/sets?exercise=' + ex).then(l => l[0].id), ex);
+  await hash('#gym/s/' + sid, '#g-setform');
+  await pg.evaluate(async ([id, ex]) => api('PUT', '/api/gym/sets/' + id, { exercise: ex, reps: 6, kg: -30, note: 'other tab', at: addDays(todayStr(), -2) + 'T10:00' }), [sid, ex]);
+  await pg.fill('#g-sr', '9'); await pg.click('#g-setform button[type=submit]');
+  await pg.waitForFunction(() => /another tab or device/.test(document.querySelector('#g-smsg').textContent), null, { timeout: 5000 });
+  expect(await pg.evaluate(id => api('GET', '/api/gym/sets/' + id).then(s => s.reps === 6 && s.note === 'other tab'), sid), 'the other tab’s edit should stay');
+
+  /* foods: Raw/Cooked on your own food closes its Add form; a food made in another tab opens by its link */
+  const f = await pg.evaluate(() => api('POST', '/api/foods', { name: 'Smoke thigh (raw)', unit: 'g', kind: 'ingredient', k: 180, p: 20, c: 0, f: 10, state: 'raw', yield: 75 }));
+  await hash('#foods', '#f-list');
+  const card = `.fcard[data-id="${f.id}"]`;
+  await pg.waitForSelector(card, { timeout: 5000 });
+  await pg.click(card + ' [data-fa=add]'); await pg.waitForSelector('#f-addform');
+  await pg.click(card + ' [data-fa=wt][data-v=cooked]');
+  await pg.waitForFunction(() => !document.querySelector('#f-addform'), null, { timeout: 5000 });
+  const f2 = await pg.evaluate(() => api('POST', '/api/foods', { name: 'Smoke other tab food', unit: 'g', kind: 'ingredient', k: 100 }));
+  await hash('#foods/' + f2.id, '#f-form');
+  expect(await pg.inputValue('#f-name') === 'Smoke other tab food', 'a food made in another tab should open by its link');
+
+  /* supplements: the same for the library, an impossible day says so, another tab's entry shows when this tab is shown again */
+  await hash('#supps/lib', '#s-list');
+  const s2 = await pg.evaluate(() => api('POST', '/api/supps', { name: 'Smoke other tab supp', amount: 1, unit: 'g' }));
+  await hash('#supps/lib/' + s2.id, '#s-lform');
+  await hash('#supps/2026-02-31'); await pg.waitForFunction(() => /no such day/.test(document.querySelector('#s-body').textContent), null, { timeout: 5000 });
+  await hash('#supps', '#s-log .empty, #s-log .orow');
+  await pg.evaluate(() => api('POST', '/api/supps/log', { date: todayStr(), name: 'Smoke other tab entry', amount: 2, unit: 'g' }));
+  await back();
+  await pg.waitForFunction(() => /Smoke other tab entry/.test(document.querySelector('#s-log').textContent), null, { timeout: 5000 });
+
+  /* photos: one uploaded in another tab shows when this one is shown again and opens by its link; the form's date stops at today */
+  await hash('#photos', '#p-list');
+  const up = () => pg.evaluate(async () => {
+    const c = document.createElement('canvas'); c.width = c.height = 16;
+    const b = await new Promise(r => c.toBlob(r, 'image/jpeg'));
+    return pSend('POST', '/api/photos?date=' + todayStr() + '&pose=front', b);
+  });
+  const ph = await up();
+  await back();
+  await pg.waitForSelector(`#p-list [data-pid="${ph.id}"]`, { timeout: 5000 });
+  const ph2 = await up();
+  await hash('#photos/' + ph2.id, '#p-eform');
+  expect(await pg.getAttribute('#p-edate', 'max') === await pg.evaluate(() => todayStr()), 'the photo date should stop at today');
+  /* the AI's answer saved from the form is sent as the AI's */
+  await pg.evaluate(() => { document.querySelector('#p-eform').dataset.ai = JSON.stringify({ pose: 'back', style: '' }); });
+  await pg.selectOption('#p-epose', 'back'); await pg.selectOption('#p-estyle', '');
+  const put = pg.waitForRequest(r => r.method() === 'PUT' && /\/api\/photos\/\d+$/.test(r.url()));
+  await pg.click('#p-eform button[type=submit]');
+  expect((await put).postDataJSON().ai === true, 'saving the AI’s answer should say so');
+  expect(await pg.evaluate(() => !pUntagged({ poseAi: true, aiSaw: true, pose: 'other', style: '' }) && pUntagged({ poseAi: true, aiSaw: false, pose: 'other', style: '' })),
+    'a photo the AI already called Other is not untagged');
+  expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
+  await ctx.close();
 }
 
 async function recheck(browser) {
@@ -1043,6 +1136,20 @@ async function recheck(browser) {
         expect(/Line 2: amount "1,500" could be 1500 or 1\.500/.test(await pg.textContent('#ad-upmsg')), 'an ambiguous amount should be reported');
         await pg.click('#ad-discard');
         await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
+        /* a JSON file with only meals (no template list) fills a template's meals and keeps its name (NEW-plan-01) */
+        await pg.click('#ad-types [data-t=R]'); await pg.fill('#ad-tn', 'Smoke rest day'); await pg.press('#ad-tn', 'Tab');
+        await pg.setInputFiles('#ad-file', { name: 'meals-only.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ plan: { R: [{ id: '1', name: 'Smoke only meals', p: [], c: [], x: [] }] } })) });
+        await pg.waitForFunction(() => /Loaded meals-only\.json/.test(document.querySelector('#ad-upmsg').textContent), null, { timeout: 5000 });
+        expect(await pg.evaluate(() => adTplName('R') === 'Smoke rest day' && AD.plan.R[0].name === 'Smoke only meals'), 'a meals-only file should keep the template’s name');
+        /* contradictory food limits are refused before saving (PR-PL-042) */
+        await pg.click('.adfood[data-id=banana] summary');
+        await pg.fill('#ad-fd-banana-min', '300'); await pg.fill('#ad-fd-banana-max', '100'); await pg.fill('#ad-fd-banana-d', '50');
+        await pg.click('#ad-save');
+        await pg.waitForFunction(() => /min serving \(300\) is more than the max serving \(100\)/.test(document.querySelector('#ad-upmsg').textContent)
+          && /direct protein \(50\) is more than its protein/.test(document.querySelector('#ad-upmsg').textContent), null, { timeout: 5000 });
+        expect(/Unsaved/.test(await pg.textContent('#ad-status')), 'nothing should be saved with contradictory limits');
+        await pg.click('#ad-discard');
+        await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
         /* the plan CSV download keeps a value that starts like a formula as text */
         expect(JSON.stringify(await pg.evaluate(() => ['=HYPERLINK("x")', '+1', '-1', '@SUM(A1)', 'Oats, 80 g', 'plain'].map(csvCell)))
           === JSON.stringify(['"\'=HYPERLINK(""x"")"', "'+1", "'-1", "'@SUM(A1)", '"Oats, 80 g"', 'plain']), 'CSV cells starting with = + - @ get a leading apostrophe');
@@ -1081,11 +1188,49 @@ async function recheck(browser) {
         await pg.click('#ad-tabs [data-adt=email]'); await pg.waitForSelector('[data-adtab=email]:not([hidden])');
         expect(/Not set up/.test(await pg.textContent('#ad-mailstate')), 'email should start not set up');
         expect(await pg.inputValue('#ad-m-host') === 'smtp.gmail.com', 'Gmail should be the default email server');
+        /* with .env settings, Save sends only what was changed (the rest stays from .env) and says where each value comes from */
+        const am = await pg.evaluate(() => {
+          const keep = AM;
+          AM = { configured: true, source: 'env', host: 'smtp.example.com', port: 587, secure: false, user: '', hasPassword: true, passwordSource: 'env',
+            from: 'env@example.com', fromName: 'Logbook Monster', sources: { host: 'env', port: 'env', secure: null, user: null, pass: 'env', from: 'env', fromName: null } };
+          amFill(); $('#ad-m-pass').value = 'new-pass';
+          const one = amBody(), state = $('#ad-mailstate').textContent, tls = $('#ad-m-tls').value;
+          $('#ad-m-port').value = '465'; $('#ad-m-port').dispatchEvent(new Event('input'));
+          const two = amBody();
+          AM = keep; amFill();
+          return { one, two, state, tls };
+        });
+        expect(JSON.stringify(am.one) === '{"pass":"new-pass"}', 'only the typed password should be sent: ' + JSON.stringify(am.one));
+        expect(am.tls === '0' && am.two.port === 465 && am.two.secure === true, 'the TLS choice should follow a changed port: ' + JSON.stringify(am.two));
+        expect(/From \.env: server, port, password, send-from address\./.test(am.state), 'the state should say which values come from .env: ' + am.state);
+        /* saving email settings updates the note on People without a reload */
+        await pg.click('#ad-tabs [data-adt=people]'); await pg.waitForSelector('[data-adtab=people]:not([hidden])');
+        expect(/Email isn’t set up yet/.test(await pg.textContent('#ad-ivmsg')), 'People should say email isn’t set up');
+        await pg.click('#ad-tabs [data-adt=email]'); await pg.waitForSelector('[data-adtab=email]:not([hidden])');
+        await pg.route('**/api/admin/email', r => (r.request().method() === 'PUT' ? r.fulfill({ status: 200, contentType: 'application/json',
+          body: JSON.stringify({ configured: true, source: 'admin', host: 'smtp.gmail.com', port: 465, secure: true, user: '', hasPassword: true, passwordSource: 'admin',
+            from: 'smoke@example.com', fromName: 'Logbook Monster', sources: { host: 'admin', port: 'admin', secure: 'admin', user: null, pass: 'admin', from: 'admin', fromName: null } }) }) : r.continue()));
+        await pg.fill('#ad-m-from', 'smoke@example.com'); await pg.fill('#ad-m-pass', 'smoke-app-pass'); await pg.click('#ad-mailform button[type=submit]');
+        await pg.waitForFunction(() => /Email settings saved/.test(document.querySelector('#ad-mailmsg').textContent), null, { timeout: 5000 });
+        await pg.unroute('**/api/admin/email');
+        await pg.click('#ad-tabs [data-adt=people]'); await pg.waitForSelector('[data-adtab=people]:not([hidden])');
+        expect(!/Email isn’t set up yet/.test(await pg.textContent('#ad-ivmsg')), 'People should drop the email note once email is saved');
+        await pg.evaluate(() => amLoad());
         await pg.click('#ad-tabs [data-adt=people]'); await pg.waitForSelector('[data-adtab=people]:not([hidden])');
         await pg.fill('#ad-iv-email', 'guest@example.com'); await pg.click('#ad-iv-btn');
         await pg.waitForSelector('#ad-iv-link', { timeout: 5000 });
         const link = await pg.inputValue('#ad-iv-link');
         expect(/Invite sent/.test(await pg.textContent('#ad-users')), 'invited person should be listed as invited');
+        /* Remove refused as gone (removed in another tab): the list is fetched again */
+        let reloads = 0; const onReq = r => { if (r.method() === 'GET' && /\/api\/admin\/users$/.test(r.url())) reloads++; };
+        const onDlg = dg => dg.accept();
+        pg.on('request', onReq); pg.on('dialog', onDlg); const errsAt = errs.length;
+        await pg.route('**/api/admin/users/*', r => (r.request().method() === 'DELETE' ? r.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"No such account"}' }) : r.continue()));
+        await pg.click('#ad-users .aduser:has-text("guest@example.com") [data-au=remove]');
+        for (let i = 0; i < 50 && !reloads; i++) await pg.waitForTimeout(100);
+        await pg.unroute('**/api/admin/users/*'); pg.off('request', onReq); pg.off('dialog', onDlg);
+        expect(reloads > 0, 'a refused Remove (404) should reload the accounts');
+        errs.push(...errs.splice(errsAt).filter(m => !/status of 404/.test(m)));   /* the browser logs the 404 asked for */
         /* the security log tab: newest first, filtered by event */
         await pg.click('#ad-tabs [data-adt=log]'); await pg.waitForSelector('[data-adtab=log]:not([hidden]) #ad-log .aduser', { timeout: 5000 });
         expect(/Invite made/.test(await pg.textContent('#ad-log .aduser >> nth=0')) && /AI settings changed/.test(await pg.textContent('#ad-log')), 'the security log should list the invite and the AI key change');
@@ -1105,6 +1250,8 @@ async function recheck(browser) {
         await gp.click('a[data-view=day]');
         await gp.waitForSelector('#v-day:not([hidden]) #meals .noplan', { timeout: 5000 });
         expect(await gp.locator('#meals .meal').count() === 0, 'a new account should have no meals');
+        expect(await gp.isHidden('#pudpanel') && await gp.isHidden('#ft-pud'), 'no rice pudding panel or note without pudding in the plan');
+        expect(await gp.evaluate(() => pudUsed({ meals: [], off: [{ snack: 'pudding' }] })), 'a day with rice pudding shows the batch panel');
         expect(await gp.isHidden('#adminlink'), 'super admin link should be hidden for other accounts');
         await gp.evaluate(() => { location.hash = '#admin'; });
         await gp.waitForSelector('#v-day:not([hidden])', { timeout: 5000 });
@@ -1139,6 +1286,17 @@ async function recheck(browser) {
         /* a change that takes effect later: Mondays are rest days from 2031, days before keep training */
         await gp.selectOption('#ad-wd-0', rs); await gp.fill('#ad-from', FROM); await gp.click('#ad-save');
         await gp.waitForFunction(() => /Scheduled/.test(document.querySelector('#ad-versions').textContent) && /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
+        /* a plan change emptied of everything asks first, then says "No plan from …" – not "Saved" (PR-PL-029) */
+        const NOPLAN = later(21);
+        await gp.evaluate(() => { AD.templates = []; AD.plan = {}; AD.targets = {}; AD.foods = {}; renderAdmin(); });
+        await gp.fill('#ad-from', NOPLAN); await gp.press('#ad-from', 'Tab');
+        let asked = ''; gp.once('dialog', d => { asked = d.message(); d.dismiss(); }); await gp.click('#ad-save');
+        expect(/no day templates or foods/.test(asked) && /Unsaved/.test(await gp.textContent('#ad-status')), 'saving an empty plan should ask first; No keeps it unsaved');
+        gp.once('dialog', d => d.accept()); await gp.click('#ad-save');
+        await gp.waitForFunction(() => /No plan from/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
+        expect(!/Saved/.test(await gp.textContent('#ad-status')) && /No plan/.test(await gp.textContent('#ad-versions')), 'an empty plan change should say "No plan from …"');
+        gp.once('dialog', d => d.accept()); await gp.click(`[data-ad=vdel][data-from="${NOPLAN}"]`);
+        await gp.waitForFunction(d => !document.querySelector(`[data-ad=vdel][data-from="${d}"]`), NOPLAN, { timeout: 5000 });
         /* delete progress photos between two dates: only those in the range go */
         await gp.evaluate(async () => {
           const jpg = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, ...new Array(40).fill(32), 0xff, 0xd9])], { type: 'image/jpeg' });
@@ -1191,6 +1349,13 @@ async function recheck(browser) {
         await pg.unroute(/\/api\/jobs(\/.*)?$/); await pg.unroute(/\/api\/my\/ai-import\?/);
         await pg.click('[data-ad=discard]');
         await pg.waitForFunction(f => !AD.foods.smoke_ai_seeds && AD.foods[f].k !== 389, fid, { timeout: 5000 });
+        /* a workout plan read with AI, not faked in the browser: the background job runs on the server against a fake OpenRouter (PR-PL-062) */
+        await pg.evaluate(() => { location.hash = '#gym'; }); await pg.waitForSelector('#g-aifile', { state: 'attached' });
+        await pg.setInputFiles('#g-aifile', { name: 'workout.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 workout') });
+        await pg.waitForSelector('.gai', { timeout: 15000 });
+        expect(/Smoke AI upper/.test(await pg.textContent('.gai')) && /workout\.pdf/.test(await pg.textContent('.gai')), 'the workout read should open its preview');
+        await pg.click('.gai [data-g=aidrop]'); await pg.waitForSelector('.gai', { state: 'detached' });
+        await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
         /* Options tab: plan files off hides the CSV / JSON buttons on Account admin, on again brings them back */
         expect(!(await pg.isHidden('[data-ad=csv]')), 'plan file buttons should show by default');
         await pg.click('#acct>summary'); await pg.click('#adminlink');
@@ -1265,6 +1430,7 @@ async function recheck(browser) {
     await recheck(browser);
     await phase1c(browser);
     await phase2c(browser);
+    await phase2cLibrary(browser);
     console.log('smoke: ok (desktop + phone)');
   } catch (e) { await browser.close(); return fail(e.stack); }
   await browser.close(); cleanup();

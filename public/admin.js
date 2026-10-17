@@ -35,7 +35,7 @@ function tnameOn(date,id){const v=mineOn(date),t=((v&&v.templates)||[]).find(x=>
 function freshOn(date,t){useDefs(date);const D=freshDay(wdOf(date),t);libSync(D,date);return D;}   /* with its copy of the plan foods, as persist() keeps it */
 function adApplyInUse(){useDefs(S.cur,true);}
 function setDefaults(d){DEFS=d||{mine:null,myVersions:[]};adApplyInUse();}
-const adEmpty=v=>!v||(!(v.templates||[]).length&&!Object.keys(v.foods||{}).length&&!Object.keys(v.free||{}).length);
+const adEmpty=v=>!v||(!(v.templates||[]).length&&!Object.keys(v.foods||{}).length);   /* as the server sees it: no templates, no foods */
 /* choose which of your plan changes to edit (the one in effect today unless one is named) */
 function adPick(v){
   const td=todayStr(), now=mineOn(td);
@@ -216,7 +216,8 @@ function adStatus(){
     +(later.length?` Later changes still apply from ${later.join(', ')}.`:'');
   $('#ad-status').innerHTML=adBusy?'<span class="chip info">Saving…</span>'
     :d?'<span class="chip bad">Unsaved changes</span> Nothing changes for your days until you save.'
-    :!AD.templates.length&&adEmpty(adVer)?'<span class="chip">No plan saved yet</span> Add a day template or upload a plan, then save it.'
+    :!AD.templates.length&&adEmpty(adVer)?(adVer?`<span class="chip">No plan from ${esc(adVer.from?fmtShort(adVer.from):'the start')}</span> ${adVer.from?'Your days from then have no meal plan until a later change.':'Your days have no meal plan.'} Add a day template or upload a plan, then save it.`
+      :'<span class="chip">No plan saved yet</span> Add a day template or upload a plan, then save it.')
     :`<span class="chip ok">✓ Saved</span> ${adVer&&adVer.from?`Your days from ${esc(fmtShort(adVer.from))} start from this plan.`:'Your new days start from this plan.'} Days already in your history keep their own amounts.`;
   $('#ad-save').disabled=!d||adBusy||adFromBad;$('#ad-discard').hidden=!d;
 }
@@ -341,10 +342,23 @@ $('#ad-capform').addEventListener('submit',async e=>{
 $('#ad-file').addEventListener('change',e=>{const el=e.target;adUpload(el.files&&el.files[0]).finally(()=>{el.value='';});});
 window.addEventListener('beforeunload',e=>{if(adDirty()){e.preventDefault();e.returnValue='';}});
 
+/* what the server would refuse in your foods, said before sending */
+function adFoodErrs(){
+  const out=[];
+  for(const r of Object.values(AD.foods)){const n=r.n||'A food';
+    if(r.min!=null&&r.max!=null&&+r.min>+r.max)out.push(`${n}: the min serving (${r.min}) is more than the max serving (${r.max}).`);
+    if((+r.d||0)>(+r.p||0))out.push(`${n}: direct protein (${+r.d||0}) is more than its protein (${+r.p||0}).`);}
+  return out;
+}
 async function adSave(){
-  adBusy=true;adStatus();
   if(adFromToday&&adFrom<todayStr())adFrom=todayStr();
-  if(adFromBad){adBusy=false;adErrs=['Pick a date from 2000 to a year from today in “Takes effect from”.'];adMsg='Couldn’t save:';renderAdmin();return;}
+  if(adFromBad){adErrs=['Pick a date from 2000 to a year from today in “Takes effect from”.'];adMsg='Couldn’t save:';renderAdmin();return;}
+  const errs=adFoodErrs();
+  if(errs.length){adErrs=errs;adMsg='Couldn’t save – fix these first:';renderAdmin();return;}
+  const p=adPayload();
+  if(!p.templates.length&&!Object.keys(p.foods).length
+    &&!confirm(`This plan has no day templates or foods, so your days ${adFrom?`from ${fmtShort(adFrom)}`:'from the start'} will have no meal plan. Save it anyway?`))return;
+  adBusy=true;adStatus();
   try{const from=adFrom||null, cur=(DEFS.myVersions||[]).find(v=>(v.from||null)===from);   /* the change this save replaces, as this tab has it */
     adSaved_(await api('PUT','/api/my/defaults',{...adPayload(),from},(cur&&cur.updatedAt)||null),from);}
   catch(err){if(!err.signedOut){adErrs=[err.message];adMsg='Couldn’t save:';}}
@@ -451,9 +465,10 @@ function adCleanFood(r){
 }
 const adCleanItem=i=>({f:String(i.f),g:adNum(i.g),lock:!!i.lock});
 /* add templates a file (or the AI) brings; a known id keeps its place and takes the file's name */
-function adTakeTemplates(list){
+/* rename: false for templates a file only implies (meals under T, R, S with no list) – yours keep their names */
+function adTakeTemplates(list,rename=true){
   for(const t of Array.isArray(list)?list:[]){if(!t||typeof t.id!=='string'||!AD_TPL_ID.test(t.id))continue;const id=t.id,name=String(t.name||AD_LEGACY[id]||id).slice(0,40);
-    const ex=adTpl(id);if(ex){ex.name=name;continue;}
+    const ex=adTpl(id);if(ex){if(rename)ex.name=name;continue;}
     if(AD.templates.length>=AD_MAX_TPL)continue;
     AD.templates.push({id,name});AD.plan[id]=AD.plan[id]||[];AD.targets[id]=AD.targets[id]||(adType&&AD.targets[adType]?{...AD.targets[adType]}:ZT());
     if(AD.templates.length===1)AD.schedule=DAYS.map(()=>id);}
@@ -470,6 +485,7 @@ function adApplyJson(j){
   const plan=full?j.plan:j;
   /* the day templates: as listed, or the old T / R / S a file uses; more than a plan can have is refused, not cut short */
   let tl=full&&Array.isArray(j.templates)?j.templates:null;
+  const listed=!!tl;
   if(!tl){const used=new Set([...Object.keys(plan&&typeof plan==='object'?plan:{}),...Object.keys((full&&j.targets)||{}),...((full&&Array.isArray(j.schedule))?j.schedule:[])]);
     tl=Object.keys(AD_LEGACY).filter(t=>used.has(t)).map(id=>({id,name:AD_LEGACY[id]}));}
   const fresh=new Set(tl.filter(t=>t&&typeof t.id==='string'&&AD_TPL_ID.test(t.id)&&!adTpl(t.id)).map(t=>t.id));
@@ -478,7 +494,7 @@ function adApplyJson(j){
     if(id==='pudding'){AD.pud={...(AD.pud||{n:'Rice pudding (batch)',k:0,p:0,c:0,f:0,d:0,step:5,unit:'g',min:null,max:null,order:null,free:''}),group:['p','c','x'].includes(r.group)?r.group:'c'};continue;}
     if(!AD_FOOD_ID.test(id)||id in Object.prototype)continue;
     AD.foods[id]={...(AD.foods[id]||{n:id,k:0,p:0,c:0,f:0,group:'',unit:'g',min:null,max:null,order:null,d:0,step:5,free:''}),...adCleanFood(r)};}}}
-  adTakeTemplates(tl);
+  adTakeTemplates(tl,listed);
   if(full&&Array.isArray(j.schedule)&&j.schedule.length===7&&j.schedule.every(t=>typeof t==='string'&&adTpl(t)))AD.schedule=[...j.schedule];
   if(full&&j.free&&typeof j.free==='object')FREE_KINDS.forEach(x=>{if(j.free[x]!=null)AD.free[x]=!!j.free[x];});
   if(full&&j.targets&&typeof j.targets==='object')AD.templates.forEach(({id})=>{const v=adOwnId(j.targets,id)&&j.targets[id];
@@ -762,7 +778,7 @@ function auRender(){
   m.innerHTML=auLink?`<p class="admsg">${esc(auLink.msg)}</p>${auLink.error?`<p class="aderr">${esc(auLink.error)} Send them this link yourself:</p>`:''}
     <div class="adlink"><input id="ad-iv-link" readonly value="${esc(auLink.link)}" aria-label="Invite link"><button type="button" class="ghost" data-au="copy">Copy link</button></div>`:'';
   if(!AU){$('#ad-users').innerHTML=LOADERR.au?loadErr('the accounts','au'):'';return;}
-  if(!AU.email&&!auLink)m.innerHTML='<p class="sub">Email isn’t set up yet (see Email below), so you’ll get a link to send yourself.</p>';
+  if(!AU.email&&!auLink)m.innerHTML='<p class="sub">Email isn’t set up yet (see the Email tab), so you’ll get a link to send yourself.</p>';
   $('#ad-users').innerHTML=AU.users.map(u=>{const [c,t]=AU_STATUS[u.status]||['',''];
     const how=[u.password&&'password',u.google&&'Google'].filter(Boolean).join(' + ');
     const sub=u.status==='active'?(u.lastLogin?`Last signed in ${auDate(u.lastLogin)}`:'Not signed in yet')+(how?` · ${how}`:'')
@@ -791,7 +807,7 @@ document.addEventListener('click',async e=>{
     else if(a==='remove'){if(!confirm(auRemoveText(u))){b.disabled=false;return;}
       await api('DELETE',`/api/admin/users/${u.id}`);auLink=null;}
     await auLoad();
-  }catch(err){b.disabled=false;if(!err.signedOut)alert(err.message);}
+  }catch(err){b.disabled=false;if(!err.signedOut){alert(err.message);if(err.status===404)await auLoad();}}
 });
 
 /* everything removing an account deletes, said plainly – shared foods and supplements leave everyone's library */
@@ -806,28 +822,47 @@ function auRemoveText(u){
 let AM=null;
 const AM_PROV={gmail:['smtp.gmail.com',465],outlook:['smtp.office365.com',587]};
 async function amLoad(){AM=await loadTry('am',()=>api('GET','/api/admin/email')).catch(()=>null);amFill();}
+/* the form as filled from the settings in use; Save sends only the fields the person changed, so a value left as .env's stays from .env */
+let AMF=null, amTlsSet=false;
+const AM_FIELDS={from:'ad-m-from',fromName:'ad-m-name',host:'ad-m-host',port:'ad-m-port',secure:'ad-m-tls',user:'ad-m-user'};
+const AM_LBL={host:'server',port:'port',secure:'security',user:'username',pass:'password',from:'send-from address',fromName:'sender name'};
+function amVals(){const v={};for(const[k,id]of Object.entries(AM_FIELDS))v[k]=$('#'+id).value.trim();return v;}
 function amFill(){
   /* a form that didn't load can't be saved over the settings in use */
   $('#ad-mailform').querySelectorAll('button[type=submit],button:not([type])').forEach(b=>{b.disabled=!AM;});
   if(!AM){$('#ad-mailstate').innerHTML=LOADERR.am?loadErr('the email settings','am'):'';return;}
-  $('#ad-mailstate').innerHTML=AM.configured?`<span class="chip ok">✓ Set up</span> Sending from ${esc(AM.from)} via ${esc(AM.host)}${AM.source==='env'?' (from .env)':''}.`
-    :'<span class="chip bad">Not set up</span> Invites give you a link to send yourself until this is filled in.';
+  const src=AM.sources||{}, by=w=>Object.keys(AM_LBL).filter(k=>src[k]===w).map(k=>AM_LBL[k]).join(', ');
+  const env=by('env'), saved=by('admin');
+  $('#ad-mailstate').innerHTML=(AM.configured?`<span class="chip ok">✓ Set up</span> Sending from ${esc(AM.from)} via ${esc(AM.host)}.`
+    :'<span class="chip bad">Not set up</span> Invites give you a link to send yourself until this is filled in.')
+    +(saved||env?`<span class="sub adsrc">${saved?`Saved here: ${esc(saved)}.`:''}${saved&&env?' ':''}${env?`From .env: ${esc(env)}.`:''}</span>`:'');
   const host=AM.host||AM_PROV.gmail[0];
   $('#ad-m-from').value=AM.from||'';$('#ad-m-name').value=AM.fromName==='Logbook Monster'?'':AM.fromName||'';
-  $('#ad-m-host').value=host;$('#ad-m-port').value=AM.host?AM.port:AM_PROV.gmail[1];$('#ad-m-user').value=AM.user||'';$('#ad-m-pass').value='';
+  $('#ad-m-host').value=host;const port=AM.host?AM.port:AM_PROV.gmail[1];$('#ad-m-port').value=port;$('#ad-m-user').value=AM.user||'';$('#ad-m-pass').value='';
+  $('#ad-m-tls').value=(AM.host?AM.secure:port===465)?'1':'0';amTlsSet=src.secure==='admin';
   $('#ad-m-prov').value=Object.keys(AM_PROV).find(k=>AM_PROV[k][0]===host)||'other';
   $('#ad-m-pass').placeholder=AM.hasPassword?`Saved${AM.passwordSource==='env'?' in .env':''} – type a new one to replace it`:'';
   $('#ad-m-del').hidden=AM.source!=='admin';
   if(!AM.configured)$('#ad-m-help').open=true;
   if(!$('#ad-m-to').value)$('#ad-m-to').value=ME||'';
+  AMF=amVals();
 }
-$('#ad-m-prov').addEventListener('change',e=>{const p=AM_PROV[e.target.value];if(p){$('#ad-m-host').value=p[0];$('#ad-m-port').value=p[1];}});
-$('#ad-mailform').addEventListener('submit',async e=>{
-  e.preventDefault();const v=id=>$('#'+id).value.trim();
-  const port=+v('ad-m-port')||'';
-  const body={from:v('ad-m-from'),fromName:v('ad-m-name'),host:v('ad-m-host'),port,secure:port?port===465:null,user:v('ad-m-user')};
+/* the security follows the port until the person picks it */
+function amPortTls(){if(!amTlsSet){const p=+$('#ad-m-port').value;if(p)$('#ad-m-tls').value=p===465?'1':'0';}}
+$('#ad-m-port').addEventListener('input',amPortTls);
+$('#ad-m-tls').addEventListener('change',()=>{amTlsSet=true;});
+$('#ad-m-prov').addEventListener('change',e=>{const p=AM_PROV[e.target.value];if(p){$('#ad-m-host').value=p[0];$('#ad-m-port').value=p[1];amPortTls();}});
+/* only what changed – or, with no server set up anywhere, the whole form (its defaults are a new setup) */
+function amBody(){
+  const v=amVals(),src=(AM&&AM.sources)||{},fresh=!(AM&&AM.host),body={};
+  for(const k of Object.keys(AM_FIELDS))if(v[k]!==AMF[k]||(fresh&&v[k]!==''&&src[k]!=='env'))body[k]=k==='port'?(+v[k]||''):k==='secure'?v[k]==='1':v[k];
   if($('#ad-m-pass').value)body.pass=$('#ad-m-pass').value;
-  try{AM=await api('PUT','/api/admin/email',body);$('#ad-mailmsg').textContent='Email settings saved. Send a test to check them.';amFill();auRender();if(AU)AU.email=AM.configured;}
+  return body;
+}
+$('#ad-mailform').addEventListener('submit',async e=>{
+  e.preventDefault();const body=amBody();
+  if(!Object.keys(body).length){$('#ad-mailmsg').textContent='Nothing changed.';return;}
+  try{AM=await api('PUT','/api/admin/email',body);$('#ad-mailmsg').textContent='Email settings saved. Send a test to check them.';amFill();if(AU){AU.email=AM.configured;auRender();}}
   catch(err){if(!err.signedOut)$('#ad-mailmsg').textContent=err.message;}
 });
 $('#ad-m-del').addEventListener('click',async()=>{

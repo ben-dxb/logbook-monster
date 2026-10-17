@@ -119,7 +119,7 @@ test('sign-ins: ok, failed (email masked), locked; sign-out; password change', a
 
   /* ACCOUNT_FAIL_LIMIT=3: two more wrong passwords for bob, then even the right one is refused and logged as locked */
   for (let i = 0; i < 3; i++) await tryLogin('bob@example.com', 'wrong-password-3');
-  assert.strictEqual(await tryLogin('bob@example.com', PASSWORD), 401);
+  assert.strictEqual(await tryLogin('bob@example.com', PASSWORD), 429);
   assert.strictEqual(rows('event = ? AND user_id = ?', 'signin.failed', BOB).length, 3);
   assert.strictEqual(last('signin.locked', BOB).detail.email, 'b***@example.com');
   assert.match(logs, /Sign-in failed for a\*\*\*@example\.com from 127\.0\.0\.1/);

@@ -94,10 +94,12 @@ const pub = path.join(__dirname, '..', 'public');
 const page = file => (req, res) => res.set('Cache-Control', 'no-store').sendFile(path.join(pub, file));
 const signedIn = req => !!(req.session && req.session.userId);
 
-app.get('/login', (req, res, next) => (signedIn(req) ? res.redirect('/') : page('login.html')(req, res, next)));
+/* a session for an account that can no longer sign in is ended here, and /login says why */
+const gone = (req, res) => req.session.destroy(() => res.redirect('/login?error=gone'));
+app.get('/login', (req, res, next) => (auth.refused(req) ? gone(req, res) : signedIn(req) ? res.redirect('/') : page('login.html')(req, res, next)));
 app.get('/invite', page('invite.html'));
 app.get('/coach/:token', (req, res, next) => { res.set('X-Robots-Tag', 'noindex, nofollow'); page('coach.html')(req, res, next); });
-app.get(['/', '/index.html'], (req, res, next) => (signedIn(req) ? page('index.html')(req, res, next) : res.redirect('/login')));
+app.get(['/', '/index.html'], (req, res, next) => (auth.refused(req) ? gone(req, res) : signedIn(req) ? page('index.html')(req, res, next) : res.redirect('/login')));
 /* The HTML pages are served only by the routes above (sign-in check, no-store). A copy reached through the static files –
    /login.html, or /%69ndex.html, which the routes above don't match but the file server decodes – goes to its route instead. */
 const PAGES = { 'index.html': '/', 'login.html': '/login', 'invite.html': '/invite' };

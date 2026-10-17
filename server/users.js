@@ -95,8 +95,9 @@ function remove(id, admin, isAdmin) {
   if (user.id === admin.id) { const e = new Error('You can’t remove your own account'); e.status = 400; throw e; }
   /* ADMIN_EMAILS can't be turned off from here, so an admin account stays; take them out of ADMIN_EMAILS first. */
   if (isAdmin(user)) { const e = new Error('That account is an admin. Take it out of ADMIN_EMAILS first.'); e.status = 400; throw e; }
-  q.remove.run(user.id);
-  endSessions(user.id);
+  /* the account's rows go together or not at all (its photo files are the caller's, after this commits) */
+  db.exec('BEGIN');
+  try { q.remove.run(user.id); endSessions(user.id); db.exec('COMMIT'); } catch (e) { db.exec('ROLLBACK'); throw e; }
   return { ok: true };
 }
 

@@ -1,7 +1,7 @@
 'use strict';
 /* Phase 2C tracker leftovers: rows stored under impossible dates before #69 are moved to their real date at start (or, when
-   that date is taken, kept and deletable as stored), the export is named by the browser's date, and a garbled coach link
-   opens the coach page (which says the link doesn't work) instead of raw JSON. */
+   that date is taken, kept and deletable as stored), and a garbled coach link opens the coach page (which says the link
+   doesn't work) instead of raw JSON. The export's name by the person's date is tested in planreads.test.js. */
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const { spawn, execFileSync } = require('node:child_process');
@@ -81,15 +81,6 @@ test('rows on impossible dates move to their real date at start; one whose date 
   assert.strictEqual((await ann('DELETE', '/api/weights/2026-04-31')).status, 400);
   assert.strictEqual((await ann('PUT', '/api/weights/2026-02-31', { kg: 80 })).status, 400);
   assert.deepStrictEqual((await ann('GET', '/api/days?from=2026-02-01&to=2026-03-31')).body.map(d => d.date), ['2026-03-02', '2026-03-03']);
-});
-
-test('the export file is named by the browser’s date (within a day of the server’s), else the server’s (PR-TR-047)', async () => {
-  const ann = await signIn('ann@example.com');
-  const name = r => /filename="?([^";]+)/.exec(r.headers.get('content-disposition'))[1];
-  const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10), today = new Date().toISOString().slice(0, 10);
-  assert.strictEqual(name(await ann('GET', '/api/export?date=' + tomorrow)), `logbook-monster-${tomorrow}.json`);
-  assert.strictEqual(name(await ann('GET', '/api/export?date=2020-01-01')), `logbook-monster-${today}.json`);
-  assert.strictEqual(name(await ann('GET', '/api/export?date=nonsense')), `logbook-monster-${today}.json`);
 });
 
 test('a garbled coach link opens the coach page, not raw JSON (PR-TL-029)', async () => {

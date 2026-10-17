@@ -202,3 +202,18 @@ test('a supplement regime read with AI: line items to check, then added to the l
 
   assert.strictEqual((await cara('POST', '/api/supps/ai-import', {})).status, 400, 'JSON is not a file');
 });
+
+test('supplement library: one name per supplement in your own library, whatever the case (PR-FS-042)', async () => {
+  const ann = await signIn('ann@example.com'), bob = await signIn('bob@example.com');
+  const first = await ann('POST', '/api/supps', { name: 'Dup Magnesium', amount: 200, unit: 'mg' });
+  assert.strictEqual(first.status, 200);
+  let r = await ann('POST', '/api/supps', { name: '  dup   MAGNESIUM ', amount: 400, unit: 'mg' });
+  assert.strictEqual(r.status, 409);
+  assert.match(r.body.error, /already have a supplement called Dup Magnesium/);
+  const other = (await ann('POST', '/api/supps', { name: 'Dup Zinc', amount: 15, unit: 'mg' })).body;
+  assert.strictEqual((await ann('PUT', '/api/supps/' + other.id, { name: 'DUP magnesium', amount: 15, unit: 'mg' })).status, 409, 'nor renamed onto one');
+  assert.strictEqual((await ann('PUT', '/api/supps/' + first.body.id, { name: 'Dup magnesium', amount: 250, unit: 'mg' })).status, 200, 'its own name, new case');
+  assert.strictEqual((await bob('POST', '/api/supps', { name: 'Dup Magnesium', amount: 1, unit: 'g' })).status, 200, 'another account has its own');
+  const mine = (await ann('GET', '/api/supps')).body.supplements.filter(s => s.mine && /^dup magnesium$/i.test(s.name));
+  assert.strictEqual(mine.length, 1);
+});

@@ -21,6 +21,14 @@ test('production refuses to start without ADMIN_EMAILS', () => {
   assert.match(r.stderr, /ADMIN_EMAILS must be set in production/);
 });
 
+test('production without BASE_URL warns at start (invite links and emails would point at localhost)', () => {
+  const cfgPath = JSON.stringify(path.join(__dirname, '..', 'server', 'config.js'));
+  const r = run(['-e', `require(${cfgPath})`], { NODE_ENV: 'production', ADMIN_EMAILS: 'a@example.com' });
+  assert.strictEqual(r.status, 0);
+  assert.match(r.stderr, /BASE_URL isn’t set/);
+  assert.doesNotMatch(run(['-e', `require(${cfgPath})`], { NODE_ENV: 'production', ADMIN_EMAILS: 'a@example.com', BASE_URL: 'https://x.example' }).stderr, /BASE_URL/);
+});
+
 test('a relative DB_PATH and PHOTO_DIR become absolute', () => {
   assert.deepStrictEqual(cfg({}), { dbPath: path.join(dir, 'data', 't.db'), photoDir: path.join(dir, 'data', 'photos'), trustProxy: '' });
   assert.strictEqual(cfg({ PHOTO_DIR: 'pics' }).photoDir, path.join(dir, 'pics'));
