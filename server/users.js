@@ -100,7 +100,7 @@ function remove(id, admin, isAdmin) {
 const findInvite = token => (token ? q.findInvite.get(hash(token)) : null);
 const clearInvites = userId => q.clearInvites.run(userId);
 /* Signs the account out everywhere, except the session keepSid (the browser that asked). */
-const endSessions = (userId, keepSid = null) => q.endSessions.run(userId, keepSid).changes;
+const endSessions = (userId, keepSid = null) => q.endSessions.run(userId, keepSid == null ? null : hash(keepSid)).changes;   /* the store keeps sha256(sid) */
 /* Still waiting on an invite: no password, no Google link, never signed in. */
 const isPending = id => { const u = q.byId.get(id); return !!u && pending(u); };
 

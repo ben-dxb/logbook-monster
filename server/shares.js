@@ -18,6 +18,8 @@ const photos = require('./photos');
 const audit = require('./audit');
 
 const q = {
+  /* the account behind a link, without its password hash or Google id: nothing under the coach mount can hand those out (coach-code-005) */
+  owner: db.prepare('SELECT id, email, name, invited_by FROM users WHERE id = ?'),
   list: db.prepare('SELECT id, token_hash, label, expires_at, created_at, used_at FROM shares WHERE user_id = ? ORDER BY expires_at DESC, id DESC'),
   get: db.prepare('SELECT id, token_hash, label, expires_at, created_at, used_at FROM shares WHERE user_id = ? AND id = ?'),
   live: db.prepare('SELECT COUNT(*) AS n FROM shares WHERE user_id = ? AND expires_at > ?'),
@@ -93,7 +95,7 @@ function resolve(req, res, next) {
   res.set({ 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' });
   const token = String(req.params.token || '');
   const row = TOKEN_RE.test(token) ? q.byHash.get(hash(token)) : null;
-  const user = row && row.expires_at > nowIso() ? auth.q.byId.get(row.user_id) : null;
+  const user = row && row.expires_at > nowIso() ? q.owner.get(row.user_id) : null;
   if (!user || !auth.accountAllowed(user)) return res.status(404).json({ error: 'This link has run out or been switched off. Ask for a new one.', gone: true });
   req.user = user; req.share = row;
   audit.once(req, 'coach.used', { id: row.id }, row.user_id);
@@ -104,7 +106,12 @@ const readOnly = (req, res, next) => (req.method === 'GET' || req.method === 'HE
 const range = o => [isDate(o.from) ? o.from : '0000-01-01', isDate(o.to) ? o.to : '9999-12-31'];
 
 const coach = express.Router({ mergeParams: true });
-coach.use(badLimit, resolve, readOnly);
+/* a working link is limited too, so a leaked one can't keep the server busy */
+const linkLimit = rateLimit({
+  windowMs: 10 * 60 * 1000, limit: config.coachRateLimit, standardHeaders: 'draft-7', legacyHeaders: false,
+  keyGenerator: req => 's' + req.share.id, message: { error: 'Too many requests on this link. Wait a few minutes and try again.' },
+});
+coach.use(badLimit, resolve, linkLimit, readOnly);
 coach.get('/info', (req, res) => {
   q.used.run(req.share.id);
   res.json({ name: req.user.name || req.user.email.split('@')[0], label: req.share.label, expires: req.share.expires_at });

@@ -17,11 +17,11 @@ const root = path.join(__dirname, '..');
 const env = { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', BASE_URL: BASE, DB_PATH: DB,
   SESSION_SECRET: 'x'.repeat(40), AUTH_RATE_LIMIT: '1000', ALLOWED_EMAILS: '', ADMIN_EMAILS: '', ALLOW_REGISTRATION: 'false',
   GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: '',
-  QUOTA_DAYS_BYTES: '20000', QUOTA_PLAN_BYTES: '6000', QUOTA_PHOTO_BYTES: '600', WRITE_RATE_LIMIT: '80', EXPORT_RATE_LIMIT: '3' };
+  QUOTA_DAYS_BYTES: '20000', QUOTA_PLAN_BYTES: '6000', QUOTA_PHOTO_BYTES: '600', WRITE_RATE_LIMIT: '80', EXPORT_RATE_LIMIT: '3', TRENDS_RATE_LIMIT: '5' };
 let srv;
 
 before(async () => {
-  for (const who of ['ann', 'bob', 'cat', 'dan']) {
+  for (const who of ['ann', 'bob', 'cat', 'dan', 'eve']) {
     execFileSync(process.execPath, ['--disable-warning=ExperimentalWarning', 'scripts/create-user.js', `${who}@example.com`],
       { cwd: root, env: { ...env, NEW_PASSWORD: 'long-password-1' }, stdio: 'ignore' });
   }
@@ -180,4 +180,19 @@ test('the export is streamed as one JSON document and limited per hour', async (
   const four = await cat('GET', '/api/export');
   assert.strictEqual(four.status, 429);
   assert.match(four.body.error, /downloaded your data a lot/);
+});
+
+test('heavy reads are limited: trends per account, the sessions list clamped, the workout order capped (RC-25)', async () => {
+  const eve = await signIn('eve@example.com');
+  let last;
+  for (let i = 0; i < 6; i++) last = await eve('GET', '/api/timeline/trends');
+  assert.strictEqual(last.status, 429);
+  assert.strictEqual((await eve('GET', '/api/gym/sessions?limit=-1')).status, 200);
+  assert.strictEqual((await eve('PUT', '/api/gym/order', { ids: Array.from({ length: 40000 }, (_, i) => i + 1) })).status, 400);
+  assert.strictEqual((await eve('PUT', '/api/gym/order', { ids: [1, 2] })).status, 200);
+  /* an "at" that is an array, not text, is a bad request, not a crash (library-code-006) */
+  const ex = (await eve('POST', '/api/gym/exercises', { name: 'Squat' })).body.id;
+  const r = await eve('POST', '/api/gym/sets', { exercise: ex, reps: 5, kg: 100, at: [`${TODAY}T10:00`] });
+  assert.strictEqual(r.status, 400);
+  assert.strictEqual((await eve('POST', '/api/gym/sets', { exercise: ex, reps: 5, kg: 100, at: `${TODAY}T10:00` })).body.at, `${TODAY}T10:00:00`);
 });

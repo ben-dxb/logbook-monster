@@ -122,6 +122,8 @@ test('security headers: no caching of API answers, Permissions-Policy, base-uri 
   const r = await fetch(BASE + '/login');
   assert.match(r.headers.get('permissions-policy'), /camera=\(\), microphone=\(\), geolocation=\(\)/);
   assert.match(r.headers.get('content-security-policy'), /base-uri 'none'/);
+  assert.strictEqual(r.headers.get('cross-origin-opener-policy'), 'same-origin');
+  assert.strictEqual(r.headers.get('strict-transport-security'), null);   /* http (laptop) setup: no HSTS */
 });
 
 test('pages and API need a session', async () => {
@@ -781,4 +783,19 @@ test('Google sign-in is refused when not configured', async () => {
 test('every call to the AI asks for a capped reply', () => {
   assert.ok(aiSeen.length > 10);
   for (const b of aiSeen) assert.ok(Number.isInteger(b.body.max_tokens) && b.body.max_tokens > 0 && b.body.max_tokens <= 12000, JSON.stringify(b.body.max_tokens));
+});
+
+test('static copies of the HTML pages go to their routes (all-config-013, auth-code-013)', async () => {
+  const get = async p => { const r = await fetch(BASE + p, { redirect: 'manual' }); return [r.status, r.headers.get('location')]; };
+  assert.deepStrictEqual(await get('/%69ndex.html'), [302, '/']);
+  assert.deepStrictEqual(await get('/index.html'), [302, '/login']);
+  assert.deepStrictEqual(await get('/login.html'), [302, '/login']);
+  assert.deepStrictEqual(await get('/%6Cogin.html'), [302, '/login']);
+  assert.deepStrictEqual(await get('/invite.html'), [302, '/invite']);
+  assert.strictEqual((await get('/coach.html'))[0], 404);
+  assert.strictEqual((await get('/INDEX.HTM'))[0], 404);
+  assert.strictEqual((await get('/%E0%A4%A.html'))[0], 400);
+  assert.strictEqual((await get('/app.js'))[0], 200);
+  const login = await fetch(BASE + '/login');
+  assert.strictEqual(login.headers.get('cache-control'), 'no-store');
 });

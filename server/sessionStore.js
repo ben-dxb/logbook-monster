@@ -1,5 +1,8 @@
 'use strict';
+const crypto = require('crypto');
 const session = require('express-session');
+/* Only a hash of the session id is stored: the cookie holds the id itself. */
+const key = sid => crypto.createHash('sha256').update(String(sid)).digest('hex');
 
 /* express-session store backed by the app's SQLite database. A signed-in session lasts maxAge from sign-in
    (sess.at, set in auth.js) however often it is used; one from before sign-in times were kept has none and ends. */
@@ -23,21 +26,22 @@ class SqliteStore extends session.Store {
   }
   get(sid, cb) {
     try {
-      const row = this.q.get.get(sid, Date.now());
+      const row = this.q.get.get(key(sid), Date.now());
       const sess = row ? JSON.parse(row.sess) : null;
-      if (sess && sess.userId && !(Date.now() - sess.at < this.maxAge)) { this.q.destroy.run(sid); return cb(null, null); }
+      if (sess && sess.userId && !(Date.now() - sess.at < this.maxAge)) { this.q.destroy.run(key(sid)); return cb(null, null); }
       cb(null, sess);
     } catch (e) { cb(e); }
   }
   set(sid, sess, cb) {
-    try { this.q.set.run(sid, JSON.stringify(sess), this.expiry(sess), (sess && sess.userId) || null); cb && cb(null); } catch (e) { cb && cb(e); }
+    try { this.q.set.run(key(sid), JSON.stringify(sess), this.expiry(sess), (sess && sess.userId) || null); cb && cb(null); } catch (e) { cb && cb(e); }
   }
   touch(sid, sess, cb) {
-    try { this.q.touch.run(this.expiry(sess), sid); cb && cb(null); } catch (e) { cb && cb(e); }
+    try { this.q.touch.run(this.expiry(sess), key(sid)); cb && cb(null); } catch (e) { cb && cb(e); }
   }
   destroy(sid, cb) {
-    try { this.q.destroy.run(sid); cb && cb(null); } catch (e) { cb && cb(e); }
+    try { this.q.destroy.run(key(sid)); cb && cb(null); } catch (e) { cb && cb(e); }
   }
 }
 
+SqliteStore.key = key;
 module.exports = SqliteStore;

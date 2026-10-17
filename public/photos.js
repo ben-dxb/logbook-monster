@@ -212,9 +212,9 @@ async function pShrink(file,max,quality){
   return blob;
 }
 /* api() sends JSON; the pictures go as they are */
-async function pSend(method,url,blob){
+async function pSend(method,url,blob,more={}){
   let r;
-  try{r=await fetch(url,{method,credentials:'same-origin',headers:{'content-type':'image/jpeg','x-csrf-token':csrf},body:blob});}
+  try{r=await fetch(url,{method,credentials:'same-origin',headers:{'content-type':'image/jpeg','x-csrf-token':csrf,...more},body:blob});}
   catch{throw new Error('Can’t reach the server – is it still running?');}
   if(r.status===401){setTimeout(toLogin,0);const e=new Error('You were signed out');e.signedOut=true;throw e;}
   const j=await r.json().catch(()=>({}));
@@ -279,7 +279,7 @@ async function pUpload(form){
       try{
         const big=await pShrink(f,P_MAX,0.86), small=await pShrink(f,P_THUMB,0.8);
         if(stop)return;
-        let p=await pSend('POST',`/api/photos?${new URLSearchParams({date:d,pose,note,...(unset?{ai:'1'}:{})})}`,big);
+        let p=await pSend('POST',`/api/photos?${new URLSearchParams({date:d,pose,...(unset?{ai:'1'}:{})})}`,big,note?{'x-photo-note':encodeURIComponent(note)}:{});   /* the note in a header: never in a logged URL */
         try{p=await pSend('PUT',`/api/photos/${p.id}/thumb`,small);}catch(e){if(e.signedOut)throw e;}   /* the catalog falls back to the full picture */
         PHOTOS.push(p);done++;dates.add(d);if(when[i].own)own++;
         if(byAi){

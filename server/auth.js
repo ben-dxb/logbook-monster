@@ -253,7 +253,7 @@ router.post('/logout', csrfProtect, (req, res) => {
   req.session.destroy(() => {
     /* Drops cached photos and pages; the app puts back its unsaved-changes stash itself (app.js). */
     res.set('Clear-Site-Data', '"cache", "storage"');
-    res.clearCookie('logbookmonster.sid', { path: '/' });
+    res.clearCookie(config.sessionCookie, { path: '/', secure: config.cookieSecure });
     res.json({ ok: true });
   });
 });

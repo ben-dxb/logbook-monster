@@ -40,6 +40,10 @@ const config = {
   /* Saves (any POST/PUT/DELETE under /api) per account every 10 minutes, and data exports per account an hour. */
   writeRateLimit: Math.max(1, +process.env.WRITE_RATE_LIMIT || 1000),
   exportRateLimit: Math.max(1, +process.env.EXPORT_RATE_LIMIT || 10),
+  /* Timeline trend reads (heavy: every day, set and weight in the range) per account or coach link every 10 minutes, and
+     answers to one coach link every 10 minutes. */
+  trendsRateLimit: Math.max(1, +process.env.TRENDS_RATE_LIMIT || 120),
+  coachRateLimit: Math.max(1, +process.env.COACH_RATE_LIMIT || 600),
   /* What one account can store, in bytes: saved days' JSON, its plan history, and photo files (thumbnails included).
      Only the tests lower them. */
   quota: {
@@ -56,6 +60,8 @@ const config = {
 };
 config.photoDir = require('path').resolve(config.photoDir || require('path').join(require('path').dirname(config.dbPath), 'photos'));
 config.google.enabled = !!(config.google.clientId && config.google.clientSecret);
+/* Over https the session cookie is __Host- (Secure, whole site, this host only); the http laptop setup can't use the prefix. */
+config.sessionCookie = config.cookieSecure ? '__Host-logbookmonster.sid' : 'logbookmonster.sid';
 
 if (!config.sessionSecret || config.sessionSecret.length < 32) {
   if (isProd) {

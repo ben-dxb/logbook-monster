@@ -267,6 +267,17 @@ if (!db.prepare('PRAGMA table_info(sessions)').all().some(c => c.name === 'user_
   db.exec("UPDATE sessions SET user_id = json_extract(sess, '$.userId')");
 }
 db.exec('CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id)');
+/* Added later: the store keeps only the SHA-256 of each session id (server/sessionStore.js), so a copy of the database holds
+   no usable session. Rows from before are rehashed in place, so nobody is signed out. */
+{
+  const raw = db.prepare('SELECT sid FROM sessions WHERE length(sid) <> 64').all();
+  if (raw.length) {
+    const up = db.prepare('UPDATE OR REPLACE sessions SET sid = ? WHERE sid = ?');
+    db.exec('BEGIN');
+    try { for (const { sid } of raw) up.run(require('crypto').createHash('sha256').update(sid).digest('hex'), sid); db.exec('COMMIT'); }
+    catch (e) { db.exec('ROLLBACK'); throw e; }
+  }
+}
 
 /* Failed sign-ins per email, kept so a restart doesn't reset the per-account limit (auth.js). */
 db.exec(`CREATE TABLE IF NOT EXISTS login_failures (

@@ -9,7 +9,17 @@ services:
     ports:
       - "127.0.0.1:3000:3000"   # only reachable through your reverse proxy
     volumes:
-      - logbook-monster-data:/app/data
+      - logbook-monster-data:/app/data   # the only place the app writes (database + photos)
+    # hardening: the image is read only, /tmp is a small in-memory scratch space, no Linux capabilities,
+    # no privilege gain through setuid, and limits on memory and processes
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 768m
+    pids_limit: 256
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "5" }   # the app's console log, rotated

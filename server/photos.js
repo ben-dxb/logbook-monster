@@ -145,11 +145,13 @@ router.get('/', (req, res) => {
   res.json({ photos: q.list.all(req.user.id, from, to).map(view), poses: PICK, styles: STYLES, ai: ai.status().configured });
 });
 
-/* POST /api/photos?date=…&pose=…&style=…&note=… with the image itself as the body; ai=1 when the AI is to pick the pose
-   (the pose sent is a stand-in until it does, and counts as not set by hand) */
+/* POST /api/photos?date=…&pose=…&style=… with the image itself as the body; ai=1 when the AI is to pick the pose
+   (the pose sent is a stand-in until it does, and counts as not set by hand). The note comes URI-encoded in x-photo-note,
+   so it never lands in an access log (?note= still works for older pages). */
+const noteOf = req => { const h = req.get('x-photo-note'); if (h == null) return req.query.note; try { return decodeURIComponent(h); } catch { throw fail('Bad note'); } };
 router.post('/', uploadLimit, rawImage(MAX_BYTES), async (req, res) => {
   try {
-    const m = meta(req.query);
+    const m = meta({ ...req.query, note: noteOf(req) });
     const type = sniff(req.body);
     if (!type) throw fail('That isn’t a JPEG, PNG or WebP picture');
     if (q.count.get(req.user.id).n >= MAX_PHOTOS) throw fail(`You have the most photos an account can keep (${MAX_PHOTOS})`);

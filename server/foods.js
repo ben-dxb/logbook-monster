@@ -4,7 +4,9 @@
    change a food, and an admin can also remove a shared one. Adding a food to a day happens in the browser.
    Each food is a whole meal or a single ingredient. AI can fill in values left blank; those values are
    flagged (food.ai) with the source the AI gave, so anyone can see which numbers are estimates. */
+const crypto = require('crypto');
 const express = require('express');
+const config = require('./config');
 const db = require('./db');
 const { isNum } = require('./num');
 const defaults = require('./defaults');
@@ -94,7 +96,23 @@ function cleanAi(a) {
     confidence: ['high', 'medium', 'low'].includes(a.confidence) ? a.confidence : '',
     model: oneLine(a.model, 100),
     at: /^\d{4}-\d\d-\d\d/.test(String(a.at || '')) ? String(a.at).slice(0, 10) : new Date().toISOString().slice(0, 10),
+    ...(Array.isArray(a.of) ? { of: MACROS.filter(m => a.of.includes(m)) } : {}),
+    ...(typeof a.sig === 'string' && /^[\w-]{43}$/.test(a.sig) ? { sig: a.sig } : {}),
   };
+}
+/* Only the server says a value is an AI estimate (library-code-002): /ai-fill signs what it returns (of = the fields it filled)
+   for the account that asked. A save keeps an ai record only if that signature checks out, or if it is the food's stored record
+   unchanged; either way with no field added. Anything else – a hand-made "AI, USDA, high confidence" – is dropped. */
+const AI_KEY = Buffer.from(crypto.hkdfSync('sha256', config.sessionSecret, 'logbook-monster', 'food-ai-v1', 32));
+const PROV = ['of', 'source', 'basis', 'url', 'confidence', 'model', 'at'];
+const aiSig = (a, uid) => crypto.createHmac('sha256', AI_KEY).update(JSON.stringify([uid, ...PROV.map(k => a[k])])).digest('base64url');
+function trustedAi(a, user, old) {
+  if (!a) return null;
+  const within = of => Array.isArray(of) && a.fields.every(m => of.includes(m));
+  if (a.sig && within(a.of) && crypto.timingSafeEqual(Buffer.from(a.sig), Buffer.from(aiSig(a, user.id)))) return a;
+  const o = old && aiOf(old);
+  if (o && within(o.fields) && [...PROV, 'sig'].every(k => JSON.stringify(a[k]) === JSON.stringify(o[k]))) return a;
+  return null;
 }
 const aiOf = r => { try { return r.ai ? cleanAi(JSON.parse(r.ai)) : null; } catch { return null; } };
 
@@ -140,7 +158,7 @@ function fillRequest(b) {
   return { name, unit, kind, recipe, known, blank, hi, state };
 }
 
-async function fill(b) {
+async function fill(b, user) {
   const r = fillRequest(b);
   const per = r.unit === 'each' ? 'one item / portion' : `100 ${r.unit}`;
   const text = [`Food: ${r.name}`, `Type: ${r.kind === 'meal' ? 'whole meal' : 'single ingredient'}`, `Values are per: ${per}${r.state ? ` – weighed ${r.state === 'raw' ? 'raw (dry for rice, pasta, grains)' : 'cooked'}` : ''}`,
@@ -155,7 +173,9 @@ async function fill(b) {
     values[m] = Math.round(n * 10) / 10;
   }
   const y = Number(reply.yield);
-  return { values, ai: cleanAi({ ...reply, fields: r.blank, model }), ...(r.state && y >= 10 && y <= 1000 ? { yield: Math.round(y) } : {}) };
+  const a = cleanAi({ ...reply, fields: r.blank, of: r.blank, model });
+  a.sig = aiSig(a, user.id);
+  return { values, ai: a, ...(r.state && y >= 10 && y <= 1000 ? { yield: Math.round(y) } : {}) };
 }
 
 /* The OpenRouter key is the admin's, so each account gets a limited number of estimates an hour. */
@@ -168,12 +188,13 @@ router.get('/', (req, res) => res.json({ foods: q.list.all(req.user.id).map(r =>
 
 /* Estimate the blank values of a food that is being entered. Nothing is saved here. */
 router.post('/ai-fill', fillLimit, async (req, res) => {
-  try { res.json(await fill(req.body)); } catch (e) { send(res, e); }
+  try { res.json(await fill(req.body, req.user)); } catch (e) { send(res, e); }
 });
 
 router.post('/', (req, res) => {
   try {
     const d = clean(req.body);
+    d.ai = trustedAi(d.ai, req.user, null);
     if (q.count.get(req.user.id).n >= MAX_FOODS) throw fail(`Your library is full (${MAX_FOODS} foods)`);
     const { lastInsertRowid } = q.add.run(req.user.id, d.name, d.unit, d.kind, d.k, d.p, d.c, d.f, d.recipe, d.public, d.ai && JSON.stringify(d.ai), d.state, d.yield, d.free);
     res.json(view(q.get.get(Number(lastInsertRowid)), req.user));
@@ -186,6 +207,7 @@ router.put('/:id', (req, res) => {
     if (!row || (row.user_id !== req.user.id && !row.public)) throw fail('No such food', 404);
     if (row.user_id !== req.user.id) throw fail('Only the person who added this food can change it', 403);
     const d = clean(req.body);
+    d.ai = trustedAi(d.ai, req.user, row);
     version.check(req, row.updated_at);
     q.put.run(d.name, d.unit, d.kind, d.k, d.p, d.c, d.f, d.recipe, d.public, d.ai && JSON.stringify(d.ai), d.state, d.yield, d.free, version.stamp(), row.id, req.user.id);
     res.json(view(q.get.get(row.id), req.user));

@@ -50,10 +50,10 @@ after(() => { srv.kill(); fakeAi.close(); fs.rmSync(dir, { recursive: true, forc
 
 async function signIn(email) {
   let cookie = '', csrf = '';
-  const req = async (method, url, body, type) => {
+  const req = async (method, url, body, type, more = {}) => {
     const raw = Buffer.isBuffer(body);
     const r = await fetch(BASE + url, { method, redirect: 'manual',
-      headers: { ...(cookie ? { cookie } : {}), ...(body ? { 'content-type': type || (raw ? 'image/jpeg' : 'application/json') } : {}), 'x-csrf-token': csrf },
+      headers: { ...(cookie ? { cookie } : {}), ...(body ? { 'content-type': type || (raw ? 'image/jpeg' : 'application/json') } : {}), 'x-csrf-token': csrf, ...more },
       body: body ? (raw ? body : JSON.stringify(body)) : undefined });
     const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0];
     const ct = r.headers.get('content-type') || '';
@@ -83,6 +83,11 @@ test('progress photos: upload, catalog by date, edit, private to their owner, fi
   assert.strictEqual(r.status, 200);
   const a = r.body;
   assert.deepStrictEqual({ date: a.date, pose: a.pose, note: a.note, tv: a.tv }, { date: '2026-09-01', pose: 'front', note: 'fasted', tv: null });
+  /* the app sends the note in a header, so it never sits in a URL an access log would keep (photos-code-007) */
+  r = await ann('POST', '/api/photos?date=2026-09-02&pose=front', jpeg('h'), undefined, { 'x-photo-note': encodeURIComponent('after the cut – 80 kg') });
+  assert.strictEqual(r.body.note, 'after the cut – 80 kg');
+  assert.strictEqual((await ann('POST', '/api/photos?date=2026-09-02&pose=front', jpeg('h'), undefined, { 'x-photo-note': '%E0%A4%A' })).status, 400);
+  assert.strictEqual((await ann('DELETE', `/api/photos/${r.body.id}`)).status, 200);
   r = await ann('POST', '/api/photos?date=2026-10-01&pose=side', png, 'image/png');
   assert.strictEqual(r.status, 200);
   const b = r.body;

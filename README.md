@@ -162,7 +162,10 @@ docker compose up -d --build
 docker compose exec logbook-monster node --disable-warning=ExperimentalWarning scripts/create-user.js you@example.com   # optional
 ```
 
-The app listens on `127.0.0.1:3000`; data is kept in the `mealswap_mealswap-data` volume (its pre-rename name, so existing data carries over). Put a
+The app listens on `127.0.0.1:3000`; data is kept in the `mealswap_mealswap-data` volume (its pre-rename name, so existing data carries over).
+The container runs hardened: read-only image (the app writes only to the data volume, `/tmp` is a 64 MB in-memory scratch space), all Linux
+capabilities dropped, `no-new-privileges`, 768 MB of memory and 256 processes at most, logs rotated at 5 × 10 MB. The base image is pinned to an
+exact Node release and digest in the Dockerfile – update both together when moving to a newer Node. Put a
 reverse proxy with HTTPS in front – for example Caddy:
 
 ```
@@ -200,8 +203,8 @@ also download their own data from the account menu.
 - Passwords hashed with scrypt; login and Google sign-in are rate-limited per IP, and 10 wrong
   passwords for one account in 15 minutes lock it for the rest of that time (kept in SQLite, so a
   restart doesn't reset it); same response for unknown email, wrong password and a locked account.
-- Sessions are server-side (SQLite), in an `HttpOnly`, `SameSite=Lax` cookie (`Secure` on
-  HTTPS); the session ID changes at sign-in and a session ends `SESSION_DAYS` (30) after sign-in
+- Sessions are server-side (SQLite, only a SHA-256 of each session ID is stored), in an `HttpOnly`, `SameSite=Lax`
+  cookie (on HTTPS `Secure` and named `__Host-logbookmonster.sid`); the session ID changes at sign-in and a session ends `SESSION_DAYS` (30) after sign-in
   however often it's used. Visiting signed out stores nothing on the server.
 - Changing your password (or resetting it with `create-user`) signs the account out everywhere
   else, and by default switches off its coach links. A Google-only account adding a first
@@ -211,6 +214,9 @@ also download their own data from the account menu.
   from `SESSION_SECRET`, recovery codes only as SHA-256 hashes; each code is taken once and wrong codes are limited per
   account. Changing the AI key or the email settings, or removing an account, needs the password or a code again
   on a sign-in older than 15 minutes.
+- The OpenRouter key and SMTP password saved on Super admin are stored sealed the same way (AES-256-GCM, a key derived
+  from `SESSION_SECRET`): if `SESSION_SECRET` changes, enter them again. The database runs with `secure_delete` on and
+  its file (and photos) are created readable by the app's own user only.
 - Every write needs a CSRF token header (per session; signed out, an HMAC of a random cookie).
 - Google uses the OpenID Connect code flow with PKCE, `state` and `nonce`; the client secret
   stays on the server and the ID token's issuer, audience, expiry, nonce and verified email
