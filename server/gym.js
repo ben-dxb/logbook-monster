@@ -178,20 +178,28 @@ Add "notes": an array of short strings listing anything you were unsure of or co
 Reply with only the JSON object: {"workouts": [...], "notes": [...]}`;
 }
 
+/* One read makes at most AI_WORKOUTS workouts of at most MAX.items exercises; anything left out is said in the notes. */
+const AI_WORKOUTS = 14;
 function tidyWorkouts(raw, user) {
   const notes = Array.isArray(raw.notes) ? raw.notes.filter(n => typeof n === 'string').map(n => n.slice(0, 300)).slice(0, 30) : [];
+  const told = [];
   const str = (v, n) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n);
-  const workouts = (Array.isArray(raw.workouts) ? raw.workouts : []).filter(isObj).slice(0, 14).map((w, wi) => {
-    const exercises = (Array.isArray(w.exercises) ? w.exercises : []).slice(0, MAX.items).map(x => {
+  const all = (Array.isArray(raw.workouts) ? raw.workouts : []).filter(isObj);
+  if (all.length > AI_WORKOUTS) told.push(`The plan has ${all.length} workouts; one read takes the first ${AI_WORKOUTS}, so ${all.length - AI_WORKOUTS} were left out: ${all.slice(AI_WORKOUTS).map((w, i) => str(w.name, 80) || `Workout ${AI_WORKOUTS + i + 1}`).join(', ')}. Add them by hand, or read a file with only those.`.slice(0, 600));
+  const workouts = all.slice(0, AI_WORKOUTS).map((w, wi) => {
+    const name = str(w.name, 80) || `Workout ${wi + 1}`, list = Array.isArray(w.exercises) ? w.exercises : [];
+    if (list.length > MAX.items) told.push(`${name}: a workout holds ${MAX.items} exercises at most, so the last ${list.length - MAX.items} were left out.`);
+    const exercises = list.slice(0, MAX.items).map(x => {
       const name = str(isObj(x) ? x.name : x, 80);
       if (!name) return null;
       const found = q.exerciseByName.get(user.id, name);
       return { name: found ? found.name : name, target: str(isObj(x) ? x.target : '', 200), existing: found ? found.id : null, parts: (isObj(x) && cleanParts(x.parts)) || [] };
     }).filter(Boolean);
-    return { name: str(w.name, 80) || `Workout ${wi + 1}`, description: String(w.description == null ? '' : w.description).trim().slice(0, 1000), exercises };
+    if (!exercises.length) told.push(`${name}: no exercises could be read, so it was left out.`);
+    return { name, description: String(w.description == null ? '' : w.description).trim().slice(0, 1000), exercises };
   }).filter(w => w.exercises.length);
   if (!workouts.length) throw Object.assign(new Error('The AI couldn’t find a workout plan in that file'), { status: 400 });
-  return { workouts, notes };
+  return { workouts, notes: [...told, ...notes] };
 }
 
 /* The OpenRouter key is the admin's, so each account gets a handful of reads an hour. */

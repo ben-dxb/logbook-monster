@@ -351,6 +351,7 @@ const ROUTES = [
   { key: 'GET /api/jobs', own: [{ check: r => assert.deepStrictEqual(r.body.jobs, []) }] },
   { key: 'GET /api/jobs/:id', u: () => `/api/jobs/${c.job}`, own: [{ expect: [404] }] },
   { key: 'POST /api/jobs/:id/seen', u: () => `/api/jobs/${c.job}/seen`, own: [{ expect: [404] }] },
+  { key: 'POST /api/jobs/away', own: SELF },
   /* server/shares.js – the coach's side, and the timeline and photo routers mounted under it */
   { key: 'GET /coach/:token/api/info', scope: 'coach', check: r => assert.strictEqual(r.body.name, 'ann') },
   { key: 'GET /coach/:token/api/defaults', scope: 'coach', check: r => assert.strictEqual(r.body.mine.plan.R[0].name, 'annmark later bowl') },

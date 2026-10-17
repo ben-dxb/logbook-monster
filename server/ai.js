@@ -259,7 +259,7 @@ function askText(system, text, opts = {}) {
 }
 
 async function call(system, content, maxTokens, timeout, task) {
-  const c = current(task), t = TASKS[task] || {};
+  const c = current(task), t = TASKS[task] || {}, file = typeof content !== 'string';   /* a file read, or a text task (food fill, summary…) */
   const o = allow(true);
   let r, j;
   const signal = AbortSignal.timeout(timeout || t.wait || 3 * MIN);
@@ -278,7 +278,7 @@ async function call(system, content, maxTokens, timeout, task) {
     if (signal.aborted) throw signal.reason;   /* the time ran out while the reply was coming in */
   } catch (e) {
     if (e.name === 'TimeoutError') console.error(`AI request timed out (${c.model}, ${task || 'no task'})`);
-    throw Object.assign(new Error(e.name === 'TimeoutError' ? 'The AI took too long – try again or use a smaller file' : 'Couldn’t reach OpenRouter'), { status: 502 });
+    throw Object.assign(new Error(e.name === 'TimeoutError' ? (file ? 'The AI took too long – try again or use a smaller file' : 'The AI took too long – try again in a minute') : 'Couldn’t reach OpenRouter'), { status: 502 });
   }
   if (!r.ok || j.error) {
     /* a plain sentence for whoever asked (often not the super admin); the provider's own words go to the log */
@@ -296,7 +296,7 @@ async function call(system, content, maxTokens, timeout, task) {
   try { return { reply: parseReply(parts), model }; }
   catch (e) {
     console.error(`AI reply unusable (${model}, finish_reason ${choice.finish_reason}, ${String(parts || '').length} chars): ${e.message}`);
-    if (choice.finish_reason === 'length') throw unusable('The AI reply was longer than the app allows and got cut off – try a shorter file');
+    if (choice.finish_reason === 'length') throw unusable(`The AI reply was longer than the app allows and got cut off – ${file ? 'try a shorter file' : 'try again'}`);
     if (!String(parts || '').trim()) throw unusable('The AI sent back an empty reply – try again in a minute');
     throw e;
   }

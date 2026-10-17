@@ -175,19 +175,22 @@ async function fill(b, user, today) {
     `Known values: ${Object.keys(r.known).length ? Object.entries(r.known).map(([m, v]) => `${LABEL[m]} ${v}${m === 'k' ? ' kcal' : ' g'}`).join(', ') : 'none'}`,
     `Missing: ${r.blank.map(m => LABEL[m]).join(', ')}`].filter(Boolean).join('\n');
   const { reply, model } = await ai.askText(PROMPT, text, { task: 'food' });
-  const values = {};
+  const values = {}, unsure = [];
   for (const m of r.blank) {
+    if (reply[m] == null || reply[m] === '') { unsure.push(m); continue; }   /* no estimate: stays blank, not 0, and isn't flagged */
     const n = Number(reply[m]);
     if (!Number.isFinite(n) || n < 0 || n > r.hi[m]) throw fail('The AI didn’t give a usable number – add more detail (brand, raw or cooked, recipe) and try again', 502);
     values[m] = Math.round(n * 10) / 10;
   }
+  const got = r.blank.filter(m => m in values);
+  if (!got.length) throw fail('The AI couldn’t estimate any of the blank values – add more detail (brand, raw or cooked, recipe) and try again', 502);
   const y = Number(reply.yield);
   /* What gets signed can't be steered by the recipe / notes the person typed (library-code-002): with any, the source is
      ours, and a link is kept only to a known nutrition database. */
-  const a = cleanAi({ ...reply, fields: r.blank, of: r.blank, model, at: today || '',
+  const a = cleanAi({ ...reply, fields: got, of: got, model, at: today || '',
     source: r.recipe ? `AI estimate from the ${r.kind === 'meal' ? 'recipe' : 'notes'}` : reply.source, url: sourceUrl(reply.url) });
   a.sig = aiSig(a, user.id);
-  return { values, ai: a, ...(r.state && y >= 10 && y <= 1000 ? { yield: Math.round(y) } : {}) };
+  return { values, ai: a, ...(unsure.length ? { unsure } : {}), ...(r.state && y >= 10 && y <= 1000 ? { yield: Math.round(y) } : {}) };
 }
 
 /* The OpenRouter key is the admin's, so each account gets a limited number of estimates an hour. */

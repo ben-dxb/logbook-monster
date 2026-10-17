@@ -1,5 +1,6 @@
 'use strict';
-/* PR-PL-054: an AI reply that runs out of time – before or after its headers – is reported as too slow, not as empty. */
+/* PR-PL-054: an AI reply that runs out of time – before or after its headers – is reported as too slow, not as empty, in words
+   that fit the task: a file read can be tried with a smaller file, a text task (food fill, summary) just again. */
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -25,7 +26,9 @@ for (const stall of ['headers', 'body']) {
     process.env.STALL = stall;
     const t = Date.now();
     await assert.rejects(ai.askText('system', 'text', { task: 'food', timeout: 300 }),
+      e => e.status === 502 && e.message === 'The AI took too long – try again in a minute');   /* a text task: no file to make smaller */
+    await assert.rejects(ai.ask('system', Buffer.from('%PDF-1.4 plan'), 'application/pdf', 'plan', { task: 'plan', timeout: 300 }),
       e => e.status === 502 && e.message === 'The AI took too long – try again or use a smaller file');
-    assert.ok(Date.now() - t < 3000);
+    assert.ok(Date.now() - t < 5000);
   });
 }
