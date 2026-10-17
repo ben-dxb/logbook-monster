@@ -72,7 +72,7 @@ test('a coach link shows the account’s data read only, with no sign-in', async
   const made = await ann('POST', '/api/shares', { label: 'Coach Sam', expires: inDays(7) });
   assert.strictEqual(made.status, 200);
   assert.match(made.body.url, new RegExp(`^${BASE}/coach/[A-Za-z0-9_-]{43}$`));
-  assert.strictEqual(made.body.live, true);
+  assert.deepStrictEqual(Object.keys(made.body).sort(), ['expires', 'id', 'key', 'url'], 'the secret link, not the label sent back beside it');
   const link = made.body.url, api = link + '/api';
 
   /* the owner sees the link listed, without its secret; nobody else does */

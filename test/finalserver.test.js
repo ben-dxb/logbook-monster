@@ -21,7 +21,8 @@ let aiMode = 'ok';
 const OK = JSON.stringify({ model: 'fake/model', choices: [{ message: { content: '{"ok": true}' }, finish_reason: 'stop' }] });
 const fakeAi = http.createServer((req, res) => { req.resume(); req.on('end', () => { if (aiMode !== 'hang') res.end(OK); }); });
 
-/* a fake SMTP server: smtpMode 'ok', 'auth' (535 to AUTH) or 'rcpt' (550 to RCPT TO) */
+/* a fake SMTP server: smtpMode 'ok', 'auth' (535 to AUTH), 'rcpt' (550 to RCPT TO) or 'trickle' (after the message, a "250-"
+   line every 50 ms for 1.5 s, then the final 250 – delivered only if the client is still there to get it) */
 let smtpMode = 'ok', auths = 0;
 const mails = [], socks = new Set();
 const smtp = net.createServer(sock => {
@@ -32,7 +33,17 @@ const smtp = net.createServer(sock => {
     buf += chunk;
     for (let i; (i = buf.indexOf('\r\n')) >= 0;) {
       const line = buf.slice(0, i); buf = buf.slice(i + 2);
-      if (data !== null) { if (line === '.') { mails.push(data.join('\n')); data = null; sock.write('250 queued\r\n'); } else data.push(line); continue; }
+      if (data !== null) {
+        if (line !== '.') { data.push(line); continue; }
+        const msg = data.join('\n'); data = null;
+        if (smtpMode !== 'trickle') { mails.push(msg); sock.write('250 queued\r\n'); continue; }
+        const t0 = Date.now(), tick = setInterval(() => {
+          if (sock.destroyed) return clearInterval(tick);
+          if (Date.now() - t0 < 1500) return sock.write('250-still working\r\n');
+          clearInterval(tick); mails.push(msg); sock.write('250 queued\r\n');
+        }, 50);
+        continue;
+      }
       const cmd = line.slice(0, 4).toUpperCase();
       if (cmd === 'EHLO') sock.write('250-fake\r\n250 AUTH PLAIN LOGIN\r\n');
       else if (cmd === 'AUTH') { auths++; sock.write(smtpMode === 'auth' ? '535 5.7.8 bad credentials\r\n' : '235 ok\r\n'); }
@@ -184,4 +195,22 @@ test('Keys tab wording: the session secret under the name .env uses, no "Move to
   ai.promote();
   assert.ok(!creds.recorded('OPENROUTER').old_dead_at, 'a new key: the old one has not been tested yet');
   assert.match(list().find(c => c.name === 'OPENROUTER').next, /Test old – it must fail/);
+});
+
+test('a send cut at the time limit is really stopped: its socket is destroyed, so a slow server can’t deliver it after the retry', async () => {
+  db.exec('DELETE FROM outbox');   /* left from the sign-in test: only this send's mail counts */
+  mail.breaker.reset(); mails.length = 0;
+  for (const s of socks) s.destroy();
+  smtpMode = 'trickle';
+  const L = mail.LIMITS.send;
+  mail.LIMITS.send = 400;
+  try {
+    await assert.rejects(mail.send({ to: 'ann@example.com', subject: 'once', text: 't' }), e => e.status === 502);
+  } finally { mail.LIMITS.send = L; }
+  assert.ok(await until(() => mail._test.sockets.size === 0 && socks.size === 0, 2000), 'no socket left open, on either side');
+  smtpMode = 'ok';
+  await mail.send({ to: 'ann@example.com', subject: 'once', text: 't' });   /* the retry */
+  await new Promise(r => setTimeout(r, 1700));   /* past when the cut send would have finished */
+  assert.deepStrictEqual(mails.map(m => /Subject: (\w+)/.exec(m)[1]), ['once'], 'delivered once');
+  assert.ok(await until(() => mail._test.sockets.size === 0, 2000), 'the retry’s connection closes after it too');
 });

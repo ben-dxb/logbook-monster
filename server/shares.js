@@ -77,10 +77,13 @@ function create(user, b) {
   return { ...view(q.get.get(user.id, info.lastInsertRowid)), url: `${config.baseUrl}/coach/${token}` };
 }
 
+/* what a new or renewed link's reply carries: the secret link, never the label sent back beside it */
+const made = r => ({ id: r.id, key: r.key, url: r.url, expires: r.expires });
+
 const mine = express.Router();
 mine.get('/', (req, res) => res.json({ shares: list(req.user) }));
 mine.post('/', (req, res) => {
-  try { const r = create(req.user, req.body); audit.log(req, 'coach.created', { id: r.id, name: r.label || undefined, expires: r.expires }); res.json(r); } catch (e) { send(res, e); }
+  try { const r = create(req.user, req.body); audit.log(req, 'coach.created', { id: r.id, name: r.label || undefined, expires: r.expires }); res.json(made(r)); } catch (e) { send(res, e); }
 });
 /* Renew: a new link (new secret, same name, DEFAULT_DAYS unless expires says) in place of a live one, which is switched off in
    the same transaction. The new link is in the reply only, like a new one. key: as for switching off. */
@@ -97,7 +100,7 @@ mine.post('/:id/renew', (req, res) => {
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); return send(res, e); }
   audit.log(req, 'coach.renewed', { id: r.id, was: id, name: old.label || undefined, expires: r.expires });
-  res.json(r);
+  res.json(made(r));
 });
 /* Switching a link off deletes it: the next request with it finds nothing. */
 mine.delete('/:id', (req, res) => {
