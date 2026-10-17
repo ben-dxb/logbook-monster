@@ -302,7 +302,7 @@ document.addEventListener('click',e=>{
     ms.push({id:String(n),name:'New meal',p:[],c:[],x:[]});}
   else if(a==='freset'){AD.foods[b.dataset.id]=clone(AD_BASE.foods[b.dataset.id]);}
   else if(a==='fdel'){const id=b.dataset.id;
-    if(adPlanUses(id)){alert(`${adFoodName(id)} is in your meal plan. Take it out of the plan first.`);return;}
+    if(adPlanUses(id)){noteBy(b,`${adFoodName(id)} is in your meal plan. Take it out of the plan first.`);return;}
     const was=AD;
     ask(`Delete ${adFoodName(id)} from your foods?`,{yes:'Delete food',no:'Keep it',danger:true}).then(ok=>{
       if(!ok||AD!==was||adPlanUses(id))return;delete AD.foods[id];adOpen.delete(id);renderAdmin();});return;}
@@ -347,7 +347,7 @@ $('#ad-addfood').addEventListener('submit',e=>{
 $('#ad-planfiles').addEventListener('change',async e=>{
   const el=e.target;el.disabled=true;
   try{planFiles=(await api('PUT','/api/admin/options',{planFiles:el.checked})).planFiles;}
-  catch(err){if(!err.signedOut)alert(err.message);}
+  catch(err){if(!err.signedOut)noteBy(el,err.message);}
   el.disabled=false;el.checked=planFiles;$('#v-admin').classList.toggle('nofiles',!planFiles);
 });
 /* super admin: private AI providers only, and the daily AI caps (0 = no limit) */
@@ -357,13 +357,13 @@ async function aoLoad(){const o=await loadTry('ao',()=>api('GET','/api/admin/opt
 $('#ad-aiprivate').addEventListener('change',async e=>{
   const el=e.target;el.disabled=true;
   try{aoFill(await api('PUT','/api/admin/options',{aiPrivate:el.checked}));}
-  catch(err){if(!err.signedOut)alert(err.message);aoLoad();}
+  catch(err){if(!err.signedOut)noteBy(el,err.message);aoLoad();}
   el.disabled=false;
 });
 $('#ad-admintotp').addEventListener('change',async e=>{
   const el=e.target;el.disabled=true;
   try{aoFill(await api('PUT','/api/admin/options',{adminTotp:el.checked}));}
-  catch(err){if(!err.signedOut)alert(err.message);aoLoad();}
+  catch(err){if(!err.signedOut)noteBy(el,err.message);aoLoad();}
   el.disabled=false;
 });
 $('#ad-capform').addEventListener('submit',e=>{
@@ -445,7 +445,7 @@ async function adDelete(from){
     setDefaults(r);
     for(const d of Object.keys(S.days)) if((!from||d>=from)&&!LOGGED.has(d)&&!pending.has(d)){delete S.days[d];delete SAVED.days[d];}
     if(was){adPick();adLoad();}else adVer=(DEFS.myVersions||[]).find(x=>x.from===keep)||null;   /* the draft you're editing stays as it is */
-  }catch(err){if(!err.signedOut)alert(err.message);return;}
+  }catch(err){if(!err.signedOut)noteBy(null,err.message);return;}
   renderAdmin();
 }
 function adDownload(name,text,type){
@@ -859,11 +859,11 @@ document.addEventListener('click',async e=>{
   /* a new link (new secret) for 3 months in its place; the old one stops working, and the person sends the new one themselves */
   if(a==='renew'){
     if(!await ask(`Renew ${x.label?`“${x.label}”`:'this link'}? You get a new link, live for 3 months, to send your coach – the current one stops working straight away.`,{yes:'Renew link',no:'Keep the current one'}))return;
-    once(b,async()=>{try{shNew=await api('POST',`/api/shares/${x.id}/renew`,{key:x.key});await shLoad();}catch(err){if(!err.signedOut){alert(err.message);await shLoad();}}});
+    once(b,async()=>{try{shNew=await api('POST',`/api/shares/${x.id}/renew`,{key:x.key});await shLoad();}catch(err){if(!err.signedOut){await shLoad();noteBy(b,err.message);}}});
     return;
   }
   b.disabled=true;
-  try{await api('DELETE',`/api/shares/${x.id}?key=${encodeURIComponent(x.key)}`);shNew=null;await shLoad();}catch(err){b.disabled=false;if(!err.signedOut){alert(err.message);await shLoad();}}
+  try{await api('DELETE',`/api/shares/${x.id}?key=${encodeURIComponent(x.key)}`);shNew=null;await shLoad();}catch(err){b.disabled=false;if(!err.signedOut){await shLoad();noteBy(b,err.message);}}
 });
 
 /* ---------- People: invites and accounts ---------- */
@@ -907,7 +907,7 @@ document.addEventListener('click',async e=>{
     else if(a==='remove'){if(!await ask(auRemoveText(u),{title:`Remove ${u.email}?`,yes:'Remove account',no:'Keep it',danger:true})){b.disabled=false;return;}
       await api('DELETE',`/api/admin/users/${u.id}`);auLink=null;}
     await auLoad();
-  }catch(err){b.disabled=false;if(!err.signedOut){alert(err.message);if(err.status===404)await auLoad();}}
+  }catch(err){b.disabled=false;if(!err.signedOut){if(err.status===404)await auLoad();noteBy(b,err.message);}}
 });
 
 /* everything removing an account deletes, said plainly – shared foods and supplements leave everyone's library */

@@ -151,7 +151,7 @@ footer{font-size:var(--fs-xs);color:var(--muted)}
 .cell .dn small{font-size:var(--fs-xs);font-weight:700;color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:4px}
 .cell .dn{min-width:0}
 .cell{min-width:0}
-.dtpl{gap:6px}
+.dtpl{gap:6px;min-width:0;max-width:100%}
 .dtpl select{max-width:100%;min-width:0;border:1px solid var(--line);background:var(--surface);color:inherit;border-radius:6px;padding:4px 6px;font-size:var(--fs-s)}
 .noplan a.btn{text-decoration:none;display:inline-flex}
 .noplan h2{margin:0 0 4px}
