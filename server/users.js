@@ -51,12 +51,15 @@ function newLink(user, admin) {
   return `${config.baseUrl}/invite#${token}`;
 }
 
+/* whitespace and control characters (CR/LF too) as one space, like a share link's label – a name is one line of the email */
+const oneLine = v => String(v == null ? '' : v).replace(/[\s\x00-\x1f\x7f]+/g, ' ').trim();
+
 async function sendInvite(user, link, admin) {
-  const who = admin.name ? `${admin.name} (${admin.email})` : admin.email;
+  const who = admin.name ? `${oneLine(admin.name)} (${admin.email})` : admin.email;
   await mail.send({
     to: user.email, replyTo: admin.email,
     subject: 'You’re invited to Logbook Monster',
-    text: `Hi${user.name ? ' ' + user.name : ''},\n\n${who} has invited you to Logbook Monster, for meal plans, weight and gym tracking.\n\n`
+    text: `Hi${user.name ? ' ' + oneLine(user.name) : ''},\n\n${who} has invited you to Logbook Monster, for meal plans, weight and gym tracking.\n\n`
       + `Open this link to pick a password and sign in:\n${link}\n\n`
       + `The link works once and runs out in ${INVITE_DAYS} days. If you weren’t expecting this, you can ignore this email.\n`,
   });
@@ -66,7 +69,7 @@ async function sendInvite(user, link, admin) {
    Always returns the link so the admin can pass it on if the email doesn't arrive. */
 async function invite({ email, name }, admin) {
   email = String(email || '').trim().toLowerCase();
-  name = String(name || '').trim().slice(0, 100) || null;
+  name = oneLine(name).slice(0, 100) || null;
   if (!mail.EMAIL_RE.test(email)) { const e = new Error('Enter a valid email address'); e.status = 400; throw e; }
   let user = q.byEmail.get(email);
   if (user && !pending(user)) { const e = new Error('That person already has an account'); e.status = 409; throw e; }

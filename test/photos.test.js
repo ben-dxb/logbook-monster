@@ -356,6 +356,42 @@ test('progress photos: camera data (GPS included) is stripped on upload, even fr
   assert.ok((await ondisk(r.body.id)).equals(riff(Buffer.concat([vp8x(0x20), frame]))));
 });
 
+/* JPEG comments (COM) and anything after the end of the image go too; the scans' image data, which may hold 0xFF00 and restart
+   markers, is kept whole, and a progressive JPEG's later scans with it (final black-box test). */
+test('progress photos: JPEG comments and bytes after the end of the image are stripped, the picture still reads', async () => {
+  const ann = await signIn('ann@example.com');
+  const seg = (m, body) => Buffer.concat([Buffer.from([0xff, m, (body.length + 2) >> 8, (body.length + 2) & 255]), body]);
+  const sof = seg(0xc2, Buffer.from([8, 0x02, 0x58, 0x01, 0x90, 1, 1, 0x11, 0]));   /* progressive, 400 × 600 */
+  const sos = seg(0xda, Buffer.from([1, 1, 0, 0, 63, 0]));
+  const data1 = Buffer.from([1, 2, 0xff, 0x00, 3, 0xff, 0xd0, 4, 0xff, 0xff, 0xff, 0x00, 5]);   /* stuffed byte, RST0, fill */
+  const data2 = Buffer.from('scan-two');
+  const com = t => seg(0xfe, Buffer.from(t, 'latin1'));
+  const dht = seg(0xc4, Buffer.alloc(20, 2));
+  const eoi = Buffer.from([0xff, 0xd9]);
+  const head = Buffer.concat([Buffer.from([0xff, 0xd8]), seg(0xe0, Buffer.from('JFIF\0\x01\x01\0\0\x01\0\x01\0\0', 'latin1'))]);
+  const sent = Buffer.concat([head, com('MARKERCOMMENT-SECRET'), sof, dht, sos, data1, com('BETWEEN-SCANS-SECRET'), dht, sos, data2, eoi,
+    Buffer.from('TRAILING-SECRET'), com('AFTER-END-SECRET')]);
+  const want = Buffer.concat([head, sof, dht, sos, data1, dht, sos, data2, eoi]);
+  const r = await ann('POST', '/api/photos?date=2026-07-04&pose=front', sent);
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual([r.body.w, r.body.h], [400, 600], 'dimensions still read');
+  const file = new DatabaseSync(env.DB_PATH).prepare('SELECT file FROM photos WHERE id = ?').get(r.body.id).file;
+  const disk = fs.readFileSync(path.join(PHOTO_DIR, file));
+  assert.ok(disk.equals(want), disk.toString('latin1'));
+  assert.ok((await ann('GET', `/api/photos/${r.body.id}/file`)).bytes.equals(want));
+  /* the thumbnail and middle size go through the same cleaning */
+  for (const which of ['thumb', 'mid']) {
+    assert.strictEqual((await ann('PUT', `/api/photos/${r.body.id}/${which}`, sent)).status, 200);
+    const got = (await ann('GET', `/api/photos/${r.body.id}/${which}`)).bytes;
+    assert.ok(got.equals(want), which);
+  }
+  /* image data running to the end without an EOI is kept as it was */
+  const open = Buffer.concat([head, sof, sos, Buffer.from('no-end')]);
+  const r2 = await ann('POST', '/api/photos?date=2026-07-05&pose=front', open);
+  assert.ok((await ann('GET', `/api/photos/${r2.body.id}/file`)).bytes.equals(open));
+  for (const id of [r.body.id, r2.body.id]) assert.strictEqual((await ann('DELETE', `/api/photos/${id}`)).status, 200);   /* no mid file left for later tests */
+});
+
 test('progress photos: an AI answer saved from the form stays the AI’s, and one the AI called Other is no longer untagged (PR-PH-021/022)', async () => {
   const ann = await signIn('ann@example.com');
   const p = (await ann('POST', '/api/photos?date=2026-10-09&pose=back', jpeg('x'))).body;

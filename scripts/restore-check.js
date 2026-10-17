@@ -27,11 +27,13 @@ const counts = tables.map(t => [t, db.prepare(`SELECT COUNT(*) AS n FROM "${t}"`
 
 const photoDir = path.join(dir, 'photos');
 const files = new Set(fs.existsSync(photoDir) ? fs.readdirSync(photoDir) : []);
-const rows = tables.includes('photos') ? db.prepare('SELECT id, user_id, file, thumb FROM photos').all() : [];
+/* mid (the middle size) only in a database the app has started on since it was added – an older backup has none */
+const mid = tables.includes('photos') && db.prepare("SELECT 1 FROM pragma_table_info('photos') WHERE name = 'mid'").get();
+const rows = tables.includes('photos') ? db.prepare(`SELECT id, user_id, file, thumb${mid ? ', mid' : ''} FROM photos`).all() : [];
 db.close();
 const used = new Set(), missing = [];
 for (const r of rows) {
-  for (const [what, name] of [['photo', r.file], ['thumbnail', r.thumb]]) {
+  for (const [what, name] of [['photo', r.file], ['thumbnail', r.thumb], ['middle size', r.mid]]) {
     if (!name) continue;
     used.add(name);
     if (!files.has(name)) missing.push(`photo ${r.id} (account ${r.user_id}): ${what} ${name}`);

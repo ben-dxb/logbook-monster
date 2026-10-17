@@ -177,7 +177,7 @@ test('two-step sign-in: the password alone gives a half-signed-in session that r
   const page = await c('GET', '/');
   assert.strictEqual(page.status, 302);
   assert.strictEqual(page.headers.get('location'), '/login');
-  assert.strictEqual(sql('SELECT user_id FROM sessions WHERE sid = ?', c.sid())[0].user_id, null);
+  assert.strictEqual(sql('SELECT user_id FROM sessions WHERE sid = ?', c.sid())[0].user_id, userId('ann@example.com'), 'kept as the account’s, so a password change ends it');
 
   assert.strictEqual((await c('POST', '/auth/second', { code: 'nope' })).status, 401);
   const code = codeOf(annKeys.secret, 1);   /* the next step's code: the one used to switch it on can't come back */
@@ -202,6 +202,21 @@ test('a half-signed-in session runs out after 5 minutes and asks to start again'
   assert.strictEqual(r.status, 401);
   assert.strictEqual(r.body.restart, true);
   assert.strictEqual((await c('GET', '/api/me')).status, 401);
+});
+
+test('a password change ends a half-signed-in session too: it can’t be finished with a code afterwards', async () => {
+  const half = await signIn('ann@example.com');
+  assert.strictEqual(half.second, true);
+  assert.strictEqual(sql('SELECT COUNT(*) AS n FROM sessions WHERE sid = ?', half.sid())[0].n, 1);
+  for (const [from, to] of [[PASSWORD, 'another-password-2'], ['another-password-2', PASSWORD]]) {
+    const r = await ann('POST', '/auth/password', { current: from, next: to });
+    assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  }
+  assert.strictEqual(sql('SELECT COUNT(*) AS n FROM sessions WHERE sid = ?', half.sid())[0].n, 0, 'the half session is gone');
+  const r = await half('POST', '/auth/second', { code: codeOf(annKeys.secret, 2) });
+  assert.ok([401, 403].includes(r.status), `refused (${r.status}: the session and its CSRF token are gone)`);
+  assert.strictEqual((await half('GET', '/api/me')).status, 401);
+  assert.strictEqual((await ann('GET', '/api/me')).status, 200, 'the session that changed it stays');
 });
 
 test('recovery codes: each signs in once, in any case and with or without the dash', async () => {

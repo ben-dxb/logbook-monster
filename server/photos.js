@@ -83,18 +83,32 @@ function sniff(b) {
 }
 /* Camera data (EXIF with GPS, XMP, IPTC, text chunks) taken out, whatever the client did. Segments are walked by their
    lengths; anything that doesn't parse is left as it is from that point (a decoder walking it would stop there too). */
-const JPEG_DROP = new Set([0xe1, 0xed]);                  /* APP1 (EXIF, XMP), APP13 (IPTC) */
+const JPEG_DROP = new Set([0xe1, 0xed, 0xfe]);            /* APP1 (EXIF, XMP), APP13 (IPTC), COM (comments) */
+/* Segments are walked up to each scan (SOS); a scan's entropy-coded data runs until a marker that isn't a stuffed 0xFF00, a
+   restart (RSTn) or fill – a progressive JPEG has more segments and scans after it. Anything after the end of the image (EOI)
+   is cut off. */
 function cleanJpeg(b) {
   const out = [b.subarray(0, 2)];
   let i = 2;
-  while (i + 4 <= b.length && b[i] === 0xff) {
-    const m = b[i + 1];
-    if (m === 0xff) { i++; continue; }                    /* fill byte */
-    if (m === 0xda || m === 0xd9) break;                  /* image data (or the end) from here on */
-    const len = b.readUInt16BE(i + 2);
-    if (len < 2 || i + 2 + len > b.length) break;
-    if (!JPEG_DROP.has(m)) out.push(b.subarray(i, i + 2 + len));
-    i += 2 + len;
+  for (;;) {
+    let scan = false;
+    while (i + 2 <= b.length && b[i] === 0xff) {
+      const m = b[i + 1];
+      if (m === 0xff) { i++; continue; }                  /* fill byte */
+      if (m === 0xd9) { out.push(b.subarray(i, i + 2)); return Buffer.concat(out); }   /* the end: nothing after it is kept */
+      if (i + 4 > b.length) break;
+      const len = b.readUInt16BE(i + 2);
+      if (len < 2 || i + 2 + len > b.length) break;
+      if (!JPEG_DROP.has(m)) out.push(b.subarray(i, i + 2 + len));
+      i += 2 + len;
+      if (m === 0xda) { scan = true; break; }             /* a scan: its image data follows */
+    }
+    if (!scan) break;                                     /* didn't parse: left as it is from here */
+    let j = i;
+    while (j + 1 < b.length && !(b[j] === 0xff && b[j + 1] !== 0x00 && b[j + 1] !== 0xff && !(b[j + 1] >= 0xd0 && b[j + 1] <= 0xd7))) j++;
+    if (j + 1 >= b.length) break;                         /* image data to the end, no EOI: kept as it is */
+    out.push(b.subarray(i, j));
+    i = j;
   }
   out.push(b.subarray(i));
   return Buffer.concat(out);
