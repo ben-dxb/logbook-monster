@@ -7,6 +7,7 @@ const db = require('./db');
 const { hashPassword, verifyPassword, dummyVerify, passwordProblem } = require('./passwords');
 const users = require('./users');
 const mail = require('./mail');
+const audit = require('./audit');
 
 const q = {
   byId: db.prepare('SELECT id, email, name, password_hash, google_sub, invited_by FROM users WHERE id = ?'),
@@ -150,10 +151,12 @@ router.post('/login', limiter, csrfProtect, needBody, async (req, res) => {
   const ok = user && user.password_hash ? await verifyPassword(password, user.password_hash) : await dummyVerify(password);
   if (!ok || locked || !accountAllowed(user)) {
     if (!ok && valid && !locked) noteFailure(email);
+    audit.log(req, locked ? 'signin.locked' : 'signin.failed', { email }, user ? user.id : null);
     return res.status(401).json({ error: 'That email and password don’t match an account.' });
   }
   q.failClear.run(email);
   await logIn(req, user);
+  audit.log(req, 'signin.ok', { via: 'password' });
   res.json({ ok: true });
 });
 
@@ -168,6 +171,7 @@ router.post('/register', limiter, csrfProtect, needBody, async (req, res) => {
   if (q.byEmail.get(email)) return res.status(409).json({ error: 'An account with this email already exists. Sign in instead.' });
   const info = q.create.run(email, name, await hashPassword(password), null);
   await logIn(req, q.byId.get(info.lastInsertRowid));
+  audit.log(req, 'signin.ok', { via: 'register' });
   res.json({ ok: true });
 });
 
@@ -195,6 +199,7 @@ router.post('/invite/accept', inviteLimiter, csrfProtect, needBody, async (req, 
   q.setPassword.run(await hashPassword(password), inv.user_id);
   if (name) q.setName.run(name, inv.user_id);
   await logIn(req, q.byId.get(inv.user_id));
+  audit.log(req, 'invite.accepted');
   if (inv.created_by) {
     mail.notify({ to: inv.created_by, subject: `${inv.email} joined Logbook Monster`,
       text: `${name || inv.email} accepted your invite and has signed in to Logbook Monster.\n\n${config.baseUrl}/#admin\n` });
@@ -203,6 +208,7 @@ router.post('/invite/accept', inviteLimiter, csrfProtect, needBody, async (req, 
 });
 
 router.post('/logout', csrfProtect, (req, res) => {
+  if (req.session.userId) audit.log(req, 'signout');
   req.session.destroy(() => {
     /* Drops cached photos and pages; the app puts back its unsaved-changes stash itself (app.js). */
     res.set('Clear-Site-Data', '"cache", "storage"');
@@ -229,6 +235,7 @@ router.post('/password', csrfProtect, requireAuth, limiter, async (req, res) => 
   const signedOut = users.endSessions(req.user.id, req.sessionID);
   const linksOff = endLinks === false ? 0 : q.endShares.run(req.user.id, new Date().toISOString()).changes;
   await renew(req);
+  audit.log(req, 'password.changed', { signedOut, linksOff });
   res.json({ ok: true, signedOut, linksOff });
 });
 
@@ -302,6 +309,7 @@ router.get('/google/callback', limiter, async (req, res) => {
     if (existing) {
       if (existing.google_sub && existing.google_sub !== claims.sub) return fail(res, 'google_failed');
       q.linkGoogle.run(claims.sub, claims.name || null, existing.id);
+      audit.log(req, 'google.linked', {}, existing.id);
       user = q.byId.get(existing.id);
     } else {
       if (!config.mayCreateAccount(email)) return fail(res, 'not_allowed');
@@ -310,6 +318,7 @@ router.get('/google/callback', limiter, async (req, res) => {
     }
   }
   try { await logIn(req, user); } catch { return fail(res, 'google_failed'); }
+  audit.log(req, 'signin.ok', { via: 'google' });
   res.redirect('/');
 });
 

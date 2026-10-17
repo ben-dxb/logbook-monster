@@ -100,12 +100,13 @@ async function signIn(email, password = PASSWORD) {
   return c;
 }
 
-/* Every row of the database except sessions (and the sign-in time), plus the photo files: "nothing changed" means this is the same. */
+/* Every row of the database except sessions (and the sign-in time) and the security log (which records reads like an export
+   or a coach link's use), plus the photo files: "nothing changed" means this is the same. */
 function snapshot(onlyUser) {
   const db = new DatabaseSync(DB, { readOnly: true });
   const out = {};
   for (const { name } of db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all()) {
-    if (name === 'sessions') continue;
+    if (name === 'sessions' || name === 'audit') continue;
     const cols = db.prepare(`PRAGMA table_info("${name}")`).all().map(c => c.name);
     let rows = db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all();
     if (onlyUser != null) {
@@ -218,6 +219,14 @@ const ROUTES = [
   { key: 'POST /api/admin/users', scope: 'admin', body: () => ({ email: 'invited@example.com' }) },
   { key: 'POST /api/admin/users/:id/invite', scope: 'admin', u: () => `/api/admin/users/${A_ID}/invite` },
   { key: 'DELETE /api/admin/users/:id', scope: 'admin', u: () => `/api/admin/users/${A_ID}` },
+  { key: 'GET /api/admin/log', scope: 'admin' },
+  { key: 'GET /api/my/log', own: [{ check: r => {
+    const db = new DatabaseSync(DB, { readOnly: true });
+    const annRows = new Set(db.prepare('SELECT id FROM audit WHERE user_id = ?').all(A_ID).map(x => x.id));
+    db.close();
+    assert.ok(annRows.size > 0 && r.body.rows.length > 0);
+    assert.ok(r.body.rows.every(x => !annRows.has(x.id)), 'none of ann’s security log');
+  } }] },
   { key: 'GET /api/admin/options', scope: 'admin' },
   { key: 'PUT /api/admin/options', scope: 'admin', body: () => ({ planFiles: false }) },
   { key: 'GET /api/admin/email', scope: 'admin' },

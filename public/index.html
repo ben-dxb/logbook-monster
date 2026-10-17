@@ -190,7 +190,7 @@
 
   <!-- ===================== ADMIN =====================
        One page, two scopes: #account (account admin – anyone, their own plan, week, targets and foods)
-       and #admin (super admin – app-wide settings, in tabs: #admin/ai, #admin/people, #admin/email, #admin/options).
+       and #admin (super admin – app-wide settings, in tabs: #admin/ai, #admin/people, #admin/email, #admin/options, #admin/log).
        .admine / .adapp / .adsuper parts show for one scope only; data-adtab says which super admin tab a panel is on. -->
   <section id="v-admin" class="view" hidden>
     <section class="panel adintro">
@@ -202,6 +202,7 @@
         <a href="#admin/people" data-adt="people">People</a>
         <a href="#admin/email" data-adt="email">Email</a>
         <a href="#admin/options" data-adt="options">Options</a>
+        <a href="#admin/log" data-adt="log">Security log</a>
       </nav>
     </section>
     <div class="adbar admine" role="status">
@@ -298,6 +299,12 @@
       <p id="ad-shmsg" class="sub" role="status"></p>
       <div id="ad-shares" class="adusers"></div>
     </section>
+    <section class="panel admine" aria-labelledby="ad-mlh">
+      <h2 id="ad-mlh">Sign-ins and security</h2>
+      <p>Recent sign-ins to your account (and failed tries), password changes, data downloads, bulk photo deletes and your coach links being made, opened or switched off. Kept for 180 days. If you see something that wasn’t you, change your password.</p>
+      <div id="ad-mylog" class="adusers"></div>
+      <div class="gactions"><button class="ghost" type="button" id="ad-ml-more" hidden>Show older</button></div>
+    </section>
     <section class="panel admine" aria-labelledby="ad-pdh">
       <h2 id="ad-pdh">Delete progress photos</h2>
       <p>Delete all your progress photos taken between two dates, both days included. They’re gone for good – download any you want to keep first.</p>
@@ -351,6 +358,17 @@
         <p class="muted adcapnote">0 = no limit. Counted per UTC day; your own calls count only towards the whole app’s limit.</p>
         <div id="ad-capmsg" role="status"></div>
       </form>
+    </section>
+    <section class="panel adsuper" aria-labelledby="ad-lgh" data-adtab="log">
+      <h2 id="ad-lgh">Security log</h2>
+      <p>Sign-ins, failed sign-ins and locks, password changes, invites, removed accounts, changes to these settings, data downloads, bulk deletes, coach links and AI limits reached – newest first, kept for 180 days. Emails of failed sign-ins are shortened; no passwords, keys or health data are kept here.</p>
+      <form id="ad-lgform" class="adinvite">
+        <label class="f"><span class="lbl">Event</span><select id="ad-lg-ev"><option value="">All events</option></select></label>
+        <label class="f"><span class="lbl">Account</span><select id="ad-lg-user"><option value="">All accounts</option></select></label>
+        <button class="ghost" type="submit">Refresh</button>
+      </form>
+      <div id="ad-log" class="adusers"></div>
+      <div class="gactions"><button class="ghost" type="button" id="ad-lg-more" hidden>Show older</button></div>
     </section>
     <section class="panel adsuper" aria-labelledby="ad-eh" data-adtab="email">
       <h2 id="ad-eh">Email</h2>

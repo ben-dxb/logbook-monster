@@ -2,7 +2,8 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const db = require('./db');
-const { requireAuth, csrfProtect, csrfToken } = require('./auth');
+const { requireAuth, csrfProtect, csrfToken, q: authQ } = require('./auth');
+const audit = require('./audit');
 const defaults = require('./defaults');
 const ai = require('./ai');
 const config = require('./config');
@@ -147,7 +148,12 @@ const readPlan = (req, res) => {
 router.get('/admin/ai', adminOnly, (req, res) => res.json(ai.status()));
 router.put('/admin/ai', adminOnly, (req, res) => {
   if (!isObj(req.body)) return bad(res, 'Settings must be an object');
-  try { res.json(ai.save(req.body, req.user)); } catch (e) { bad(res, e.message); }
+  try {
+    const out = ai.save(req.body, req.user), b = req.body;
+    audit.log(req, 'ai.settings', { apiKey: b.key === undefined ? undefined : String(b.key || '').trim() ? 'set' : 'cleared',
+      model: b.model === undefined ? undefined : true, tasks: isObj(b.models) ? Object.keys(b.models) : undefined });
+    res.json(out);
+  } catch (e) { bad(res, e.message); }
 });
 /* The OpenRouter key is the super admin's, so each account gets a handful of reads an hour. */
 const aiLimit = ai.limiter(12, 'That’s a lot of AI reads – wait a while and try again.', { skip: req => defaults.isAdmin(req.user) });
@@ -159,18 +165,24 @@ const userId = req => (/^\d{1,12}$/.test(req.params.id) ? +req.params.id : 0);
 router.get('/admin/users', adminOnly, (req, res) => res.json({ users: users.list(req.user, defaults.isAdmin), email: mail.configured() }));
 router.post('/admin/users', adminOnly, async (req, res) => {
   if (!isObj(req.body)) return bad(res, 'Send an email address');
-  try { res.json(await users.invite(req.body, req.user)); } catch (e) { fail(res, e); }
+  try { const r = await users.invite(req.body, req.user); audit.log(req, 'invite.created', { email: r.email }, r.id); res.json(r); } catch (e) { fail(res, e); }
 });
 router.post('/admin/users/:id/invite', adminOnly, async (req, res) => {
-  try { res.json(await users.resend(userId(req), req.user)); } catch (e) { fail(res, e); }
+  try { const r = await users.resend(userId(req), req.user); audit.log(req, 'invite.created', { email: r.email, resent: true }, r.id); res.json(r); } catch (e) { fail(res, e); }
 });
 router.delete('/admin/users/:id', adminOnly, (req, res) => {
   try {
-    const files = photos.filesOf(userId(req));
-    res.json(users.remove(userId(req), req.user, defaults.isAdmin));
+    const id = userId(req), files = photos.filesOf(id), target = authQ.byId.get(id);
+    const out = users.remove(id, req.user, defaults.isAdmin);
+    audit.log(req, 'account.removed', { email: target && target.email }, id);
+    res.json(out);
     photos.removeFiles(files);
   } catch (e) { fail(res, e); }
 });
+
+/* The security log (server/audit.js): everything for the super admin, your own sign-ins and the like for anyone. */
+router.get('/admin/log', adminOnly, (req, res) => res.json(audit.list(req.query)));
+router.get('/my/log', (req, res) => res.json(audit.mine(req.user, req.query)));
 
 router.get('/admin/options', adminOnly, (req, res) => res.json(options()));
 router.put('/admin/options', adminOnly, (req, res) => {
@@ -182,14 +194,20 @@ router.put('/admin/options', adminOnly, (req, res) => {
     o[k] = v;
   }
   q.putOptions.run(JSON.stringify(o), req.user.email);
+  audit.log(req, 'options.changed', req.body);
   res.json(o);
 });
 
-/* The account the app sends email from (SMTP). */
+/* The account the app sends email from (SMTP). Only the names of the fields changed go in the security log. */
+const MAIL_FIELDS = ['host', 'port', 'secure', 'user', 'pass', 'from', 'fromName'];
 router.get('/admin/email', adminOnly, (req, res) => res.json(mail.status()));
 router.put('/admin/email', adminOnly, async (req, res) => {
   if (!isObj(req.body)) return bad(res, 'Settings must be an object');
-  try { res.json(await mail.save(req.body, req.user)); } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+  try {
+    const out = await mail.save(req.body, req.user);
+    audit.log(req, 'email.settings', { fields: Object.keys(req.body).filter(k => MAIL_FIELDS.includes(k)) });
+    res.json(out);
+  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 router.post('/admin/email/test', adminOnly, async (req, res) => {
   const to = String((req.body && req.body.to) || req.user.email).trim();
@@ -246,7 +264,7 @@ router.put('/days/:date', (req, res) => {
 });
 router.delete('/days/:date', (req, res) => {
   if (!isDate(req.params.date)) return bad(res, 'Bad date');
-  q.delDay.run(req.user.id, req.params.date);
+  if (q.delDay.run(req.user.id, req.params.date).changes) audit.log(req, 'day.deleted', { date: req.params.date });
   res.json({ ok: true });
 });
 
@@ -303,6 +321,7 @@ router.get('/export', exportLimit, async (req, res) => {
     ['checklist', () => checklist.exportFor(user)],
     ['photos', () => photos.exportFor(user)],
   ];
+  audit.log(req, 'export');
   res.attachment(`logbook-monster-${new Date().toISOString().slice(0, 10)}.json`);
   res.type('json');
   try {

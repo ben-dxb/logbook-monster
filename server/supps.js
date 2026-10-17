@@ -11,6 +11,7 @@ const { isNum } = require('./num');
 const defaults = require('./defaults');
 const ai = require('./ai');
 const jobs = require('./jobs');
+const audit = require('./audit');
 
 const COLS = 's.id, s.user_id, s.name, s.amount, s.unit, s.notes, s.public, s.updated_at, u.name AS owner';
 const LOG = 'id, date, supplement_id AS sid, name, amount, unit, note, created_at AS created';
@@ -279,6 +280,7 @@ router.delete('/:id', (req, res) => {
     if (!visible(row, req.user)) throw fail('No such supplement', 404);
     if (row.user_id !== req.user.id && !defaults.isAdmin(req.user)) throw fail('Only the person who added this supplement can remove it', 403);
     q.del.run(row.id);
+    if (row.user_id !== req.user.id) audit.log(req, 'supp.removed', { id: row.id, name: row.name }, row.user_id);
     res.json({ ok: true });
   } catch (e) { send(res, e); }
 });

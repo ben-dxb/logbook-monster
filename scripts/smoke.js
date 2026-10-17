@@ -792,6 +792,8 @@ async function twoTabsOneDay(ctx) {
         expect(/Smoke creatine/.test(await pg.textContent('#d-body')), 'the supplement regime card lists the library');
         await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
         expect(/OpenRouter API key/.test(await pg.textContent('#ad-aistate')) && await pg.isDisabled('#ad-aifile'), 'PDF reading should be off without a key');
+        /* your own security log: sign-ins and coach links, read only */
+        await pg.waitForFunction(() => /Signed in/.test(document.querySelector('#ad-mylog').textContent) && /Coach link opened/.test(document.querySelector('#ad-mylog').textContent), null, { timeout: 5000 });
         /* super admin: no plan editor at all – AI, people and email in tabs */
         await pg.click('#acct>summary'); await pg.click('#adminlink');
         await pg.waitForSelector('#v-admin:not(.mine):not([hidden]) #ad-aipanel:not([hidden])');
@@ -812,6 +814,13 @@ async function twoTabsOneDay(ctx) {
         await pg.waitForSelector('#ad-iv-link', { timeout: 5000 });
         const link = await pg.inputValue('#ad-iv-link');
         expect(/Invite sent/.test(await pg.textContent('#ad-users')), 'invited person should be listed as invited');
+        /* the security log tab: newest first, filtered by event */
+        await pg.click('#ad-tabs [data-adt=log]'); await pg.waitForSelector('[data-adtab=log]:not([hidden]) #ad-log .aduser', { timeout: 5000 });
+        expect(/Invite made/.test(await pg.textContent('#ad-log .aduser >> nth=0')) && /AI settings changed/.test(await pg.textContent('#ad-log')), 'the security log should list the invite and the AI key change');
+        await pg.selectOption('#ad-lg-ev', 'ai.settings');
+        await pg.waitForFunction(() => [...document.querySelectorAll('#ad-log .aduser b')].every(b => b.textContent === 'AI settings changed'), null, { timeout: 5000 });
+        expect(!/sk-or-v1-smoke/.test(await pg.textContent('#ad-log')), 'the key is never in the log');
+        await pg.selectOption('#ad-lg-ev', '');
         const gctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
         const gp = await gctx.newPage();
         gp.on('pageerror', e => errs.push('invite page: ' + e.message));
