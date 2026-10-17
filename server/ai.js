@@ -333,7 +333,7 @@ const breaker = {
   refusal(secs) {
     const msg = this.why === 'auth' ? this.authMsg : 'The AI service isn’t answering right now – try again in a few minutes';
     const s = als.getStore();
-    if (s && s.res && !s.res.headersSent) s.res.set('Retry-After', String(secs));
+    if (s && s.res && typeof s.res.set === 'function' && !s.res.headersSent) s.res.set('Retry-After', String(secs));
     return Object.assign(new Error(msg), { status: 503, retryAfter: secs });
   },
   open(why, ms, detail) {
