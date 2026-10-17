@@ -19,6 +19,12 @@ const env = { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', BASE_URL: B
   SESSION_SECRET: 'x'.repeat(40), AUTH_RATE_LIMIT: '1000', ALLOWED_EMAILS: '', ALLOW_REGISTRATION: 'false', GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', OPENROUTER_API_KEY: '' };
 const node = [process.execPath, '--disable-warning=ExperimentalWarning'];
 const root = path.join(__dirname, '..');
+/* future days nobody has saved, inside the dates the app stores (up to a year ahead): two Mondays a week apart, and the
+   Thursday between them for a plan change */
+const localDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const monAt = new Date(); monAt.setDate(monAt.getDate() + 60); monAt.setDate(monAt.getDate() + (8 - monAt.getDay()) % 7);
+const later = n => { const d = new Date(monAt); d.setDate(d.getDate() + n); return localDay(d); };
+const MON = later(0), FROM = later(3), MON2 = later(7);
 
 execSync(`"${node[0]}" ${node[1]} scripts/create-user.js smoke@example.com`, { cwd: root, env: { ...env, NEW_PASSWORD: 'smoke-password-1' }, stdio: 'ignore' });
 const srv = spawn(node[0], [node[1], 'server/index.js'], { cwd: root, env, stdio: 'ignore' });
@@ -665,6 +671,23 @@ async function trackerKeepsFood(browser, pg, ctx) {
         await pg.click('#ad-save');
         await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
         expect(/5 day templates/.test(await pg.textContent('#ad-planstate')), 'the new template should be saved with the plan');
+        /* a plan file is shown before the server checks it: markup in any value must stay text (RC-09) */
+        const tag = n => `"><img id="PR-PROBE-${n}" src="x">`;
+        const probe = { templates: [{ id: 'R', name: 'Rest' + tag('tname') }, { id: 'Q' + tag('tid'), name: 'Bad' }],
+          foods: { banana: { n: 'Banana' + tag('fname'), k: '90' + tag('k'), unit: 'g' + tag('unit'), group: 'c' + tag('group') }, ['x' + tag('fid')]: { n: 'x', k: 1 } },
+          targets: { R: { k: '2500' + tag('target') } },
+          plan: { R: [{ id: '1' + tag('mid'), name: 'Probe meal' + tag('mname'), note: tag('note'), p: [], c: [{ f: 'banana' + tag('item'), g: '1' + tag('g') }], x: [] }] } };
+        await pg.click('#ad-types [data-t=R]');
+        await pg.setInputFiles('#ad-file', { name: 'plan.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(probe)) });
+        await pg.waitForFunction(() => /Loaded plan\.json/.test(document.querySelector('#ad-upmsg').textContent), null, { timeout: 5000 });
+        await pg.click('.adfood[data-id=banana] summary');
+        expect(await pg.inputValue('#ad-mn-0') === 'Probe meal"><img id="PR-PROBE-mname" src="x">', 'the probe plan should be loaded, its markup kept as text');
+        expect(await pg.locator('[id^="PR-PROBE"]').count() === 0, 'markup in a plan file must not become page elements');
+        await pg.click('#ad-discard');
+        await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
+        /* the plan CSV download keeps a value that starts like a formula as text */
+        expect(JSON.stringify(await pg.evaluate(() => ['=HYPERLINK("x")', '+1', '-1', '@SUM(A1)', 'Oats, 80 g', 'plain'].map(csvCell)))
+          === JSON.stringify(['"\'=HYPERLINK(""x"")"', "'+1", "'-1", "'@SUM(A1)", '"Oats, 80 g"', 'plain']), 'CSV cells starting with = + - @ get a leading apostrophe');
         /* the daily checklist: drop Cardio, add an item, save – the Dashboard follows; Weigh in and Supplements taken tick
            themselves from today's weight and supplement log */
         await pg.waitForSelector('#ad-cl .adclrow');
@@ -747,7 +770,7 @@ async function trackerKeepsFood(browser, pg, ctx) {
         await gp.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
         expect(await gp.isChecked('#ad-free-sauce') && await gp.evaluate(() => FREE.sauce && macOf('salsa', 200).k === 0), 'free sauces should be saved and applied');
         /* a change that takes effect later: Mondays are rest days from 2031, days before keep training */
-        await gp.selectOption('#ad-wd-0', rs); await gp.fill('#ad-from', '2031-01-01'); await gp.click('#ad-save');
+        await gp.selectOption('#ad-wd-0', rs); await gp.fill('#ad-from', FROM); await gp.click('#ad-save');
         await gp.waitForFunction(() => /Scheduled/.test(document.querySelector('#ad-versions').textContent) && /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
         /* delete progress photos between two dates: only those in the range go */
         await gp.evaluate(async () => {
@@ -761,10 +784,10 @@ async function trackerKeepsFood(browser, pg, ctx) {
         expect((await gp.evaluate(async () => (await api('GET', '/api/photos')).photos.map(p => p.date))).join() === '2026-05-01', 'only the photos in the range should be deleted');
         const gscroll = await gp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         expect(gscroll <= 1, `horizontal overflow of ${gscroll}px on the account admin page`);
-        await gp.evaluate(() => { location.hash = '#day/2030-01-07'; });
+        await gp.evaluate(d => { location.hash = '#day/' + d; }, MON);
         await gp.waitForFunction(() => /· Training$/.test(document.querySelector('#dsub').textContent) && /Chicken thigh/.test(document.querySelector('#meals').innerHTML), null, { timeout: 5000 });
-        await gp.evaluate(() => { location.hash = '#day/2031-01-06'; });
-        await gp.waitForFunction(() => document.querySelector('#datepick').value === '2031-01-06' && /· Rest$/.test(document.querySelector('#dsub').textContent), null, { timeout: 5000 });
+        await gp.evaluate(d => { location.hash = '#day/' + d; }, MON2);
+        await gp.waitForFunction(d => document.querySelector('#datepick').value === d && /· Rest$/.test(document.querySelector('#dsub').textContent), MON2, { timeout: 5000 });
         await gctx.close();
         await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
         expect(/^Using /.test(await pg.textContent('#ad-aistate')) && !(await pg.isDisabled('#ad-aifile')), 'PDF upload should be on once a key is saved');
@@ -800,13 +823,13 @@ async function trackerKeepsFood(browser, pg, ctx) {
       expect(aiscroll <= 1, `horizontal overflow of ${aiscroll}px on the AI tab at ${w}px wide`);
       await pg.click('#ad-tabs [data-adt=people]'); await pg.waitForSelector('[data-adtab=people]:not([hidden]) #ad-users .aduser');
       await pg.click('a[data-view=day]'); await pg.click('[data-act=next]'); await pg.waitForTimeout(200);
-      await pg.evaluate(() => { location.hash = '#day/2030-01-07'; }); /* a Monday nobody has saved */
+      await pg.evaluate(d => { location.hash = '#day/' + d; }, MON); /* a Monday nobody has saved */
       await pg.waitForFunction(() => /· Rest$/.test(document.querySelector('#dsub').textContent), null, { timeout: 5000 });
       expect(/Smoke bowl/.test(await pg.textContent('#meals')), 'new rest days should start from the uploaded plan');
       expect(/Refeed day/.test(await pg.textContent('#tabs')), 'Sunday should show the refeed template in the week strip');
       if (first) {   /* one day follows another template: it starts again from that one (and stays so when saved) */
-        await pg.evaluate(() => { location.hash = '#day/2030-01-14'; });
-        await pg.waitForFunction(() => document.querySelector('#datepick').value === '2030-01-14' && /· Rest$/.test(document.querySelector('#dsub').textContent), null, { timeout: 5000 });
+        await pg.evaluate(d => { location.hash = '#day/' + d; }, MON2);
+        await pg.waitForFunction(d => document.querySelector('#datepick').value === d && /· Rest$/.test(document.querySelector('#dsub').textContent), MON2, { timeout: 5000 });
         await pg.selectOption('#dtpl', { label: 'Training' });
         await pg.waitForFunction(() => /· Training$/.test(document.querySelector('#dsub').textContent) && /Health Road chicken/.test(document.querySelector('#meals').textContent)
           && /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });

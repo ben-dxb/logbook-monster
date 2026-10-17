@@ -6,6 +6,7 @@
    plan they had: user_defaults holds {versions:[…]}, oldest first. */
 const config = require('./config');
 const db = require('./db');
+const { isDate, writeError } = require('./dates');
 const { FREE_KINDS } = require('../public/engine.js');
 const legacy = require('./legacy');
 
@@ -142,9 +143,9 @@ function clean(input) {
   return out;
 }
 
-const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
-const isDate = v => typeof v === 'string' && DATE_RE.test(v) && !isNaN(Date.parse(v + 'T00:00:00Z'));
 const MAX_VERSIONS = 100;
+/* the whole plan history together: a plan is tens of KB, so this is many versions of a large one */
+const MAX_PLAN_BYTES = config.quota.plan;
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 /* no plan at all from that date */
 const isEmpty = d => !Object.keys(d.foods || {}).length && !(d.templates || []).length && !Object.keys(d.free || {}).length;
@@ -168,10 +169,14 @@ function mine(user, date = ymd(new Date())) {
   const v = versionOn(myVersions(user), date);
   return v && !isEmpty(v) ? v : null;
 }
-function storeMine(user, list) {
+function storeMine(user, list, grow) {
   list.sort((a, b) => (a.from || '').localeCompare(b.from || ''));
-  if (list.every(isEmpty)) q.delMine.run(user.id);
-  else q.putMine.run(user.id, JSON.stringify({ versions: list }));
+  if (list.every(isEmpty)) return q.delMine.run(user.id);
+  const json = JSON.stringify({ versions: list });
+  if (grow && json.length > MAX_PLAN_BYTES) {
+    throw Object.assign(new Error(`Your plan history has reached the ${Math.round(MAX_PLAN_BYTES / 1048576)} MB an account can keep – delete some old plan changes first`), { status: 413 });
+  }
+  q.putMine.run(user.id, json);
 }
 /* With a from date (null = from the start) this saves the change taking effect then, replacing one with the
    same date; changes dated later still apply from their dates. An empty change means "no plan from then on".
@@ -180,11 +185,11 @@ function putMine(input, user) {
   const data = clean(input);
   const has = isObj(input) && Object.prototype.hasOwnProperty.call(input, 'from');
   const from = has && input.from != null && input.from !== '' ? input.from : null;
-  if (from !== null && !isDate(from)) throw new Error('The date it takes effect from must be a date');
+  if (from !== null && writeError(from)) throw new Error(writeError(from, 'The date it takes effect from must be a date'));
   const list = has ? myVersions(user).filter(x => x.from !== from) : [];
   if (list.length >= MAX_VERSIONS) throw new Error('Too many plan changes – delete some old ones first');
   list.push({ from, ...data, updatedAt: new Date().toISOString().replace('T', ' ').slice(0, 19) });
-  storeMine(user, list);
+  storeMine(user, list, true);
   return forUser(user);
 }
 /* Without a date: no plan for any day. With one ('start' for the first): delete that change,

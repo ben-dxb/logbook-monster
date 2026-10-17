@@ -109,7 +109,7 @@ function renderAdmin(){
   pbSync();
   if(!clDraft)clLoad();else clRender();
   adVersions();
-  const numIn=(id,val,attrs,label)=>`<input id="${id}" type="number" inputmode="decimal" min="0" value="${val==null?'':val}" ${attrs} aria-label="${esc(label)}">`;
+  const numIn=(id,val,attrs,label)=>`<input id="${id}" type="number" inputmode="decimal" min="0" value="${val==null?'':esc(val)}" ${attrs} aria-label="${esc(label)}">`;
   const has=AD.templates.length>0;
   /* plan */
   $('#ad-planstate').innerHTML=has
@@ -138,7 +138,7 @@ function renderAdmin(){
       <div class="boxes">${AD_BOXES.map(([b,l])=>`<div class="box"><span class="lbl">${l}</span>
         ${(m[b]||[]).map((i,ii)=>{const u=(AD.foods[i.f]||FOODS[i.f]||{}).unit||'g';const k=`${mi}-${b}-${ii}`;
           return `<div class="adrow"><select id="ad-f-${k}" data-ad="ifood" data-m="${mi}" data-b="${b}" data-i="${ii}" aria-label="Food">${foodOpts(i.f,b)}</select>
-          <span class="amt">${numIn('ad-g-'+k,i.g,`step="1" data-ad="igram" data-m="${mi}" data-b="${b}" data-i="${ii}"`,'Amount')}<em>${u}</em></span>
+          <span class="amt">${numIn('ad-g-'+k,i.g,`step="1" data-ad="igram" data-m="${mi}" data-b="${b}" data-i="${ii}"`,'Amount')}<em>${esc(u)}</em></span>
           <label class="lock"><input type="checkbox" id="ad-l-${k}" data-ad="ilock" data-m="${mi}" data-b="${b}" data-i="${ii}"${i.lock?' checked':''}><span>Lock</span></label>
           <button type="button" class="x" data-ad="idel" data-m="${mi}" data-b="${b}" data-i="${ii}" aria-label="Remove">×</button></div>`;}).join('')||'<p class="empty">Nothing here</p>'}
         <div class="add"><select id="ad-a-${mi}-${b}" data-ad="iadd" data-m="${mi}" data-b="${b}" aria-label="Add a food"><option value="">${foodIds().length?'+ Add a food…':'+ Add foods in My foods first'}</option>${foodOpts(null,b)}</select></div>
@@ -149,7 +149,7 @@ function renderAdmin(){
   $('#ad-week').innerHTML=has?DAYS.map((d,i)=>`<label class="f"><span class="lbl">${d}</span><select id="ad-wd-${i}" data-ad="wday" data-i="${i}">${opts(AD.schedule[i])}</select></label>`).join('')
     :'<p class="empty">Add a day template first.</p>';
   $('#ad-targets').innerHTML=has?'<span></span><span class="lbl">kcal</span><span class="lbl">Protein g</span><span class="lbl">Carbs g</span><span class="lbl">Fat g</span>'+
-    AD.templates.map(({id,name})=>`<span class="adtl">${esc(name)}</span>`+MAC.map(m=>numIn(`ad-tg-${id}-${m}`,AD.targets[id][m],`data-ad="target" data-t="${esc(id)}" data-k="${m}"`,`${name} ${m}`)).join('')).join('')
+    AD.templates.map(({id,name})=>`<span class="adtl">${esc(name)}</span>`+MAC.map(m=>numIn(`ad-tg-${esc(id)}-${m}`,AD.targets[id][m],`data-ad="target" data-t="${esc(id)}" data-k="${m}"`,`${name} ${m}`)).join('')).join('')
     :'';
   $('#ad-targets').hidden=!has;
   /* free foods */
@@ -159,20 +159,20 @@ function renderAdmin(){
   const ids=Object.keys(AD.foods);
   $('#ad-foods').innerHTML=(ids.length?'':'<p class="empty">No foods yet. Add the foods your plan uses above, or upload a plan.</p>')+ids.map(id=>{const r=AD.foods[id];
     const isNew=!AD_BASE.foods[id], edited=!isNew&&!same(r,AD_BASE.foods[id]);
-    const fld=(k,label,attrs='')=>`<label class="f"><span class="lbl">${label}</span>${numIn(`ad-fd-${id}-${k}`,r[k],`step="any" data-ad="food" data-id="${id}" data-k="${k}" ${attrs}`,`${r.n} ${label}`)}</label>`;
-    return `<details class="adfood" data-id="${id}"${adOpen.has(id)?' open':''}><summary><span class="adfn">${esc(r.n)}</span>
+    const fld=(k,label,attrs='')=>`<label class="f"><span class="lbl">${label}</span>${numIn(`ad-fd-${esc(id)}-${k}`,r[k],`step="any" data-ad="food" data-id="${esc(id)}" data-k="${k}" ${attrs}`,`${r.n} ${label}`)}</label>`;
+    return `<details class="adfood" data-id="${esc(id)}"${adOpen.has(id)?' open':''}><summary><span class="adfn">${esc(r.n)}</span>
         ${isNew?'<span class="chip info">New</span>':edited?'<span class="chip info">Changed</span>':''}
-        <span class="ml" id="ad-fs-${id}">${adFoodLine(r)}</span></summary>
+        <span class="ml" id="ad-fs-${esc(id)}">${adFoodLine(r)}</span></summary>
       <div class="adfgrid">
-        <label class="f adwide"><span class="lbl">Name</span><input id="ad-fd-${id}-n" data-ad="food" data-id="${id}" data-k="n" value="${esc(r.n)}"></label>
-        ${fld('k',`kcal / 100${r.unit}`)}${fld('p','Protein')}${fld('c','Carbs')}${fld('f','Fat')}${fld('d','Direct protein')}
+        <label class="f adwide"><span class="lbl">Name</span><input id="ad-fd-${esc(id)}-n" data-ad="food" data-id="${esc(id)}" data-k="n" value="${esc(r.n)}"></label>
+        ${fld('k',`kcal / 100${esc(r.unit)}`)}${fld('p','Protein')}${fld('c','Carbs')}${fld('f','Fat')}${fld('d','Direct protein')}
         ${fld('step','Step')}${fld('min','Min serving')}${fld('max','Max serving')}${fld('order','Daily order')}
-        <label class="f"><span class="lbl">Unit</span><select id="ad-fd-${id}-unit" data-ad="food" data-id="${id}" data-k="unit">${['g','ml'].map(u=>`<option${r.unit===u?' selected':''}>${u}</option>`).join('')}</select></label>
-        <label class="f"><span class="lbl">Swap list</span><select id="ad-fd-${id}-group" data-ad="food" data-id="${id}" data-k="group">${Object.entries(groups).map(([g,n])=>`<option value="${g}"${r.group===g?' selected':''}>${n}</option>`).join('')}</select></label>
-        <label class="f"><span class="lbl">Free food</span><select id="ad-fd-${id}-free" data-ad="food" data-id="${id}" data-k="free">${AD_FREE_OPTS.map(([x,n])=>`<option value="${x}"${(r.free||'')===x?' selected':''}>${n}</option>`).join('')}</select></label>
+        <label class="f"><span class="lbl">Unit</span><select id="ad-fd-${esc(id)}-unit" data-ad="food" data-id="${esc(id)}" data-k="unit">${['g','ml'].map(u=>`<option${r.unit===u?' selected':''}>${u}</option>`).join('')}</select></label>
+        <label class="f"><span class="lbl">Swap list</span><select id="ad-fd-${esc(id)}-group" data-ad="food" data-id="${esc(id)}" data-k="group">${Object.entries(groups).map(([g,n])=>`<option value="${g}"${r.group===g?' selected':''}>${n}</option>`).join('')}</select></label>
+        <label class="f"><span class="lbl">Free food</span><select id="ad-fd-${esc(id)}-free" data-ad="food" data-id="${esc(id)}" data-k="free">${AD_FREE_OPTS.map(([x,n])=>`<option value="${x}"${(r.free||'')===x?' selected':''}>${n}</option>`).join('')}</select></label>
       </div>
-      <div class="adfact">${edited?`<button type="button" class="ghost" data-ad="freset" data-id="${id}">Undo changes</button>`:''}
-        <button type="button" class="ghost" data-ad="fdel" data-id="${id}">Delete food</button></div>
+      <div class="adfact">${edited?`<button type="button" class="ghost" data-ad="freset" data-id="${esc(id)}">Undo changes</button>`:''}
+        <button type="button" class="ghost" data-ad="fdel" data-id="${esc(id)}">Delete food</button></div>
     </details>`;}).join('');
   adStatus();adTotals();
 }
@@ -189,7 +189,7 @@ function adVersions(){
       <span class="sb">${v===adVer?'':`<button type="button" class="ghost" data-ad="vedit" data-from="${esc(k)}">Edit</button>`}
         <button type="button" class="ghost" data-ad="vdel" data-from="${esc(k)}">Delete</button></span></li>`;}).join('')}</ul>`;
 }
-function adFoodLine(r){return `${r0(+r.k||0)} kcal · P ${r1(+r.p||0)} · C ${r1(+r.c||0)} · F ${r1(+r.f||0)} per 100${r.unit}`;}
+function adFoodLine(r){return `${r0(+r.k||0)} kcal · P ${r1(+r.p||0)} · C ${r1(+r.c||0)} · F ${r1(+r.f||0)} per 100${esc(r.unit)}`;}
 function adTotals(){
   if(!adType||!AD.plan[adType]){const el=$('#ad-tot');if(el)el.innerHTML='';return;}
   const meals=AD.plan[adType];const tg=AD.targets[adType];
@@ -200,6 +200,7 @@ function adTotals(){
 }
 function adStatus(){
   const d=adDirty(), fe=$('#ad-from');
+  fe.min='2000-01-01';fe.max=lastDate();
   if(document.activeElement!==fe)fe.value=adFrom;
   const later=(DEFS.myVersions||[]).filter(v=>v.from&&v.from>(adFrom||'')&&v!==adVer).map(v=>fmtShort(v.from));
   $('#ad-fromhint').textContent=(adFrom?`Your days from ${fmtShort(adFrom)} start from this plan; earlier days keep the plan they had.`:'Every day starts from this plan, back to the start.')
@@ -356,7 +357,8 @@ function adDownload(name,text,type){
 
 /* ---------- plan files: CSV (one row per food) or JSON ---------- */
 const CSV_COLS=['day_type','meal','meal_name','box','food','grams','locked','note','food_name'];
-function csvCell(v){v=String(v==null?'':v);return /[",\n\r]/.test(v)?`"${v.replace(/"/g,'""')}"`:v;}
+/* a cell starting with = + - @ (or tab / CR) would run as a formula in Excel or Sheets: keep it text */
+function csvCell(v){v=String(v==null?'':v);if(/^[=+\-@\t\r]/.test(v))v="'"+v;return /[",\n\r]/.test(v)?`"${v.replace(/"/g,'""')}"`:v;}
 function planCsv(plan){
   const rows=[CSV_COLS.join(',')];
   AD.templates.forEach(({id,name})=>(plan[id]||[]).forEach(m=>{let first=true;
@@ -400,7 +402,7 @@ function csvToPlan(text){
   const boxOf=v=>({p:'p',protein:'p',c:'c',carb:'c',carbs:'c',x:'x',f:'x',fat:'x',fats:'x',additional_fats:'x'})[v.trim().toLowerCase().replace(/[\s-]+/g,'_')];
   const plan={};
   rows.slice(1).forEach((r,ri)=>{
-    const line=ri+2, get=n=>col(n)<0?'':String(r[col(n)]||'').trim();
+    const line=ri+2, get=n=>col(n)<0?'':String(r[col(n)]||'').trim().replace(/^'(?=[=+\-@\t\r])/,'');   /* the ' csvCell adds */
     const t=csvTemplate(get('day_type'),made);
     if(!t){errs.push(`Line ${line}: day type "${get('day_type')}" – give the name of a day template (up to ${AD_MAX_TPL}).`);return;}
     const mid=get('meal');if(!mid){errs.push(`Line ${line}: meal number is missing.`);return;}
@@ -421,9 +423,23 @@ function csvToPlan(text){
   if(!Object.keys(plan).length&&!errs.length)errs.push('No plan rows found under the headings.');
   return {plan,errs,made};
 }
+/* a plan file is shown before the server checks it: keep only what defaults.clean would (ids, numbers, known words) */
+const AD_TPL_ID=/^[A-Za-z][A-Za-z0-9_]{0,15}$/,AD_FOOD_ID=/^[a-z][a-z0-9_]{0,31}$/;
+const adOwnId=(o,id)=>!(id in Object.prototype)&&Object.prototype.hasOwnProperty.call(o,id);
+const adNum=v=>{const n=+v;return Number.isFinite(n)?n:0;},adOpt=v=>v===''||v==null||!Number.isFinite(+v)?null:+v;
+function adCleanFood(r){
+  const o={n:String(r.n==null?'':r.n).slice(0,80)};
+  ['k','p','c','f','d','step'].forEach(k=>{if(r[k]!==undefined)o[k]=adNum(r[k]);});
+  ['min','max','order'].forEach(k=>{if(r[k]!==undefined)o[k]=adOpt(r[k]);});
+  if(r.unit!==undefined)o.unit=r.unit==='ml'?'ml':'g';
+  if(r.group!==undefined)o.group=['p','c','x'].includes(r.group)?r.group:'';
+  if(r.free!==undefined)o.free=FREE_KINDS.includes(r.free)?r.free:'';
+  return o;
+}
+const adCleanItem=i=>({f:String(i.f),g:adNum(i.g),lock:!!i.lock});
 /* add templates a file (or the AI) brings; a known id keeps its place and takes the file's name */
 function adTakeTemplates(list){
-  for(const t of list||[]){if(!t||!t.id)continue;const id=String(t.id),name=String(t.name||AD_LEGACY[id]||id).slice(0,40);
+  for(const t of Array.isArray(list)?list:[]){if(!t||typeof t.id!=='string'||!AD_TPL_ID.test(t.id))continue;const id=t.id,name=String(t.name||AD_LEGACY[id]||id).slice(0,40);
     const ex=adTpl(id);if(ex){ex.name=name;continue;}
     if(AD.templates.length>=AD_MAX_TPL)continue;
     AD.templates.push({id,name});AD.plan[id]=AD.plan[id]||[];AD.targets[id]=AD.targets[id]||(adType&&AD.targets[adType]?{...AD.targets[adType]}:ZT());
@@ -435,20 +451,23 @@ function adApplyJson(j){
   const full=j&&(j.plan||j.foods||j.schedule||j.targets||j.templates);
   const plan=full?j.plan:j;
   if(full&&j.foods&&typeof j.foods==='object'){for(const [id,r] of Object.entries(j.foods)){if(r&&typeof r==='object'){
-    if(id==='pudding'){AD.pud={...(AD.pud||{n:'Rice pudding (batch)',k:0,p:0,c:0,f:0,d:0,step:5,unit:'g',min:null,max:null,order:null,free:''}),group:r.group||'c'};continue;}
-    AD.foods[id]={...(AD.foods[id]||{group:'',unit:'g',min:null,max:null,order:null,d:0,step:5,free:''}),...r};}}}
+    if(id==='pudding'){AD.pud={...(AD.pud||{n:'Rice pudding (batch)',k:0,p:0,c:0,f:0,d:0,step:5,unit:'g',min:null,max:null,order:null,free:''}),group:['p','c','x'].includes(r.group)?r.group:'c'};continue;}
+    if(!AD_FOOD_ID.test(id)||id in Object.prototype)continue;
+    AD.foods[id]={...(AD.foods[id]||{n:id,k:0,p:0,c:0,f:0,group:'',unit:'g',min:null,max:null,order:null,d:0,step:5,free:''}),...adCleanFood(r)};}}}
   /* the day templates: as listed, or the old T / R / S a file uses */
   let tl=full&&Array.isArray(j.templates)?j.templates:null;
   if(!tl){const used=new Set([...Object.keys(plan&&typeof plan==='object'?plan:{}),...Object.keys((full&&j.targets)||{}),...((full&&Array.isArray(j.schedule))?j.schedule:[])]);
     tl=Object.keys(AD_LEGACY).filter(t=>used.has(t)).map(id=>({id,name:AD_LEGACY[id]}));}
   adTakeTemplates(tl);
-  if(full&&Array.isArray(j.schedule)&&j.schedule.length===7&&j.schedule.every(t=>adTpl(t)))AD.schedule=[...j.schedule];
+  if(full&&Array.isArray(j.schedule)&&j.schedule.length===7&&j.schedule.every(t=>typeof t==='string'&&adTpl(t)))AD.schedule=[...j.schedule];
   if(full&&j.free&&typeof j.free==='object')FREE_KINDS.forEach(x=>{if(j.free[x]!=null)AD.free[x]=!!j.free[x];});
-  if(full&&j.targets&&typeof j.targets==='object')AD.templates.forEach(({id})=>{if(j.targets[id])AD.targets[id]={...AD.targets[id],...j.targets[id]};});
+  if(full&&j.targets&&typeof j.targets==='object')AD.templates.forEach(({id})=>{const v=adOwnId(j.targets,id)&&j.targets[id];
+    if(v&&typeof v==='object')MAC.forEach(m=>{if(v[m]!==undefined)AD.targets[id][m]=adNum(v[m]);});});
   const got=[];
-  if(plan&&typeof plan==='object'){AD.templates.forEach(({id})=>{if(!Array.isArray(plan[id]))return;
-      AD.plan[id]=plan[id].map(m=>({id:String(m.id),name:String(m.name||''),...(m.note?{note:String(m.note)}:{}),
-        p:[...(m.p||[])],c:[...(m.c||[])],x:[...(m.x||[])]}));got.push(id);});
+  if(plan&&typeof plan==='object'){AD.templates.forEach(({id})=>{if(!adOwnId(plan,id)||!Array.isArray(plan[id]))return;
+      const items=v=>Array.isArray(v)?v.filter(i=>i&&typeof i==='object'&&i.f!=null).map(adCleanItem):[];
+      AD.plan[id]=plan[id].filter(m=>m&&typeof m==='object').map(m=>({id:String(m.id).slice(0,8),name:String(m.name||'').slice(0,100),...(m.note?{note:String(m.note).slice(0,200)}:{}),
+        p:items(m.p),c:items(m.c),x:items(m.x)}));got.push(id);});
     if(got.length&&!got.includes(adType))adType=got[0];}
   return got;
 }

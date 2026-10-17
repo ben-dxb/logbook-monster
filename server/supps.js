@@ -6,6 +6,7 @@
    checked in the browser, then added to the library – and logged for a day – with /import. */
 const express = require('express');
 const db = require('./db');
+const { isDate, writeError } = require('./dates');
 const defaults = require('./defaults');
 const ai = require('./ai');
 const jobs = require('./jobs');
@@ -41,8 +42,6 @@ const trendsOf = user => q.trends.all(user.id).map(r => r.name);
 
 const MAX_SUPPS = 300, MAX_LOG = 50000, MAX_TRENDS = 30;
 const UNITS = ['g', 'mg', 'mcg', 'IU', 'ml', 'drops', 'capsules', 'tablets', 'softgels', 'scoops', 'servings'];
-const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
-const isDate = s => typeof s === 'string' && DATE_RE.test(s) && !isNaN(Date.parse(s + 'T00:00:00Z'));
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 const fail = (msg, status = 400) => Object.assign(new Error(msg), { status });
 const idOf = v => (/^\d{1,12}$/.test(String(v)) ? +v : 0);
@@ -78,7 +77,8 @@ const visible = (row, user) => row && (row.user_id === user.id || row.public);
    description. keep is the entry being edited: its own link stays even if that supplement has since gone private. */
 function cleanLog(b, user, keep) {
   if (!isObj(b)) throw fail('Entry must be an object');
-  if (!isDate(b.date)) throw fail('Pick a day');
+  const bad = writeError(b.date, 'Pick a day');
+  if (bad) throw fail(bad);
   let sid = null, name = line(b.name, 200, 'Description');
   if (b.supplement != null && b.supplement !== '') {
     const id = idOf(b.supplement);
@@ -177,7 +177,7 @@ router.post('/import', (req, res) => {
     if (!list || !list.length) throw fail('Nothing to import');
     if (list.length > MAX_ITEMS) throw fail(`Import ${MAX_ITEMS} supplements at most at a time`);
     const day = req.body.log == null || req.body.log === '' ? null : req.body.log;
-    if (day !== null && !isDate(day)) throw fail('Pick a day to log them on');
+    if (day !== null && writeError(day)) throw fail(writeError(day, 'Pick a day to log them on'));
     const items = list.map((b, i) => {
       try { return clean({ ...(isObj(b) ? b : {}), public: false }); }
       catch (e) { throw fail(`Item ${i + 1}${isObj(b) && b.name ? ` (${String(b.name).slice(0, 40)})` : ''}: ${e.message}`); }

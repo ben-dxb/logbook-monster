@@ -55,7 +55,7 @@ or Google.
   recent days (calories against target, macros, weight) and the Timeline – trends and each day's
   food, weight, photos, supplements and gym sets – read only. Pick how long it stays live (an hour
   to a year, or until a date); it stops at once when it runs out or you **Switch off** it.
-- **Super admin** (`ADMIN_EMAILS` only; if that's empty, the first account created) – settings for
+- **Super admin** (`ADMIN_EMAILS` only; on a local setup with it empty, the first account created) – settings for
   the whole app, in tabs: **AI** (the OpenRouter API key – kept on the server, never shown again; or
   set `OPENROUTER_API_KEY` in `.env` – and a model for each kind of AI task), **People** and **Email**.
   There are no app-wide meal plan defaults: when this version first starts, every account that had
@@ -91,11 +91,13 @@ All secrets live only in `.env` on the server – nothing secret is ever sent to
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Turn on "Continue with Google". Leave empty to hide it. |
 | `ALLOWED_EMAILS` | Comma-separated. If set, **only** these emails can sign in, and they can create their own account the first time. |
 | `ALLOW_REGISTRATION` | `true` lets anyone sign up. Default `false`. |
-| `ADMIN_EMAILS` | Comma-separated. Who can open the Super admin page. Empty = the first account created. |
+| `ADMIN_EMAILS` | Comma-separated. Who can open the Super admin page. **Required in production** (the server won't start without it); empty on a local setup = the first account created. |
 | `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | Optional. AI import of plan PDFs. A key saved on the Super admin page wins over this one. |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` | Optional. The email account invites and notifications are sent from. Easier to fill in on the Super admin page (Email); settings saved there win. |
-| `DB_PATH` | SQLite file. Default `./data/logbook-monster.db` (an existing `./data/mealswap.db` from before the rename is used if present). |
-| `TRUST_PROXY` | Set to `1` when running behind nginx/Caddy (default in production). |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` | Optional. The email account invites and notifications are sent from. Easier to fill in on the Super admin page (Email); settings saved there win. The server must be on the internet (no private, loopback or link-local addresses), and on a port other than 465 it must offer STARTTLS. |
+| `SMTP_ALLOW_HOSTS` | Comma-separated mail servers allowed on internal addresses anyway, e.g. a relay on `127.0.0.1` (plain SMTP is allowed to a loopback one). |
+| `DB_PATH` | SQLite file. Default `./data/logbook-monster.db` (an existing `./data/mealswap.db` from before the rename is used if present). A relative path is taken from the folder the server starts in. |
+| `PHOTO_DIR` | Where progress photo files go. Default `photos/` next to the database. |
+| `TRUST_PROXY` | Set to `1` when running behind nginx/Caddy (docker-compose.yml does), so sign-in limits see the visitor's address. Off by default: without a proxy that overwrites `X-Forwarded-For`, anyone could fake their address. |
 
 ## Google sign-in
 
@@ -185,6 +187,14 @@ also download their own data from the account menu.
   are checked.
 - Strict Content-Security-Policy (no inline scripts), plus the usual Helmet headers.
 - All data is scoped to the signed-in user; input is validated on the server.
+- Storage caps per account, so one account (or a stolen session) can't fill the disk: anything stored under a
+  date (days, weights, checklist ticks, supplement log, gym sets, photos, plan changes) must be a real date from
+  2000-01-01 to a year after today (`server/dates.js`); saved days up to 50 MB of JSON in all, the plan history up
+  to 100 changes and 10 MB, photos up to 3000 and 5 GB including thumbnails (a full one answers 413); food and
+  supplement libraries 500 and 300 entries. Saves (any POST/PUT/DELETE under `/api`) are limited to 1000 per
+  10 minutes per account – the tracker autosaves a changed day once you pause, far below that – photo uploads to
+  6000 an hour, and the data export to 10 an hour; the export is written a section at a time, so a large account
+  doesn't hold up everyone else. The disk itself still needs an alert and log rotation on the server.
 - Invite links carry a random token (only its SHA-256 is stored), run out after 7 days and are
   void once used or replaced. The SMTP password is kept on the server and never sent back.
 - Coach links carry a random 256-bit secret (only its SHA-256 is stored, so the link is shown once),

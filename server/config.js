@@ -21,13 +21,15 @@ const config = {
   port,
   host: process.env.HOST || (isProd ? '0.0.0.0' : '127.0.0.1'),
   baseUrl,
-  dbPath: process.env.DB_PATH || defaultDbPath(),
+  /* absolute, so a relative DB_PATH / PHOTO_DIR doesn't depend on the working directory (res.sendFile needs absolute paths) */
+  dbPath: require('path').resolve(process.env.DB_PATH || defaultDbPath()),
   /* progress photos are files, kept next to the database unless PHOTO_DIR says otherwise */
   photoDir: process.env.PHOTO_DIR || '',
   sessionSecret: process.env.SESSION_SECRET || '',
   sessionDays: +process.env.SESSION_DAYS || 30,
   cookieSecure: bool(process.env.COOKIE_SECURE, baseUrl.startsWith('https://')),
-  trustProxy: process.env.TRUST_PROXY || (isProd ? '1' : ''),
+  /* off unless set: only behind a proxy that overwrites X-Forwarded-For (docker-compose.yml sets 1 for Caddy/nginx) */
+  trustProxy: process.env.TRUST_PROXY || '',
   allowRegistration: bool(process.env.ALLOW_REGISTRATION, false),
   allowedEmails: list(process.env.ALLOWED_EMAILS),
   /* Sign-in and invite attempts allowed per IP every 15 minutes. Only the tests raise it. */
@@ -35,12 +37,24 @@ const config = {
   /* Wrong passwords allowed per account (email) every 15 minutes, from any address. */
   accountFailLimit: Math.max(1, +process.env.ACCOUNT_FAIL_LIMIT || 10),
   adminEmails: list(process.env.ADMIN_EMAILS),
+  /* Saves (any POST/PUT/DELETE under /api) per account every 10 minutes, and data exports per account an hour. */
+  writeRateLimit: Math.max(1, +process.env.WRITE_RATE_LIMIT || 1000),
+  exportRateLimit: Math.max(1, +process.env.EXPORT_RATE_LIMIT || 10),
+  /* What one account can store, in bytes: saved days' JSON, its plan history, and photo files (thumbnails included).
+     Only the tests lower them. */
+  quota: {
+    days: Math.max(1, +process.env.QUOTA_DAYS_BYTES || 50 * 1024 * 1024),
+    plan: Math.max(1, +process.env.QUOTA_PLAN_BYTES || 10 * 1024 * 1024),
+    photos: Math.max(1, +process.env.QUOTA_PHOTO_BYTES || 5 * 1024 * 1024 * 1024),
+  },
+  /* mail servers allowed on internal addresses (a local relay, the tests); any other must be on the internet */
+  smtpAllowHosts: list(process.env.SMTP_ALLOW_HOSTS),
   google: {
     clientId: process.env.GOOGLE_CLIENT_ID || '',
     clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
   },
 };
-if (!config.photoDir) config.photoDir = require('path').join(require('path').dirname(config.dbPath), 'photos');
+config.photoDir = require('path').resolve(config.photoDir || require('path').join(require('path').dirname(config.dbPath), 'photos'));
 config.google.enabled = !!(config.google.clientId && config.google.clientSecret);
 
 if (!config.sessionSecret || config.sessionSecret.length < 32) {
@@ -56,6 +70,12 @@ if (!config.sessionSecret || config.sessionSecret.length < 32) {
     config.sessionSecret = require('crypto').randomBytes(32).toString('hex');
     try { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, config.sessionSecret, { mode: 0o600 }); } catch {}
   }
+}
+
+/* Without ADMIN_EMAILS the first account created becomes super admin – fine on a laptop, not on a server. */
+if (isProd && !config.adminEmails.length) {
+  console.error('ADMIN_EMAILS must be set in production (comma-separated addresses of the super admins), e.g. ADMIN_EMAILS=you@example.com');
+  process.exit(1);
 }
 
 /* Who may hold an account. With ALLOWED_EMAILS set, only those addresses can sign in at all. */
