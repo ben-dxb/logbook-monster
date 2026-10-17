@@ -46,7 +46,8 @@ class SqliteStore extends session.Store {
   set(sid, sess, cb) {
     try {
       const k = key(sid), e = this.expiry(sess);
-      this.q.set.run(k, JSON.stringify(sess), e, (sess && sess.userId) || null);
+      /* a half sign-in (password right, second step to come) is the account's too: a password change ends it */
+      this.q.set.run(k, JSON.stringify(sess), e, (sess && (sess.userId || (sess.half && sess.half.uid))) || null);
       this.stored.set(k, e);
       cb && cb(null);
     } catch (e) { cb && cb(e); }
