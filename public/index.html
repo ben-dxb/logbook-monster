@@ -341,6 +341,15 @@
       <h2 id="ad-oh">Options</h2>
       <p>Switch parts of the app on or off for everyone.</p>
       <label class="tog adoptfiles"><input type="checkbox" id="ad-planfiles"> Plan files <span class="muted">– the CSV / JSON plan upload and download buttons on Account admin</span></label>
+      <label class="tog adoptfiles"><input type="checkbox" id="ad-aiprivate"> Private AI only <span class="muted">– OpenRouter sends AI requests only to providers that don’t store or train on them (fewer models may be available)</span></label>
+      <h3>AI calls a day</h3>
+      <form id="ad-capform" class="adcaps">
+        <label class="f"><span class="lbl">Per account</span><input id="ad-capuser" type="number" min="0" max="1000000" step="1" inputmode="numeric" required></label>
+        <label class="f"><span class="lbl">Whole app</span><input id="ad-capall" type="number" min="0" max="1000000" step="1" inputmode="numeric" required></label>
+        <button type="submit" class="btn">Save limits</button>
+        <p class="muted adcapnote">0 = no limit. Counted per UTC day; your own calls count only towards the whole app’s limit.</p>
+        <div id="ad-capmsg" role="status"></div>
+      </form>
     </section>
     <section class="panel adsuper" aria-labelledby="ad-eh" data-adtab="email">
       <h2 id="ad-eh">Email</h2>

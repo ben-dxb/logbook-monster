@@ -5,7 +5,6 @@
    Each food is a whole meal or a single ingredient. AI can fill in values left blank; those values are
    flagged (food.ai) with the source the AI gave, so anyone can see which numbers are estimates. */
 const express = require('express');
-const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const defaults = require('./defaults');
 const ai = require('./ai');
@@ -157,11 +156,7 @@ async function fill(b) {
 }
 
 /* The OpenRouter key is the admin's, so each account gets a limited number of estimates an hour. */
-const fillLimit = rateLimit({
-  windowMs: 60 * 60 * 1000, limit: 40, standardHeaders: 'draft-7', legacyHeaders: false,
-  keyGenerator: req => 'u' + req.user.id,
-  message: { error: 'That’s a lot of AI estimates – wait a while and try again.' },
-});
+const fillLimit = ai.limiter(40, 'That’s a lot of AI estimates – wait a while and try again.');
 
 const router = express.Router();
 const send = (res, e) => { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); };

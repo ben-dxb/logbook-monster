@@ -12,10 +12,12 @@ const http = require('node:http');
 const [PORT, AI_PORT, SMTP_PORT] = require('./_ports').freePorts(3);
 /* Stands in for OpenRouter: records the request and replies with a canned plan. */
 const aiSeen = [];
+/* a file starting "%PDF-1.4 SLOW" gets its reply after half a second */
+const SLOW = Buffer.from('%PDF-1.4 SLOW').toString('base64').slice(0, 16);
 const fakeAi = http.createServer((req, res) => {
   let body = '';
   req.on('data', c => { body += c; });
-  req.on('end', () => {
+  req.on('end', () => setTimeout(() => {
     aiSeen.push({ url: req.url, auth: req.headers.authorization, body: JSON.parse(body) });
     if (/tag gym exercises with the body parts/.test(aiSeen.at(-1).body.messages[0].content)) {
       /* "<id>: <name>" lines; names with "row" train back + biceps, "mystery" gets nothing, plus an id that wasn't asked about */
@@ -45,7 +47,7 @@ const fakeAi = http.createServer((req, res) => {
       targets: { T: { k: 2900, p: 240, c: 350, f: 65 } }, schedule: ['T', 'R'], notes: ['Estimated the banana'] };
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({ model: 'test/model', choices: [{ message: { content: '```json\n' + JSON.stringify(plan) + '\n```' } }] }));
-  });
+  }, body.includes(SLOW) ? 500 : 0));
 });
 /* Stands in for the SMTP server (e.g. Gmail): accepts AUTH PLAIN and keeps each message. */
 const net = require('node:net');
@@ -214,15 +216,15 @@ test('the super admin can switch the CSV / JSON plan files off for everyone', as
   await admin.req('GET', '/auth/config');
   assert.strictEqual((await admin.req('POST', '/auth/login', { email: 'me@example.com', password: 'longenough1' })).status, 200);
   assert.strictEqual((await admin.req('GET', '/api/me')).body.planFiles, true);
-  for (const bad of [{ planFiles: 'no' }, { unknown: true }, []])
+  for (const bad of [{ planFiles: 'no' }, { unknown: true }, [], { aiDailyUser: -1 }, { aiDailyAll: 1.5 }, { aiDailyUser: '5' }, { aiPrivate: 1 }])
     assert.strictEqual((await admin.req('PUT', '/api/admin/options', bad)).status, 400, JSON.stringify(bad));
   const friend = client();
   await friend.req('GET', '/auth/config');
   assert.strictEqual((await friend.req('POST', '/auth/login', { email: 'friend@example.com', password: 'longenough2' })).status, 200);
   assert.strictEqual((await friend.req('PUT', '/api/admin/options', { planFiles: false })).status, 403);
-  assert.deepStrictEqual((await admin.req('PUT', '/api/admin/options', { planFiles: false })).body, { planFiles: false });
+  assert.deepStrictEqual((await admin.req('PUT', '/api/admin/options', { planFiles: false })).body, { planFiles: false, aiPrivate: true, aiDailyUser: 100, aiDailyAll: 1000 });
   assert.strictEqual((await friend.req('GET', '/api/me')).body.planFiles, false);
-  assert.deepStrictEqual((await admin.req('PUT', '/api/admin/options', { planFiles: true })).body, { planFiles: true });
+  assert.strictEqual((await admin.req('PUT', '/api/admin/options', { planFiles: true })).body.planFiles, true);
   assert.strictEqual((await friend.req('GET', '/api/me')).body.planFiles, true);
 });
 
@@ -374,7 +376,8 @@ test('AI: the key and models are the super admin’s, a plan is read against you
   assert.deepStrictEqual(ms.body.tasks.filter(t => t.model).map(t => t.id), ['food']);   /* only the one changed */
   await pdf(admin);
   assert.strictEqual(aiSeen.at(-1).body.model, 'test/model');
-  assert.ok(!('max_tokens' in aiSeen.at(-1).body), 'imports send no output cap');
+  assert.strictEqual(aiSeen.at(-1).body.max_tokens, 12000, 'a plan read has its task’s output cap');
+  assert.deepStrictEqual(aiSeen.at(-1).body.provider, { data_collection: 'deny' }, 'only providers that don’t keep or train on the data');
   await admin.req('PUT', '/api/admin/ai', { models: { food: '' } });
 
   /* a reply the app can't use says why, instead of "Something went wrong" */
@@ -436,6 +439,91 @@ test('AI: the key and models are the super admin’s, a plan is read against you
 
   assert.strictEqual((await admin.req('PUT', '/api/admin/ai', { key: '' })).body.configured, false);
   await admin.req('DELETE', '/api/my/defaults');
+});
+
+test('AI spend: file bytes checked, one read at a time, daily caps, refused requests cost nothing', async () => {
+  const sign = async (email, password) => {
+    const c = client();
+    await c.req('GET', '/auth/config');
+    await c.req('POST', '/auth/login', { email, password });
+    await c.req('GET', '/api/me');
+    return c;
+  };
+  const admin = await sign('me@example.com', 'longenough1'), friend = await sign('friend@example.com', 'longenough2');
+  const read = async (c, body = '%PDF-1.4 fake', { url = '/api/my/ai-import', type = 'application/pdf', bg = false } = {}) => {
+    const r = await fetch(BASE + url + (bg ? '?bg=1' : ''), { method: 'POST', body,
+      headers: { 'content-type': type, 'x-csrf-token': (await c.req('GET', '/api/me')).body.csrf, cookie: c.cookie() } });
+    return { status: r.status, body: await r.json() };
+  };
+  const waitJobs = async c => {
+    for (let i = 0; i < 100 && (await c.req('GET', '/api/jobs')).body.jobs.some(j => j.status === 'running'); i++) await new Promise(ok => setTimeout(ok, 50));
+    for (const j of (await c.req('GET', '/api/jobs')).body.jobs) await c.req('POST', `/api/jobs/${j.id}/seen`, {});
+  };
+  assert.strictEqual((await admin.req('PUT', '/api/admin/ai', { key: 'sk-or-v1-secret-1234abcd', model: 'test/model' })).status, 200);
+  const n = aiSeen.length;
+
+  /* the bytes must match the declared type; refused files never reach the AI and don't use up the hourly limit (12) */
+  for (const [body, type] of [['just text', 'application/pdf'], ['%PDF-1.4 but called a PNG', 'image/png'], [Buffer.from([0x89, 0x50, 0x4e, 0x47]), 'image/jpeg'], ['RIFF0000WAVE', 'image/webp']])
+    assert.strictEqual((await read(friend, body, { type })).status, 400, type);
+  for (let i = 0; i < 14; i++) assert.strictEqual((await read(friend, 'not a pdf', { bg: i % 2 === 1 })).status, 400);
+  for (let i = 0; i < 14; i++) assert.strictEqual((await read(friend, 'not a pdf', { url: '/api/supps/ai-import' })).status, 400);
+  assert.strictEqual(aiSeen.length, n);
+  let r = await read(friend);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  r = await read(friend, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2]), { url: '/api/gym/ai-import', type: 'image/jpeg' });
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(aiSeen.length, n + 2);
+
+  /* one file read at a time per account, in the background or not, whatever the kind */
+  const slow = read(friend, '%PDF-1.4 SLOW');
+  await new Promise(ok => setTimeout(ok, 150));
+  r = await read(friend, '%PDF-1.4 fake', { bg: true });
+  assert.strictEqual(r.status, 409, JSON.stringify(r.body));
+  assert.match(r.body.error, /still reading your meal plan/);
+  assert.strictEqual((await read(friend, Buffer.from([0xff, 0xd8, 0xff, 0xe0]), { url: '/api/gym/ai-import', type: 'image/jpeg' })).status, 409);
+  assert.strictEqual((await read(admin)).status, 200, 'other accounts aren’t held up');
+  assert.strictEqual((await slow).status, 200);
+  r = await read(friend, '%PDF-1.4 SLOW', { url: '/api/supps/ai-import', bg: true });
+  assert.strictEqual(r.status, 202, JSON.stringify(r.body));
+  r = await read(friend);
+  assert.deepStrictEqual([r.status, r.body.error], [409, 'The AI is still reading your supplement regime – wait for that one first']);
+  assert.strictEqual((await read(friend, '%PDF-1.4 fake', { bg: true })).status, 409);
+  await waitJobs(friend);
+  assert.strictEqual((await read(friend)).status, 200);
+
+  /* a daily cap per account (the super admin's own calls count only towards the app's), set on Options */
+  assert.strictEqual((await friend.req('PUT', '/api/admin/options', { aiDailyUser: 1 })).status, 403);
+  assert.strictEqual((await admin.req('PUT', '/api/admin/options', { aiDailyUser: 1 })).body.aiDailyUser, 1);
+  const seen = aiSeen.length;
+  for (let i = 0; i < 14; i++) {
+    r = await read(friend, '%PDF-1.4 fake', { bg: i % 2 === 1 });
+    assert.strictEqual(r.status, 429, JSON.stringify(r.body));
+  }
+  assert.match(r.body.error, /today’s AI allowance/);
+  assert.doesNotMatch(r.body.error, /admin/i);
+  assert.strictEqual((await friend.req('POST', '/api/foods/ai-fill', { name: 'Chicken breast', unit: 'g', kind: 'ingredient', k: '', p: 30, c: '', f: '' })).status, 429, 'text tasks too');
+  assert.strictEqual(aiSeen.length, seen);
+  assert.strictEqual((await read(admin)).status, 200);
+  /* an app-wide cap stops everyone */
+  await admin.req('PUT', '/api/admin/options', { aiDailyUser: 0, aiDailyAll: 1 });
+  r = await read(admin);
+  assert.strictEqual(r.status, 429);
+  assert.match(r.body.error, /The app has used all of today’s AI/);
+  assert.strictEqual((await read(friend, '%PDF-1.4 fake', { bg: true })).status, 429);
+  assert.deepStrictEqual((await friend.req('GET', '/api/jobs')).body.jobs, [], 'no job for a refused read');
+  /* back to no cap: the requests refused by the caps didn't use up the hourly limit either */
+  await admin.req('PUT', '/api/admin/options', { aiDailyAll: 0 });
+  r = await read(friend);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+
+  /* aiPrivate (on by default) asks OpenRouter to skip providers that keep or train on data */
+  assert.deepStrictEqual(aiSeen.at(-1).body.provider, { data_collection: 'deny' });
+  await admin.req('PUT', '/api/admin/options', { aiPrivate: false });
+  await read(friend);
+  assert.ok(!('provider' in aiSeen.at(-1).body));
+  assert.deepStrictEqual((await admin.req('PUT', '/api/admin/options', { aiPrivate: true, aiDailyUser: 100, aiDailyAll: 1000 })).body,
+    { planFiles: true, aiPrivate: true, aiDailyUser: 100, aiDailyAll: 1000 });
+  assert.strictEqual((await admin.req('PUT', '/api/admin/ai', { key: '' })).body.configured, false);
 });
 
 test('email settings: admin-only, password never shown, test email goes out', async () => {
@@ -681,4 +769,9 @@ test('Google sign-in is refused when not configured', async () => {
   const r = await fetch(BASE + '/auth/google', { redirect: 'manual' });
   assert.strictEqual(r.status, 302);
   assert.match(r.headers.get('location'), /error=google_off/);
+});
+
+test('every call to the AI asks for a capped reply', () => {
+  assert.ok(aiSeen.length > 10);
+  for (const b of aiSeen) assert.ok(Number.isInteger(b.body.max_tokens) && b.body.max_tokens > 0 && b.body.max_tokens <= 12000, JSON.stringify(b.body.max_tokens));
 });

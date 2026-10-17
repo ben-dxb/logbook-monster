@@ -196,6 +196,12 @@ CREATE TABLE IF NOT EXISTS ai_jobs (
   finished_at TEXT
 );
 CREATE INDEX IF NOT EXISTS ai_jobs_user ON ai_jobs(user_id, id);
+CREATE TABLE IF NOT EXISTS ai_usage (
+  user_id INTEGER NOT NULL,          -- no cascade: a removed account's calls still count towards the app's day
+  day     TEXT NOT NULL,             -- UTC date
+  calls   INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, day)
+);
 CREATE TABLE IF NOT EXISTS checklist_log (
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   date       TEXT NOT NULL,

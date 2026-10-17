@@ -44,7 +44,12 @@
   (`#admin`, in tabs: `#admin/ai`, `#admin/people`, `#admin/email`, `#admin/options`; no plan editor) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope,
   `data-adtab` per super admin tab. AI settings (OpenRouter key, default model and a model per task – `TASKS` in `server/ai.js`:
   plan, workout, supps, food, pose, exercise, summary; pass `{ task }` to `ai.ask`/`ai.askText`) are super admin only. App-wide switches (`OPTIONS` in `server/api.js`, stored in `app_config` 'options', sent in `/api/me`;
-  `planFiles` shows the CSV / JSON plan upload and download buttons on Account admin) are set on the super admin Options tab via `PUT /api/admin/options`.
+  `planFiles` shows the CSV / JSON plan upload and download buttons on Account admin; `aiPrivate` sends OpenRouter `provider: {data_collection: 'deny'}`;
+  `aiDailyUser` / `aiDailyAll` cap AI calls a day per account / app-wide, 0 = none) are set on the super admin Options tab via `PUT /api/admin/options`.
+  Every AI call goes through `call()` in `server/ai.js`: it sends the task's `max`/`wait` from `TASKS` unless the caller gives its own, counts the call
+  in `ai_usage` against the daily caps (whose call it is comes from `ai.scope`, an AsyncLocalStorage set per /api request – re-apply it after
+  `express.raw`), and AI routes take an hourly `ai.limiter(n, message)`, which doesn't count requests refused before any AI call. File reads
+  run one at a time per account (`jobs.respond`, 409 otherwise); `ai.check` also checks the file's magic bytes.
 - `public/dash.js` / `server/checklist.js` – the Dashboard (`#dash`, the landing page; `#dash/<date>` for one of the last 7 days): the daily checklist and a card per module
   (food today vs targets, weight, gym, supplement regime, latest photo). Each account's checklist items (`{id, label, show, auto}`, `/api/checklist`; none stored = `DEFAULTS`)
   are edited on Account admin › Daily checklist; `show` is `all`, `training` (day template `T` or a name with "train" – `dIsTraining`; every day while there's no plan) or `tpl:<id>`;

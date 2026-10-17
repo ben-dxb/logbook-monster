@@ -5,7 +5,6 @@
    remove a shared one. A supplement regime (a coach's PDF or a photo) can be read with AI into line items,
    checked in the browser, then added to the library – and logged for a day – with /import. */
 const express = require('express');
-const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const defaults = require('./defaults');
 const ai = require('./ai');
@@ -145,11 +144,7 @@ function tidyItems(raw, user) {
 }
 
 /* The OpenRouter key is the admin's, so each account gets a handful of reads an hour. */
-const aiLimit = rateLimit({
-  windowMs: 60 * 60 * 1000, limit: 12, standardHeaders: 'draft-7', legacyHeaders: false,
-  keyGenerator: req => 'u' + req.user.id,
-  message: { error: 'That’s a lot of AI reads – wait a while and try again.' },
-});
+const aiLimit = ai.limiter(12, 'That’s a lot of AI reads – wait a while and try again.');
 
 /* Other people's supplements show their name, never their email. */
 function view(r, user) {
@@ -165,7 +160,7 @@ router.get('/', (req, res) => res.json({ supplements: q.list.all(req.user.id).ma
   ai: ai.status().configured }));
 
 /* AI: read the file and hand back line items to check. Nothing is saved until /import. ?bg=1 runs it in the background (server/jobs.js). */
-router.post('/ai-import', aiLimit, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), (req, res) => {
+router.post('/ai-import', aiLimit, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), ai.scope, (req, res) => {
   const buf = Buffer.isBuffer(req.body) ? req.body : null, type = String(req.get('content-type') || '').split(';')[0].trim();
   return jobs.respond(req, res, 'supps', () => ai.check(buf, type), async () => {
     const names = q.mine.all(req.user.id).map(r => r.name);
