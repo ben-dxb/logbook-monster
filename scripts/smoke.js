@@ -1009,6 +1009,25 @@ async function versionedAssets(browser) {
   await ctx.close();
 }
 
+/* A page tapped while the deferred scripts are still loading (a slow phone): app.js has run, photos.js hasn't. route() waits for
+   start-up, so there's no page error and the photos page is drawn once everything has loaded. */
+async function earlyHash(browser) {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } }), pg = await ctx.newPage(), errs = [];
+  pg.on('pageerror', e => errs.push(e.message));
+  await pg.goto(BASE + '/login'); await signIn(pg); await pg.waitForSelector('#v-dash:not([hidden])');
+  const late = await ctx.newPage(); late.on('pageerror', e => errs.push(e.message));
+  let held = false;
+  await late.route(/\/photos\.js(\?|$)/, async r => { held = true; await new Promise(res => setTimeout(res, 1500)); await r.continue(); });
+  await late.goto(BASE + '/#dash', { waitUntil: 'commit' });
+  await late.waitForFunction(() => typeof route === 'function' && typeof renderPhotos === 'undefined', null, { timeout: 5000, polling: 20 });
+  expect(held, 'photos.js should have been held back');
+  await late.evaluate(() => { location.hash = '#photos'; });
+  await late.waitForSelector('#v-photos:not([hidden]) #p-form', { state: 'attached', timeout: 8000 });
+  expect(await late.evaluate(() => view === 'photos' && /^Progress photos/.test(document.title)), 'the photos page should be the one shown');
+  expect(!errs.length, 'page errors: ' + errs.join(' | '));
+  await ctx.close();
+}
+
 async function recheck(browser) {
   const { DatabaseSync } = require('node:sqlite');
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } }), pg = await ctx.newPage(), errs = [];
@@ -2238,6 +2257,7 @@ async function formKit(browser) {
     }
     await versionedAssets(browser);
     await recheck(browser);
+    await earlyHash(browser);
     await phase1c(browser);
     await phase2c(browser);
     await phase2cLibrary(browser);

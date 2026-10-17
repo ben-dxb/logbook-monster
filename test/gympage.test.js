@@ -130,6 +130,7 @@ test('npm run backup copies the database and photos of a running app; restore-ch
   const jpeg = s => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from('smoke-jpeg-' + s), Buffer.from([0xff, 0xd9])]);
   const p = (await ann('POST', '/api/photos?date=2026-10-10&pose=front', null, jpeg('backup'))).body;
   assert.strictEqual((await ann('PUT', `/api/photos/${p.id}/thumb`, null, jpeg('backup-thumb'))).status, 200);
+  assert.strictEqual((await ann('PUT', `/api/photos/${p.id}/mid`, null, jpeg('backup-mid'))).status, 200);
   const out = path.join(dir, 'backups');
   const run = (script, arg) => execFileSync(process.execPath, ['--disable-warning=ExperimentalWarning', `scripts/${script}.js`, arg], { cwd: root, env, encoding: 'utf8' });
   const said = run('backup', out);
@@ -137,7 +138,7 @@ test('npm run backup copies the database and photos of a running app; restore-ch
   assert.match(made, /^logbook-monster-\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d$/);
   const b = path.join(out, made);
   assert.deepStrictEqual(fs.readdirSync(b).sort(), ['.session-secret', 'photos', 't.db']);
-  assert.match(said, /photos\s+2 files/);
+  assert.match(said, /photos\s+3 files/);
   assert.match(said, /\.session-secret was copied/);
   if (process.platform !== 'win32') {
     const mode = f => fs.statSync(f).mode & 0o777;
@@ -149,7 +150,23 @@ test('npm run backup copies the database and photos of a running app; restore-ch
   copy.close();
   const checked = run('restore-check', out);                        /* the folder the backups are in: checks the newest */
   assert.match(checked, /check: ok/);
-  assert.match(checked, /photos\s+1 rows, 2 files .*: 0 missing, 0 with no row/);
+  assert.match(checked, /photos\s+1 rows, 3 files .*: 0 missing, 0 with no row/);   /* the middle size counts as the photo's */
+
+  /* a middle size gone by the time the photos are copied (replaced meanwhile): the copy drops it – the full file is served – rather
+     than list a file it hasn't got */
+  const live = new DatabaseSync(path.join(dir, 't.db'), { readOnly: true });
+  const liveMid = live.prepare('SELECT mid FROM photos WHERE id = ?').get(p.id).mid;
+  live.close();
+  fs.renameSync(path.join(dir, 'photos', liveMid), path.join(dir, 'mid.keep'));
+  await new Promise(r => setTimeout(r, 1100));                       /* a new folder name (to the second) */
+  run('backup', out);
+  const newest = path.join(out, fs.readdirSync(out).sort().at(-1));
+  const c2 = new DatabaseSync(path.join(newest, 't.db'), { readOnly: true });
+  assert.deepStrictEqual({ ...c2.prepare('SELECT mid, mid_size FROM photos WHERE id = ?').get(p.id) }, { mid: null, mid_size: 0 });
+  c2.close();
+  assert.match(run('restore-check', newest), /photos\s+1 rows, 2 files .*: 0 missing, 0 with no row/);
+  fs.renameSync(path.join(dir, 'mid.keep'), path.join(dir, 'photos', liveMid));
+  assert.strictEqual((await ann('GET', `/api/photos/${p.id}/mid`)).status, 200);
 
   /* a photo file gone from the copy (as when it is deleted while the backup runs): restore-check says so and fails */
   fs.unlinkSync(path.join(b, 'photos', fs.readdirSync(path.join(b, 'photos'))[0]));

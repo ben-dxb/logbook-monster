@@ -22,7 +22,7 @@ const base = { ...process.env, HOST: '127.0.0.1', SESSION_SECRET: 'x'.repeat(40)
   OPENROUTER_API_KEY: '', PRIVACY_CONTACT: '', OPERATOR_NAME: '', SHOW_ADMIN_CONTACT: '' };
 /* the main server: two super admins, a contact and an operator name */
 const env = { ...base, PORT: String(PORT), BASE_URL: `http://127.0.0.1:${PORT}`, DB_PATH: DB, PHOTO_DIR,
-  ADMIN_EMAILS: 'adm@example.com,adm2@example.com', PRIVACY_CONTACT: 'privacy@example.com', OPERATOR_NAME: 'Jo <Bloggs>' };
+  ADMIN_EMAILS: 'adm@example.com,adm2@example.com', PRIVACY_CONTACT: 'privacy@example.com', OPERATOR_NAME: 'Jo <Bloggs> $$ $`' };
 /* a second one with no contact set and a single super admin */
 const dir2 = path.join(dir, 'two');
 const env2 = { ...base, PORT: String(PORT2), BASE_URL: `http://127.0.0.1:${PORT2}`, DB_PATH: path.join(dir2, 't.db'), PHOTO_DIR: path.join(dir2, 'photos'),
@@ -161,7 +161,8 @@ test('the privacy page opens signed out, names the operator and the contact, or 
   assert.strictEqual(r.status, 200);
   assert.match(r.headers.get('cache-control'), /no-cache/);
   let html = await r.text();
-  assert.match(html, /run by Jo &#60;Bloggs&#62;\./, 'the name, escaped');
+  assert.ok(html.includes('run by Jo &#60;Bloggs&#62; $$ $`.'), 'the name, escaped, and its $ kept as typed (not a replacement pattern)');
+  assert.strictEqual(html.match(/<html/g).length, 1);
   assert.match(html, /<a href="mailto:privacy@example\.com">privacy@example\.com<\/a>/);
   assert.match(html, /180 days/);
   assert.doesNotMatch(html, /<script|style=/);
