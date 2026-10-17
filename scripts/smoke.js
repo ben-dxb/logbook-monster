@@ -267,6 +267,165 @@ async function phase1c(browser) {
   await ctx.close();
 }
 
+/* Phase 9, optimistic UI: with 300 ms added to each request, what is your own and cheap to undo shows within 100 ms, a failed
+   request puts it back and says so by the control (never an alert), and quick repeats never lose a change – two checklist
+   ticks whose replies land out of order (p9-02), two quick workout moves (p9-01), a weight whose save fails (p9-05). */
+async function phase9(browser) {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } }), pg = await ctx.newPage(), errs = [];
+  pg.on('pageerror', e => errs.push(e.message));
+  let confirmOk = false;   /* only Delete set's confirm is expected; any other dialog (an alert) fails the test */
+  pg.on('dialog', d => { if (confirmOk && d.type() === 'confirm') { confirmOk = false; return d.accept(); } errs.push('dialog: ' + d.message()); return d.dismiss(); });
+  const hash = async (h, sel) => { await pg.evaluate(h => { location.hash = h; }, h); if (sel) await pg.waitForSelector(sel, { timeout: 5000 }); };
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const quiet = p => p.catch(() => {});   /* a request still waiting when its route is taken off goes on by itself */
+  const slow = (glob, method, ms = 300) => pg.route(glob, async r => { if (!method || r.request().method() === method) await sleep(ms); return quiet(r.continue()); });
+  const broken = (glob, method) => pg.route(glob, r => quiet(!method || r.request().method() === method ? r.abort() : r.continue()));
+  /* click in the page; true when the change shows within ~100 ms (150 with the test's own overhead), while the request is still on its way */
+  const soon = async (sel, pred, arg) => { await pg.evaluate(sel => document.querySelector(sel).click(), sel);
+    return pg.waitForFunction(pred, arg, { timeout: 150, polling: 10 }).then(() => true, () => false); };
+  await pg.goto(BASE + '/login'); await signIn(pg); await pg.waitForSelector('#v-dash:not([hidden]) .dcheck .dlist', { timeout: 5000 });
+
+  /* checklist: ticks show at once and keep focus; two ticks whose replies land in reverse order both stay ticked (p9-02) */
+  const ids = await pg.evaluate(() => [...document.querySelectorAll('.dcheck input[data-dk]:not(:disabled)')].map(x => x.dataset.dk).slice(0, 2));
+  expect(ids.length === 2, 'the checklist needs two items to tick');
+  await pg.evaluate(async ids => { for (const item of ids) await api('PUT', '/api/checklist/days/' + todayStr(), { item, done: false }); }, ids);
+  await pg.reload(); await pg.waitForSelector('#v-dash:not([hidden]) .dcheck .dlist');
+  let n = 0;
+  await pg.route('**/api/checklist/days/*', async r => {
+    if (r.request().method() !== 'PUT') return r.continue();
+    const wait = n++ === 0 ? 700 : 300;   /* the first reply lands last */
+    try { const res = await r.fetch(); await sleep(wait); await r.fulfill({ response: res }); } catch {}
+  });
+  const box = id => `.dcheck input[data-dk="${id}"]`;
+  await pg.focus(box(ids[0]));
+  expect(await soon(box(ids[0]), s => document.querySelector(s).checked, box(ids[0])), 'a checklist tick should show at once');
+  expect(await pg.evaluate(id => document.activeElement && document.activeElement.dataset.dk === id, ids[0]), 'focus should stay on the ticked box (p9-06)');
+  await pg.click(box(ids[1]));
+  await pg.waitForTimeout(1600);
+  expect(await pg.isChecked(box(ids[0])) && await pg.isChecked(box(ids[1])), 'two quick ticks should both stay ticked (p9-02)');
+  const srv = await pg.evaluate(async () => (await api('GET', `/api/checklist/days?from=${todayStr()}&to=${todayStr()}`)).days[todayStr()] || []);
+  expect(ids.every(id => srv.includes(id)), 'both ticks should be saved: ' + srv);
+  await pg.unroute('**/api/checklist/days/*');
+  await broken('**/api/checklist/days/*', 'PUT');
+  await pg.click(box(ids[0]));
+  await pg.waitForFunction(id => /Couldn’t save/.test(document.querySelector('.dcheck').textContent) && document.querySelector(`.dcheck input[data-dk="${id}"]`).checked, ids[0], { timeout: 5000 });
+  expect(await pg.locator('.dcheck .optnote[role=status] button:has-text("Retry")').count() === 1, 'a failed tick should say so by the box with Retry');
+  await pg.unroute('**/api/checklist/days/*');
+  await pg.click('.dcheck .optnote button');
+  await pg.waitForFunction(id => !document.querySelector(`.dcheck input[data-dk="${id}"]`).checked && !Object.keys(dQ).length, ids[0], { timeout: 5000 });
+
+  /* weight: through the Daily Tracker's save queue – shown at once with Saving…, kept and retried when the save fails (p9-05) */
+  const wd = later(33);
+  await hash('#day/' + wd); await pg.waitForFunction(d => document.querySelector('#datepick').value === d && dayReady(), wd);
+  await broken('**/api/weights/*', 'PUT');
+  await pg.fill('#wt', '83.4'); await pg.press('#wt', 'Tab');
+  expect(await pg.evaluate(d => WEIGHTS[d] === 83.4 && /Saving|Not saved/.test(document.querySelector('#status').textContent), wd), 'a weight should show at once with its save status');
+  await pg.waitForFunction(() => /Not saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
+  expect(await pg.inputValue('#wt') === '83.4', 'a weight that failed to save should stay in the box (p9-05)');
+  await pg.unroute('**/api/weights/*'); await slow('**/api/weights/*');
+  await pg.click('#status [data-act=retry]');
+  await pg.waitForFunction(() => /Saved|Plan only/.test(document.querySelector('#status').textContent) && !pending.size && !inFlight, null, { timeout: 5000 });
+  expect(await pg.evaluate(async d => (await api('GET', `/api/weights?from=${d}&to=${d}`)).some(w => w.kg === 83.4), wd), 'the weight should be saved after Retry');
+  await pg.fill('#wt', ''); await pg.press('#wt', 'Tab');   /* emptied on purpose: deleted */
+  await pg.waitForFunction(() => !pending.size && !inFlight, null, { timeout: 5000 });
+  expect(await pg.evaluate(async d => !(await api('GET', `/api/weights?from=${d}&to=${d}`)).length, wd), 'an emptied weight box should delete the weight');
+  await pg.unroute('**/api/weights/*');
+
+  /* gym: two quick moves both stick (p9-01), and a failed one goes back */
+  await pg.evaluate(async () => { const mine = [];   /* put first, so the names moved are these */
+    for (const name of ['P9 push', 'P9 pull', 'P9 legs']) mine.push((await api('POST', '/api/gym/workouts', { name, description: '', items: [] })).id);
+    await api('PUT', '/api/gym/order', { ids: [...mine, ...(await api('GET', '/api/gym')).workouts.map(w => w.id).filter(id => !mine.includes(id))] }); });
+  await hash('#gym', '#g-body .glist'); await pg.reload(); await pg.waitForSelector('#v-gym:not([hidden]) #g-body .glist');
+  await pg.click('[data-g=reorder]'); await pg.waitForSelector('[data-g=wdown]');
+  const order = () => pg.evaluate(() => GY.workouts.map(w => w.id).join());
+  const names = () => pg.evaluate(() => [...document.querySelectorAll('#g-body .glist .grow b')].map(b => b.textContent).filter(t => t !== 'My exercises'));
+  const was = await names();
+  await slow('**/api/gym/order', 'PUT');
+  expect(await soon('[data-g=wdown][data-i="0"]', ([a, b]) => { const t = document.querySelector('#g-body .glist').textContent; return t.indexOf(b) < t.indexOf(a); }, was), 'a move should show at once');
+  await pg.click('[data-g=wdown][data-i="1"]');
+  await pg.waitForTimeout(1000);
+  const want = [was[1], was[2], was[0], ...was.slice(3)].join();
+  expect((await names()).join() === want, 'two quick moves should both show: ' + (await names()).join());
+  expect(await pg.evaluate(async () => (await api('GET', '/api/gym')).workouts.map(w => w.id).join()) === await order(), 'two quick moves should both be saved (p9-01)');
+  await pg.unroute('**/api/gym/order'); await broken('**/api/gym/order', 'PUT');
+  await pg.click('[data-g=wdown][data-i="0"]');
+  await pg.waitForFunction(w => [...document.querySelectorAll('#g-body .glist .grow b')].map(b => b.textContent).filter(t => t !== 'My exercises').join() === w
+    && /Couldn’t save the new order/.test(document.querySelector('#g-body').textContent), want, { timeout: 5000 });
+  await pg.unroute('**/api/gym/order');
+  await pg.click('[data-g=reorder]');
+
+  /* gym: a set shows at once and becomes the server's (🏆 counted again); a failed one goes, with Retry; Trend shows at once */
+  const ex = await pg.evaluate(async () => (await api('POST', '/api/gym/exercises', { name: 'P9 curl' })).id);
+  await hash('#gym/e/' + ex, '#g-quick');
+  await slow('**/api/gym/sets', 'POST');
+  await pg.fill('#g-reps', '8'); await pg.fill('#g-kg', '20');
+  expect(await soon('#g-quick .gok', () => document.querySelectorAll('.gset').length === 1 && !!document.querySelector('.gset[aria-busy=true]')), 'a logged set should show at once as saving');
+  await pg.fill('#g-kg', '22.5'); await pg.click('#g-quick .gok');   /* the next set goes straight away */
+  await pg.waitForFunction(() => document.querySelectorAll('a.gset').length === 2 && !document.querySelector('.gset[aria-busy]'), null, { timeout: 5000 });
+  await pg.unroute('**/api/gym/sets'); await broken('**/api/gym/sets', 'POST');
+  await pg.fill('#g-kg', '30'); await pg.click('#g-quick .gok');
+  await pg.waitForFunction(() => document.querySelectorAll('.gset').length === 2 && /Couldn’t log 8 × 30 kg/.test(document.querySelector('#g-body').textContent), null, { timeout: 5000 });
+  await pg.unroute('**/api/gym/sets');
+  await pg.click('#g-body .optnote button');
+  await pg.waitForFunction(() => document.querySelectorAll('a.gset').length === 3 && /🏆/.test(document.querySelector('.gday').textContent), null, { timeout: 5000 });
+  await slow('**/api/gym/exercises/*/trend', 'PUT');
+  expect(await soon('[data-g=trend]', () => document.querySelector('[data-g=trend]').checked && !document.querySelector('[data-g=trend]').disabled), 'Trend should tick at once');
+  await pg.click('[data-g=trend]'); await pg.click('[data-g=trend]');   /* off and on again while the first is on its way */
+  await pg.waitForTimeout(1200);
+  expect(await pg.evaluate(async id => (await api('GET', '/api/gym')).exercises.find(e => e.id === id).trend === 1, ex), 'the last Trend wanted should be saved');
+  await pg.unroute('**/api/gym/exercises/*/trend'); await broken('**/api/gym/exercises/*/trend', 'PUT');
+  await pg.click('[data-g=trend]');
+  await pg.waitForFunction(() => document.querySelector('[data-g=trend]').checked && /Couldn’t change Trend/.test(document.querySelector('#g-body').textContent), null, { timeout: 5000 });
+  await pg.unroute('**/api/gym/exercises/*/trend');
+  /* deleting a set: the button is busy while it goes, then the exercise's page shows without it */
+  await pg.click('.gday a.gset >> nth=0'); await pg.waitForSelector('#g-setform');
+  await slow('**/api/gym/sets/*', 'DELETE');
+  confirmOk = true; await pg.click('[data-g=sdel]');
+  expect(await pg.evaluate(() => { const b = document.querySelector('[data-g=sdel]'); return !b || b.disabled; }), 'Delete set should be busy while it goes');
+  await pg.waitForFunction(() => document.querySelectorAll('a.gset').length === 2, null, { timeout: 5000 });
+  await pg.unroute('**/api/gym/sets/*');
+
+  /* supplements: quick add shows a row at once, × hides it at once with Undo, a failed × puts it back */
+  await pg.evaluate(async () => { await api('POST', '/api/supps', { name: 'P9 zinc', amount: 15, unit: 'mg' }); });
+  const sd = later(34);
+  await hash('#supps/' + sd, '#s-log'); await pg.reload(); await pg.waitForSelector('#v-supps:not([hidden]) #s-log');
+  await pg.waitForSelector('[data-sa=quick]:has-text("P9 zinc")');
+  const qsel = await pg.evaluate(() => { const b = [...document.querySelectorAll('[data-sa=quick]')].find(x => /P9 zinc/.test(x.textContent)); return `[data-sa=quick][data-id="${b.dataset.id}"]`; });
+  await slow('**/api/supps/log', 'POST'); await slow('**/api/supps/log/*', 'DELETE');
+  expect(await soon(qsel, () => /P9 zinc/.test(document.querySelector('#s-log').textContent)), 'a quick add should show at once');
+  await pg.waitForSelector('#s-log [data-sa=del]');
+  expect(await soon('#s-log [data-sa=del]', () => !/P9 zinc/.test(document.querySelector('#s-log').textContent)), '× should hide the entry at once');
+  await pg.waitForSelector('.optnote button:has-text("Undo")');
+  await pg.click('.optnote button:has-text("Undo")');
+  await pg.waitForSelector('#s-log [data-sa=del]');
+  await pg.unroute('**/api/supps/log/*'); await broken('**/api/supps/log/*', 'DELETE');
+  await pg.click('#s-log [data-sa=del]');
+  await pg.waitForFunction(() => /P9 zinc/.test(document.querySelector('#s-log').textContent) && /Couldn’t remove it – it’s back/.test(document.querySelector('#s-body').textContent), null, { timeout: 5000 });
+  await pg.unroute('**/api/supps/log/*'); await pg.unroute('**/api/supps/log');
+  await broken('**/api/supps/log', 'POST');
+  await pg.click(qsel);
+  await pg.waitForFunction(() => document.querySelectorAll('#s-log .orow').length === 1 && /Couldn’t log P9 zinc/.test(document.querySelector('#s-body').textContent), null, { timeout: 5000 });
+  await pg.unroute('**/api/supps/log');
+  await slow('**/api/supps/trend', 'PUT');
+  expect(await soon('#s-log input[data-st]', () => document.querySelector('#s-log input[data-st]').checked), 'a supplement Trend should tick at once');
+  await pg.unroute('**/api/supps/trend'); await broken('**/api/supps/trend', 'PUT');
+  await pg.waitForTimeout(500); await pg.click('#s-log input[data-st]');
+  await pg.waitForFunction(() => document.querySelector('#s-log input[data-st]').checked && /Couldn’t change Trend/.test(document.querySelector('#s-body').textContent), null, { timeout: 5000 });
+  await pg.unroute('**/api/supps/trend');
+
+  /* Timeline: picking an exercise shows its line once read, unpicking hides it at once */
+  await hash('#history/timeline', '#t-metrics'); await pg.waitForSelector('#t-expick');
+  await pg.click('#t-expick > summary'); await pg.waitForSelector('#t-exlist label');
+  const pick = `#t-exlist input[data-tx="${ex}"]`;
+  await slow('**/api/gym/exercises/*/trend', 'PUT');
+  expect(await soon(pick, k => !document.querySelector(`#t-metrics [data-k="${k}"]`), 'ex:' + ex), 'unpicking should hide the exercise’s line at once');
+  expect(await pg.evaluate(() => document.querySelector('#t-expick').open), 'the picker should stay open');
+  await pg.click(pick); await pg.waitForSelector(`#t-metrics [data-k="ex:${ex}"]`, { timeout: 5000 });
+  await pg.unroute('**/api/gym/exercises/*/trend');
+  expect(errs.length === 0, 'page errors or dialogs: ' + errs.join(' | '));
+  await ctx.close();
+}
+
 /* Phase 2C tracker leftovers: a far "Takes effect from" date is refused (never read as "from the start"), an impossible month
    isn't rolled into another, Food Library's "Where" lists a saved day's own meals, a save for a day under another plan doesn't
    take that plan's foods away from the day on screen, the export is named by the browser's date, a tab left open past midnight
@@ -633,7 +792,7 @@ async function recheck(browser) {
       }
       await pg.selectOption('#sn', 'reese'); await pg.fill('#sq', '2'); await pg.click('#snackform button');
       await pg.waitForFunction(() => /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
-      await pg.fill('#wt', '80.5'); await pg.press('#wt', 'Tab'); await pg.waitForTimeout(300);
+      await pg.fill('#wt', '80.5'); await pg.press('#wt', 'Tab'); await pg.waitForFunction(() => !pending.size && !inFlight, null, { timeout: 5000 });
       await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
       expect(/Reese/.test(await pg.textContent('#offlist')), 'snack should survive reload');
       expect(await pg.inputValue('#meals input[data-act=pack][data-k=w] >> nth=0') === '320', 'pack weight should survive reload');
@@ -1148,7 +1307,6 @@ async function recheck(browser) {
       const exScroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(exScroll <= 1, `horizontal overflow of ${exScroll}px with the exercise picker open at ${w}px wide`);
       if (first) await pg.check('#t-exlist label:has-text("Atlantis hack squat") input'); else await pg.click('[data-ta=exnone]');
-      await pg.click('[data-ta=exsave]');
       await pg.waitForFunction(n => document.querySelectorAll('#t-metrics [data-k^="ex:"]').length === n, first ? 1 : 0, { timeout: 5000 });
       if (first) expect(await pg.getAttribute(exChip, 'aria-pressed') === 'true', 'a newly picked exercise should be switched on');
       await pg.click('#t-metrics [data-k=vol]'); await pg.uncheck('#t-smooth'); await pg.waitForSelector('#t-chart svg');
@@ -1548,6 +1706,7 @@ async function recheck(browser) {
     await phase2c(browser);
     await phase2cLibrary(browser);
     await phase2cLast(browser);
+    await phase9(browser);
     console.log('smoke: ok (desktop + phone)');
   } catch (e) { await browser.close(); return fail(e.stack); }
   await browser.close(); cleanup();
