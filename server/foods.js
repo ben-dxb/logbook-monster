@@ -6,6 +6,7 @@
    flagged (food.ai) with the source the AI gave, so anyone can see which numbers are estimates. */
 const express = require('express');
 const db = require('./db');
+const { isNum } = require('./num');
 const defaults = require('./defaults');
 const ai = require('./ai');
 const version = require('./version');
@@ -50,7 +51,7 @@ function clean(b) {
   const name = name_(b), unit = unitOf(b), hi = limits(unit);
   const per = unit === 'each' ? 'an item' : `100 ${unit}`;
   const num = (v, m) => {
-    const n = v === '' || v == null ? 0 : +v;
+    const n = v === '' || v == null ? 0 : isNum(v) ? +v : NaN;
     if (!Number.isFinite(n) || n < 0 || n > hi[m]) throw fail(`${LABEL[m]} must be a number from 0 to ${hi[m]} (per ${per})`);
     return Math.round(n * 10) / 10;
   };

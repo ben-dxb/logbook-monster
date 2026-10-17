@@ -378,7 +378,9 @@ async function gCsvImport(){
   let added=0,skipped=0,fresh=0;
   try{
     for(const b of batches){const r=await api('POST','/api/gym/import-sets',{sets:b});added+=r.added;skipped+=r.skipped;fresh+=r.newExercises;C.sent+=b.length;renderGym();}
-    C.done=`Added ${added.toLocaleString()} set${added===1?'':'s'}${skipped?` (${skipped.toLocaleString()} you already had ${skipped===1?'was':'were'} skipped)`:''}${fresh?` and ${fresh} new exercise${fresh===1?'':'s'}`:''}.`;
+    const out=C.res.skipped;
+    C.done=`Added ${added.toLocaleString()} set${added===1?'':'s'}${skipped?` (${skipped.toLocaleString()} you already had ${skipped===1?'was':'were'} skipped)`:''}${fresh?` and ${fresh} new exercise${fresh===1?'':'s'}`:''}.`
+      +(out.length?` ${out.length.toLocaleString()} row${out.length===1?' of the file was':'s of the file were'} left out: ${out.slice(0,3).map(x=>`line ${x.line}, ${x.why}`).join('; ')}${out.length>3?'; …':''}.`:'');
   }catch(e){if(e.signedOut)return;C.err=`Stopped after ${C.sent.toLocaleString()} sets: ${e.message}. Import the file again to carry on – sets already added are skipped.`;}
   C.busy=false;Object.keys(GSETS).forEach(k=>delete GSETS[k]);gChanged();
   try{await gLoad();}catch{}
@@ -432,14 +434,14 @@ document.addEventListener('click',async e=>{
     try{await api('PUT','/api/gym/order',{ids:ws.map(w=>w.id)});GY.workouts=ws;renderGym();}catch(err){if(!err.signedOut)alert(err.message);}}
   else if(g==='iup'||g==='idown'){const it=gDraft.items,j=g==='iup'?i-1:i+1;if(j<0||j>=it.length)return;[it[i],it[j]]=[it[j],it[i]];renderGym();}
   else if(g==='idel'){gDraft.items.splice(i,1);renderGym();}
-  else if(g==='wsave'){gSaveDraft();}
+  else if(g==='wsave'){once(b,gSaveDraft);}
   else if(g==='wdel'){if(!confirm(`Delete the workout “${gDraft.name}”? Your exercises and sets stay.`))return;
     try{await api('DELETE','/api/gym/workouts/'+gDraft.id);gDraft=null;await gLoad();go('gym');}catch(err){if(!err.signedOut)alert(err.message);}}
   else if(g==='sdel'){if(!confirm('Delete this set?'))return;const id=+b.dataset.id,ex=+b.dataset.e;
     try{await api('DELETE','/api/gym/sets/'+id);delete GSETS[ex];gChanged();await gLoad();go('gym/e/'+ex);}catch(err){if(!err.signedOut)alert(err.message);}}
   else if(g==='exdel'){const id=+gArgs[1],ex=exById(id);if(!ex||!confirm(`Delete ${ex.name} and all ${ex.sets} of its sets? This can’t be undone.`))return;
     try{await api('DELETE','/api/gym/exercises/'+id);delete GSETS[id];gChanged();await gLoad();go('gym/x');}catch(err){if(!err.signedOut)alert(err.message);}}
-  else if(g==='aiadd'){gAiAdd();}
+  else if(g==='aiadd'){once(b,gAiAdd);}
   else if(g==='part'){gPick.part=b.dataset.p===gPick.part?'':b.dataset.p;renderGym();}
   else if(g==='pick'&&gDraft){gDraft.items.push({e:+b.dataset.id,target:''});gPickRefresh();}
   else if(g==='picknew'&&gDraft){const v=gPick.q.replace(/\s+/g,' ').trim();if(!v)return;gDraft.items.push({e:null,name:v,target:''});gPick.q='';$('#g-exname').value='';gPickRefresh();}
@@ -482,11 +484,14 @@ async function gTrend(el){
 document.addEventListener('submit',async e=>{
   const f=e.target;if(view!=='gym'||!f.id||!f.id.startsWith('g-'))return;
   e.preventDefault();
-  if(f.id==='g-quick')gLogSet();
-  else if(f.id==='g-addex'){const v=$('#g-exname').value.replace(/\s+/g,' ').trim();if(!v)return;
-    const ex=GY.exercises.find(x=>x.name.toLowerCase()===v.toLowerCase());
-    gDraft.items.push(ex?{e:ex.id,target:''}:{e:null,name:v,target:''});gPick.q='';await renderGym();$('#g-exname').focus();}
-  else if(f.id==='g-newex'){const v=$('#g-find').value.replace(/\s+/g,' ').trim();if(!v)return;
+  if(f.id==='g-quick')return gLogSet();   /* its button is off while it saves; sets logged back to back are meant */
+  if(f.id!=='g-addex')return once(f,()=>gSubmit(f));
+  const v=$('#g-exname').value.replace(/\s+/g,' ').trim();if(!v)return;
+  const ex=GY.exercises.find(x=>x.name.toLowerCase()===v.toLowerCase());
+  gDraft.items.push(ex?{e:ex.id,target:''}:{e:null,name:v,target:''});gPick.q='';await renderGym();$('#g-exname').focus();
+});
+async function gSubmit(f){
+  if(f.id==='g-newex'){const v=$('#g-find').value.replace(/\s+/g,' ').trim();if(!v)return;
     try{const ex=await api('POST','/api/gym/exercises',{name:v});await gLoad();go('gym/e/'+ex.id);}catch(err){if(!err.signedOut)alert(err.message);}}
   else if(f.id==='g-exform'){const id=+gArgs[1];
     const ticked=[...f.querySelectorAll('input[name=g-part]:checked')].map(x=>x.value), had=(exById(id)||{parts:[]}).parts;
@@ -498,4 +503,4 @@ document.addEventListener('submit',async e=>{
     try{const old=Object.keys(GSETS).find(k=>GSETS[k].some(s=>s.id===id));const s=await api('PUT','/api/gym/sets/'+id,body);
       if(old)delete GSETS[old];delete GSETS[s.e];gChanged();await gLoad();go('gym/e/'+s.e);}
     catch(err){if(!err.signedOut)$('#g-smsg').textContent=err.message;}}
-});
+}

@@ -379,17 +379,6 @@ function planCsv(plan){
   }));
   return rows.join('\r\n')+'\r\n';
 }
-function parseCsv(text){
-  const rows=[];let row=[],cell='',q=false;
-  for(let i=0;i<text.length;i++){const ch=text[i];
-    if(q){if(ch==='"'){if(text[i+1]==='"'){cell+='"';i++;}else q=false;}else cell+=ch;}
-    else if(ch==='"')q=true;
-    else if(ch===','||ch===';'||ch==='\t'){row.push(cell);cell='';}
-    else if(ch==='\n'||ch==='\r'){if(ch==='\r'&&text[i+1]==='\n')i++;row.push(cell);rows.push(row);row=[];cell='';}
-    else cell+=ch;}
-  if(cell!==''||row.length){row.push(cell);rows.push(row);}
-  return rows.filter(r=>r.some(c=>c.trim()!==''));
-}
 /* the template a CSV's day_type names: by name or id, the old words for training / rest / Saturday, or a new one */
 function csvTemplate(v,made){
   const k=v.trim().toLowerCase().replace(/[\s_-]+/g,' ');if(!k)return null;
@@ -403,7 +392,7 @@ function csvTemplate(v,made){
   return t.id;
 }
 function csvToPlan(text){
-  const rows=parseCsv(text.replace(/^﻿/,''));const errs=[],made=[];
+  const rows=GymCsv.parseCsv(text);const errs=[],made=[];   /* the separator the heading row uses: "152,5" stays one cell in a ; file */
   if(!rows.length)return {errs:['The file is empty.']};
   const head=rows[0].map(h=>h.trim().toLowerCase().replace(/[\s-]+/g,'_'));
   const col=n=>head.indexOf(n);
@@ -412,10 +401,12 @@ function csvToPlan(text){
   const byName={};Object.keys(AD.foods).concat(AD.pud?['pudding']:[]).forEach(id=>{byName[id]=id;byName[adFoodName(id).toLowerCase()]=id;});
   const boxOf=v=>({p:'p',protein:'p',c:'c',carb:'c',carbs:'c',x:'x',f:'x',fat:'x',fats:'x',additional_fats:'x'})[v.trim().toLowerCase().replace(/[\s-]+/g,'_')];
   const plan={};
+  /* grams as written: 152.5 or 152,5; a lone 1,500 is read by the file's other amounts (or the separator), never guessed */
+  const mark=GymCsv.decimalMark(rows.slice(1).map(r=>String(r[col('grams')]||'')))||(GymCsv.csvSep(text)===','?'.':null);
   rows.slice(1).forEach((r,ri)=>{
     const line=ri+2, get=n=>col(n)<0?'':String(r[col(n)]||'').trim().replace(/^'(?=[=+\-@\t\r])/,'');   /* the ' csvCell adds */
     const t=csvTemplate(get('day_type'),made);
-    if(!t){errs.push(`Line ${line}: day type "${get('day_type')}" – give the name of a day template (up to ${AD_MAX_TPL}).`);return;}
+    if(!t){errs.push(get('day_type')?`Line ${line}: day type "${get('day_type')}" would be a new day template, but a plan can have ${AD_MAX_TPL} at most.`:`Line ${line}: give the name of a day template in day_type.`);return;}
     const mid=get('meal');if(!mid){errs.push(`Line ${line}: meal number is missing.`);return;}
     const ms=plan[t]||(plan[t]=[]);
     let m=ms.find(x=>x.id===mid);
@@ -424,8 +415,9 @@ function csvToPlan(text){
     const fv=get('food');if(!fv)return;           /* a meal with no foods */
     const f=byName[fv.toLowerCase()];
     if(!f){errs.push(`Line ${line}: unknown food "${fv}". Use a food id or name from My foods, or add it there first.`);return;}
-    const g=+get('grams').replace(/[^\d.]/g,'');
-    if(!Number.isFinite(g)||get('grams')===''||g>5000){errs.push(`Line ${line}: amount "${get('grams')}" isn't a number of grams.`);return;}
+    const g=GymCsv.readNum(get('grams'),mark);
+    if(g===GymCsv.AMBIGUOUS){errs.push(`Line ${line}: amount "${get('grams')}" could be ${get('grams').replace(',','')} or ${get('grams').replace(',','.')} – write it without the comma.`);return;}
+    if(g==null||!Number.isFinite(g)||g<0||g>5000){errs.push(`Line ${line}: amount "${get('grams')}" isn't a number of grams (0 to 5000).`);return;}
     const grp=f==='pudding'?'c':(AD.foods[f]||{}).group;
     const b=get('box')?boxOf(get('box')):grp==='p'?'p':grp==='x'?'x':'c';
     if(!b){errs.push(`Line ${line}: box "${get('box')}" should be protein, carbs or fats.`);return;}
@@ -466,14 +458,16 @@ function adMeals(list){
 function adApplyJson(j){
   const full=j&&(j.plan||j.foods||j.schedule||j.targets||j.templates);
   const plan=full?j.plan:j;
+  /* the day templates: as listed, or the old T / R / S a file uses; more than a plan can have is refused, not cut short */
+  let tl=full&&Array.isArray(j.templates)?j.templates:null;
+  if(!tl){const used=new Set([...Object.keys(plan&&typeof plan==='object'?plan:{}),...Object.keys((full&&j.targets)||{}),...((full&&Array.isArray(j.schedule))?j.schedule:[])]);
+    tl=Object.keys(AD_LEGACY).filter(t=>used.has(t)).map(id=>({id,name:AD_LEGACY[id]}));}
+  const fresh=new Set(tl.filter(t=>t&&typeof t.id==='string'&&AD_TPL_ID.test(t.id)&&!adTpl(t.id)).map(t=>t.id));
+  if(AD.templates.length+fresh.size>AD_MAX_TPL)throw new Error(`It has ${fresh.size} new day template${fresh.size>1?'s':''} and this plan has ${AD.templates.length} – a plan can have ${AD_MAX_TPL} at most. Delete some here or take some out of the file.`);
   if(full&&j.foods&&typeof j.foods==='object'){for(const [id,r] of Object.entries(j.foods)){if(r&&typeof r==='object'){
     if(id==='pudding'){AD.pud={...(AD.pud||{n:'Rice pudding (batch)',k:0,p:0,c:0,f:0,d:0,step:5,unit:'g',min:null,max:null,order:null,free:''}),group:['p','c','x'].includes(r.group)?r.group:'c'};continue;}
     if(!AD_FOOD_ID.test(id)||id in Object.prototype)continue;
     AD.foods[id]={...(AD.foods[id]||{n:id,k:0,p:0,c:0,f:0,group:'',unit:'g',min:null,max:null,order:null,d:0,step:5,free:''}),...adCleanFood(r)};}}}
-  /* the day templates: as listed, or the old T / R / S a file uses */
-  let tl=full&&Array.isArray(j.templates)?j.templates:null;
-  if(!tl){const used=new Set([...Object.keys(plan&&typeof plan==='object'?plan:{}),...Object.keys((full&&j.targets)||{}),...((full&&Array.isArray(j.schedule))?j.schedule:[])]);
-    tl=Object.keys(AD_LEGACY).filter(t=>used.has(t)).map(id=>({id,name:AD_LEGACY[id]}));}
   adTakeTemplates(tl);
   if(full&&Array.isArray(j.schedule)&&j.schedule.length===7&&j.schedule.every(t=>typeof t==='string'&&adTpl(t)))AD.schedule=[...j.schedule];
   if(full&&j.free&&typeof j.free==='object')FREE_KINDS.forEach(x=>{if(j.free[x]!=null)AD.free[x]=!!j.free[x];});
@@ -491,7 +485,7 @@ async function adUpload(file){
   const text=await file.text();
   if(/\.json$/i.test(file.name)||/^\s*\{/.test(text)){
     let j;try{j=JSON.parse(text);}catch{adErrs=['That JSON file couldn’t be read.'];renderAdmin();return;}
-    adApplyJson(j);
+    try{adApplyJson(j);}catch(e){adErrs=[e.message];adMsg=`${file.name} wasn’t loaded:`;renderAdmin();return;}
     adMsg=`Loaded ${file.name}. Check it below, then save.`;
   }else{
     const {plan,errs,made}=csvToPlan(text);
@@ -625,10 +619,11 @@ function adAiUse(){
   const only=o=>Object.fromEntries(Object.entries(o&&typeof o==='object'?o:{}).filter(([id])=>ids.has(id)));
   const foods={};d.foods.filter(f=>f.on).forEach(f=>{foods[f.id]=j.foods[f.id];});
   if(j.foods&&j.foods.pudding&&!AD.pud)foods.pudding=j.foods.pudding;
-  const got=adApplyJson({foods,templates:(j.templates||[]).filter(t=>t&&ids.has(t.id)),plan:only(j.plan),targets:only(j.targets),schedule:d.schOn?j.schedule:undefined}).map(adTplName);
+  let got;try{got=adApplyJson({foods,templates:(j.templates||[]).filter(t=>t&&ids.has(t.id)),plan:only(j.plan),targets:only(j.targets),schedule:d.schOn?j.schedule:undefined}).map(adTplName);}
+  catch(e){adMsg='';adErrs=[e.message+' Untick some day templates.'];return;}   /* too many day templates: nothing taken, the preview stays */
   const nf=d.foods.filter(f=>f.on&&f.state==='new').length, cf=d.foods.filter(f=>f.on&&f.state==='changed').length;
   const took=[got.join(', '),nf?`${nf} new food${nf>1?'s':''}`:'',cf?`new values for ${cf} of your foods`:'',d.schOn&&same(AD.schedule,j.schedule)?'week schedule':''].filter(Boolean);
-  adMsg=took.length?`Took from ${adAiPend.label}: ${took.join(', ')}. Check it below, then save.`:'Nothing was ticked, so nothing changed.';
+  adErrs=[];adMsg=took.length?`Took from ${adAiPend.label}: ${took.join(', ')}. Check it below, then save.`:'Nothing was ticked, so nothing changed.';
   adAiPend=null;jobSeen('plan');
 }
 

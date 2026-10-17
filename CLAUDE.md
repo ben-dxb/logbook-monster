@@ -39,7 +39,7 @@
 - `public/engine.js` – the balancing maths and the plan in use (`applyDefaults(plan)` sets `FOODS`, swap lists, `TEMPLATES`, `TYPE` = template id per weekday, `COACH` = targets per template;
   `freshDay(weekday, templateId)`). Only rice pudding (values from the batch) is built in. Keep the solver behaviour unless asked.
 - `public/app.js` – views (Daily Tracker, History calendar), saving, routing. A day keeps its template (`D.type`; the weekday's unless switched on the Daily Tracker) and its summary the name (`tname`). A meal marked eaten (`m.eaten`) is locked whole – the solver never moves it, its controls
-  are disabled – and undoing it asks for confirmation.
+  are disabled – and undoing it asks for confirmation. Shared by every page: a button or form that POSTs/PUTs runs through `once(el, fn)` (no double submits), and a number box the browser can't read ("80e") or outside its min/max is put back with a note before any page listener sees it; the server refuses non-numbers with 400 (`server/num.js`).
 - `public/admin.js` – Account admin (`#account`, anyone: own plan – day templates, meals, week, targets, foods) and Super admin
   (`#admin`, in tabs: `#admin/ai`, `#admin/people`, `#admin/email`, `#admin/options`; no plan editor) – one page, `.admine`/`.adapp`/`.adsuper` parts per scope,
   `data-adtab` per super admin tab. AI settings (OpenRouter key, default model and a model per task – `TASKS` in `server/ai.js`:
@@ -88,6 +88,6 @@
   until `POST /auth/second`. Wrong codes count in `login_failures` under `2fa:<id>`. `twostep.fresh` asks for the password or a code again (`POST /api/recheck`,
   the app's `recheck()` dialog) before changing the AI key, the email settings or removing an account on a sign-in over 15 minutes old – put it on any new route that
   sensitive. Option `adminTotp` keeps super admins without it out of `/api/admin/*`. `create-user … --no-2fa` switches it off from the shell.
-- `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by tests.
+- `public/gymcsv.js` – reads history CSVs (Setgraph, Strong, Hevy…) into sets; one global, `GymCsv`, also used by the plan CSV reader in `admin.js` (`parseCsv`, `readNum` – decimal commas and thousands separators, ambiguous `1,025` reported, never guessed) and by tests.
 - Secrets live only in `.env` on the server; never send them to the client or commit them.
 - Strict CSP: no inline scripts or `style=` attributes in HTML.
