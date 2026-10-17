@@ -36,8 +36,10 @@ before(async () => {
   const add = w.prepare("INSERT INTO audit (at, user_id, actor_id, event, detail) VALUES (?, 2, 2, ?, '{}')");
   add.run(daysAgo(200), 'signin.ok');
   add.run(daysAgo(10), 'signout');
-  /* cat (id 4) already has 45 rows; AUDIT_PER_ACCOUNT is 40, so cat's next event trims them */
-  for (let i = 0; i < 45; i++) w.prepare("INSERT INTO audit (at, user_id, actor_id, event, detail) VALUES (?, 4, 4, 'signout', '{}')").run(daysAgo(5));
+  /* cat (id 4) already has 45 failed sign-ins and 45 other rows; AUDIT_PER_ACCOUNT is 40, so cat's next failed sign-in trims
+     the failed ones and leaves the others alone */
+  for (let i = 0; i < 45; i++) w.prepare("INSERT INTO audit (at, user_id, actor_id, event, detail) VALUES (?, 4, 4, 'signin.failed', '{}')").run(daysAgo(5));
+  for (let i = 0; i < 45; i++) w.prepare("INSERT INTO audit (at, user_id, actor_id, event, detail) VALUES (?, 4, 4, ?, '{}')").run(daysAgo(5), i % 2 ? 'export' : 'password.changed');
   w.close();
   srv = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server/index.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
   srv.stdout.on('data', d => { logs += d; });
@@ -269,11 +271,26 @@ test('pages: 50 at a time, with a cursor', async () => {
   assert.ok(p2.rows.length > 0 && p2.rows[0].id < p1.rows[49].id);
 });
 
-test('each account keeps at most AUDIT_PER_ACCOUNT rows, dropping the oldest', () => {
+test('failed sign-ins and re-checks are capped at AUDIT_PER_ACCOUNT per account; they never push other rows out (NEW-SEC-04)', async () => {
   assert.strictEqual(idOf('cat@example.com'), 4);
-  const cat = rows('user_id = 4');
-  assert.strictEqual(cat.length, 40);
-  assert.strictEqual(cat[cat.length - 1].event, 'signin.ok');
+  const noisy = () => rows("user_id = 4 AND event IN ('signin.failed', 'signin.locked', 'second.failed', 'second.locked', 'recheck.failed', 'signin.alert')");
+  const others = () => rows("user_id = 4 AND event IN ('export', 'password.changed')").length;
+  assert.strictEqual(others(), 45);
+  assert.strictEqual(await tryLogin('cat@example.com', 'wrong-password-3'), 401);
+  assert.strictEqual(noisy().length, 40);
+  assert.strictEqual(noisy().at(-1).at > daysAgo(1), true, 'the newest kept, the oldest dropped');
+  assert.strictEqual(others(), 45, 'other events are kept');
+  /* a flood of failed re-checks from a stolen session doesn't push them out either */
+  const cat = await signIn('cat@example.com');
+  const unlock = () => { const db = new DatabaseSync(DB); db.prepare('DELETE FROM login_failures').run(); db.close(); };
+  for (let i = 0; i < 45; i++) {
+    if (i % 2 === 0) unlock();   /* ACCOUNT_FAIL_LIMIT is 3 here: keeps clear of the lock and the slowdown, which are tested elsewhere */
+    assert.strictEqual((await cat('POST', '/api/recheck', { password: 'wrong-password-3' })).status, 400);
+  }
+  unlock();
+  assert.strictEqual(noisy().length, 40);
+  assert.strictEqual(others(), 45);
+  assert.ok(rows("user_id = 4 AND event = 'signin.ok'").length >= 1);
 });
 
 test('two-step sign-in: on, code asked, wrong / right code, recovery code, re-check, off', async () => {

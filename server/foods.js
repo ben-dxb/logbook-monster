@@ -9,7 +9,6 @@ const express = require('express');
 const config = require('./config');
 const db = require('./db');
 const { isNum } = require('./num');
-const defaults = require('./defaults');
 const ai = require('./ai');
 const version = require('./version');
 const audit = require('./audit');
@@ -141,6 +140,16 @@ Reply with only this JSON object:
  "yield": cooked weight as a % of raw weight (e.g. 75 for chicken breast, 280 for white rice), only if the food is weighed raw or cooked}
 Give numbers for all four values; only the missing ones are used.`;
 
+const SOURCE_HOSTS = ['fdc.nal.usda.gov', 'ndb.nal.usda.gov', 'www.ars.usda.gov', 'www.gov.uk', 'quadram.ac.uk', 'www.nutritionix.com',
+  'nutritiondata.self.com', 'cronometer.com', 'www.foodstandards.gov.au', 'www.eatforhealth.gov.au'];
+const sourceUrl = v => {
+  try {
+    const u = new URL(String(v || ''));
+    return u.protocol === 'https:' && !u.username && !u.password && !u.port
+      && (SOURCE_HOSTS.includes(u.hostname) || /(^|\.)openfoodfacts\.org$/.test(u.hostname)) ? u.href : '';
+  } catch { return ''; }
+};
+
 function fillRequest(b) {
   if (!isObj(b)) throw fail('Food must be an object');
   const name = name_(b), unit = unitOf(b), kind = KINDS.includes(b.kind) ? b.kind : 'ingredient', hi = limits(unit);
@@ -173,7 +182,10 @@ async function fill(b, user) {
     values[m] = Math.round(n * 10) / 10;
   }
   const y = Number(reply.yield);
-  const a = cleanAi({ ...reply, fields: r.blank, of: r.blank, model });
+  /* What gets signed can't be steered by the recipe / notes the person typed (library-code-002): with any, the source is
+     ours, and a link is kept only to a known nutrition database. */
+  const a = cleanAi({ ...reply, fields: r.blank, of: r.blank, model,
+    source: r.recipe ? `AI estimate from the ${r.kind === 'meal' ? 'recipe' : 'notes'}` : reply.source, url: sourceUrl(reply.url) });
   a.sig = aiSig(a, user.id);
   return { values, ai: a, ...(r.state && y >= 10 && y <= 1000 ? { yield: Math.round(y) } : {}) };
 }
@@ -218,7 +230,7 @@ router.delete('/:id', (req, res) => {
   try {
     const row = q.get.get(idOf(req.params.id));
     if (!row || (row.user_id !== req.user.id && !row.public)) throw fail('No such food', 404);
-    if (row.user_id !== req.user.id && !defaults.isAdmin(req.user)) throw fail('Only the person who added this food can remove it', 403);
+    if (row.user_id !== req.user.id && !require('./api').superAdmin(req.user)) throw fail('Only the person who added this food can remove it', 403);
     q.del.run(row.id);
     if (row.user_id !== req.user.id) audit.log(req, 'food.removed', { id: row.id, name: row.name }, row.user_id);
     res.json({ ok: true });

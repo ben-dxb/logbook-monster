@@ -702,6 +702,7 @@ function tfRender(msg=''){
   else if(tfNew)h=`<p class="sub">Add this key to an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password…) as a time-based key, or open the link on your phone:</p>
     <p class="tfsecret" id="tf-secret">${esc(tfNew.secret.replace(/(.{4})/g,'$1 ').trim())}</p><a class="ghost" href="${esc(tfNew.uri)}">Open in authenticator app</a>
     <form data-tf="on" class="pwform"><label class="f"><span class="lbl">The 6-digit code it shows</span><input id="tf-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7"></label>
+    <label class="tog"><input type="checkbox" id="tf-out"> Also sign out my other sessions</label>
     <button class="btn" type="submit">Turn on</button></form>`;
   else h=`<p class="sub">Ask for a code from an authenticator app on your phone after your password, so a leaked password alone can’t get in.</p>
     <button class="btn" type="button" data-tf="start">Set up</button>`;
@@ -716,7 +717,7 @@ $('#tfbody').addEventListener('click',async e=>{
 });
 $('#tfbody').addEventListener('submit',async e=>{
   e.preventDefault();const f=e.target.dataset.tf;
-  if(f==='on'){try{const r=await api('POST','/api/totp/enable',{code:$('#tf-code').value.replace(/\s/g,'')});tfNew=null;tfCodes=r.codes;tfRender(r.signedOut?'Signed out everywhere else.':'');}
+  if(f==='on'){try{const r=await api('POST','/api/totp/enable',{code:$('#tf-code').value.replace(/\s/g,''),signOutOthers:$('#tf-out').checked});tfNew=null;tfCodes=r.codes;tfRender(r.signedOut?'Signed out everywhere else.':'');}
     catch(err){if(!err.signedOut)$('#tfmsg').textContent=err.message;}}
   else if(f==='off'){const v=$('#tf-offin').value,c=v.replace(/\s/g,'');
     try{await api('POST','/api/totp/disable',/^\d{6}$/.test(c)||/^[A-Za-z2-7]{5}-?[A-Za-z2-7]{5}$/.test(c)?{code:c}:{password:v});TF=null;await tfLoad();$('#tfmsg').textContent='Two-step sign-in is off.';}

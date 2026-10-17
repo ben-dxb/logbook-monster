@@ -162,6 +162,21 @@ test('an invite works only while its account is still waiting', async () => {
   assert.strictEqual((await c('GET', '/api/me')).body.email, 'new@example.com');
 });
 
+test('an invite is taken once even when two accepts race (auth-code-011)', async () => {
+  sql("INSERT INTO users (email, invited_by) VALUES ('race@example.com', 'adm@example.com')");
+  const tok = crypto.randomBytes(32).toString('base64url');
+  addInvite(userId('race@example.com'), tok);
+  const a = browser(), b = browser();
+  await a('GET', '/auth/config'); await b('GET', '/auth/config');
+  const r = await Promise.all([a('POST', '/auth/invite/accept', { token: tok, password: 'racer-password-a' }),
+    b('POST', '/auth/invite/accept', { token: tok, password: 'racer-password-b' })]);
+  assert.deepStrictEqual(r.map(x => x.status).sort(), [200, 404]);
+  const won = r[0].status === 200 ? a : b;
+  assert.strictEqual((await won('GET', '/api/me')).body.email, 'race@example.com');
+  assert.strictEqual((await (r[0].status === 200 ? b : a)('GET', '/api/me')).status, 401);
+  await signIn('race@example.com', r[0].status === 200 ? 'racer-password-a' : 'racer-password-b');
+});
+
 test('create-user resetting a password signs the account out everywhere and drops its invites', async () => {
   createUser('rst@example.com');
   const a = await signIn('rst@example.com'), b = await signIn('rst@example.com');

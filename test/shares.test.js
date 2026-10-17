@@ -114,7 +114,7 @@ test('a coach link shows the account’s data read only, with no sign-in', async
   assert.strictEqual((await open(api + '/weights/2026-09-11', 'PUT', { kg: 90 })).status, 405);
   /* the account loaded for a link carries no password hash (coach-code-005) */
   for (const p of ['/info', '/defaults', '/days', '/weights', '/timeline/day/2026-09-10', '/timeline/trends']) {
-    assert.ok(!JSON.stringify((await open(api + p)).body).includes('$scrypt'), p);
+    assert.ok(!JSON.stringify((await open(api + p)).body).includes('scrypt$'), p);
   }
   assert.doesNotMatch(require('fs').readFileSync(require('path').join(__dirname, '..', 'server', 'shares.js'), 'utf8'), /auth\.q\.byId/);
   for (const p of ['/me', '/export', '/settings', '/shares', '/gym', '/supps', '/foods', '/admin/users']) {
@@ -178,9 +178,30 @@ test('switching off from a stale tab leaves a newer link that took the same id a
   assert.strictEqual((await open(alex.url + '/api/info')).status, 404);
 });
 
+test('a coach link’s day card holds only what the card shows (coach-code-002)', async () => {
+  const ann = await signIn('ann@example.com');
+  const data = { meals: [{ id: '1', name: 'Bowl', eaten: true, note: 'private meal note', lock: 1, p: [{ f: 'L:7:ab', g: 120, lk: 1 }, { f: 'rice', g: 0 }], c: [], x: [] }],
+    off: [{ n: 'Cookie', k: 90, p: 1, c: 12, f: 4, why: 'private' }], journal: 'private day note', targets: { k: 2500 },
+    lib: { 'L:7:ab': { n: 'Ann’s secret stew', unit: 'g', k: 150, p: 12, c: 10, f: 6, recipe: 'private recipe' }, 'L:9:cd': { n: 'Unused library food', unit: 'g' } } };
+  assert.strictEqual((await ann('PUT', '/api/days/2026-07-01', { data, summary: { k: 1000 } })).status, 200);
+  const link = (await ann('POST', '/api/shares', { expires: inDays(1) })).body.url;
+  const card = (await open(link + '/api/timeline/day/2026-07-01')).body;
+  assert.deepStrictEqual(card.food.data, {
+    meals: [{ id: '1', name: 'Bowl', eaten: true, p: [{ f: 'L:7:ab', g: 120 }], c: [], x: [] }],
+    off: [{ n: 'Cookie', k: 90, p: 1, c: 12, f: 4 }],
+    lib: { 'L:7:ab': { n: 'Ann’s secret stew', unit: 'g' } } });
+  assert.strictEqual(card.food.summary.k, 1000);
+  /* the owner's own card still has the whole day */
+  assert.strictEqual((await ann('GET', '/api/timeline/day/2026-07-01')).body.food.data.journal, 'private day note');
+});
+
 test('a coach link serves only the photos the Timeline shows: the latest of each pose on each day', async () => {
   const ann = await signIn('ann@example.com');
-  const up = async (date, pose) => (await ann('POST', `/api/photos?date=${date}&pose=${pose}&note=private%20note`, jpeg, 'image/jpeg')).body.id;
+  const up = async (date, pose) => {
+    const id = (await ann('POST', `/api/photos?date=${date}&pose=${pose}`, jpeg, 'image/jpeg')).body.id;
+    assert.strictEqual((await ann('PUT', `/api/photos/${id}`, { date, pose, note: 'private note' })).status, 200);
+    return id;
+  };
   const early = await up('2026-08-01', 'back'), late = await up('2026-08-01', 'back'), side = await up('2026-08-01', 'left');
   const link = (await ann('POST', '/api/shares', { expires: inDays(1) })).body.url, api = link + '/api';
   const code = async (id, w = 'thumb') => (await open(`${api}/photos/${id}/${w}`)).status;

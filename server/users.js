@@ -23,6 +23,7 @@ const q = {
   remove: db.prepare('DELETE FROM users WHERE id = ?'),
   addInvite: db.prepare("INSERT INTO invites (token_hash, user_id, created_by, expires_at) VALUES (?, ?, ?, datetime('now', ?))"),
   clearInvites: db.prepare('DELETE FROM invites WHERE user_id = ?'),
+  claimInvite: db.prepare("DELETE FROM invites WHERE token_hash = ? AND user_id = ? AND expires_at > datetime('now')"),
   endSessions: db.prepare('DELETE FROM sessions WHERE user_id = ? AND sid IS NOT ?'),
   findInvite: db.prepare(`SELECT i.user_id, i.created_by, u.email, u.name FROM invites i JOIN users u ON u.id = i.user_id
     WHERE i.token_hash = ? AND i.expires_at > datetime('now')`),
@@ -101,9 +102,11 @@ function remove(id, admin, isAdmin) {
 
 const findInvite = token => (token ? q.findInvite.get(hash(token)) : null);
 const clearInvites = userId => q.clearInvites.run(userId);
+/* Takes the invite for good, in one step: of two accepts racing, only one gets true (auth-code-011). */
+const claimInvite = (token, userId) => !!token && q.claimInvite.run(hash(token), userId).changes === 1;
 /* Signs the account out everywhere, except the session keepSid (the browser that asked). */
 const endSessions = (userId, keepSid = null) => q.endSessions.run(userId, keepSid == null ? null : hash(keepSid)).changes;   /* the store keeps sha256(sid) */
 /* Still waiting on an invite: no password, no Google link, never signed in. */
 const isPending = id => { const u = q.byId.get(id); return !!u && pending(u); };
 
-module.exports = { list, invite, resend, remove, findInvite, clearInvites, endSessions, isPending };
+module.exports = { list, invite, resend, remove, findInvite, clearInvites, claimInvite, endSessions, isPending };

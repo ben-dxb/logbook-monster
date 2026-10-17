@@ -169,6 +169,7 @@ async function seed() {
   /* two front photos on one day: the later one is the one the Timeline shows, so p1 is never on it */
   c.p1 = (await ok(ann('POST', `/api/photos?date=${DATE}&pose=front&note=annmark%20p1`, jpeg('p1')), 'photo 1')).id;
   c.p2 = (await ok(ann('POST', `/api/photos?date=${DATE}&pose=front&note=annmark%20p2`, jpeg('p2')), 'photo 2')).id;
+  for (const [id, n] of [[c.p1, 'p1'], [c.p2, 'p2']]) await ok(ann('PUT', `/api/photos/${id}`, { date: DATE, pose: 'front', note: 'annmark ' + n }), 'photo note');
   await ok(ann('PUT', `/api/photos/${c.p2}/thumb`, jpeg('p2thumb')), 'thumb');
   c.share = (await ok(ann('POST', '/api/shares', { label: 'annmark link', expires: inDays(30) }), 'share')).id;
   /* an AI job, through the supplement regime reader and the fake AI */
@@ -184,6 +185,7 @@ async function seed() {
   await ok(bob('PUT', '/api/days/2026-09-11', day('bobmark day', 3111)), 'bob day');
   await ok(bob('PUT', '/api/weights/2026-09-11', { kg: 99.9 }), 'bob weight');
   c.bobPhoto = (await ok(bob('POST', '/api/photos?date=2026-09-12&pose=front&note=bobmark', jpeg('bob')), 'bob photo')).id;
+  await ok(bob('PUT', `/api/photos/${c.bobPhoto}`, { date: '2026-09-12', pose: 'front', note: 'bobmark' }), 'bob photo note');
 }
 
 /* ---------- the route table ----------

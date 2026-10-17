@@ -93,11 +93,14 @@ Any account can add a second step: after the password (or Google), a 6-digit cod
 
 1. Account menu › **Two-step sign-in** › **Set up**. Add the key shown to the app as a time-based key, or tap
    **Open in authenticator app** on the phone (an `otpauth://` link). There is no QR code.
-2. Type the code the app shows and press **Turn on**. Other sessions of the account are signed out.
+2. Type the code the app shows and press **Turn on**. Tick **Also sign out my other sessions** to end them too (off by
+   default). Setting up and turning on need a sign-in or a password/code re-check in the last 15 minutes, and the
+   account is emailed whenever the step is switched on or off (when email is set up).
 3. **Save the 10 recovery codes** it shows (they aren't shown again). Each one signs in once in place of a code.
 
-To switch it off, open the same box and enter your password or a code. Wrong codes count per account: 10 in
-15 minutes (`ACCOUNT_FAIL_LIMIT`) and even a right code waits; a code works once.
+To switch it off, open the same box and enter your password or a code. Wrong codes count like wrong passwords: 10 in
+15 minutes (`ACCOUNT_FAIL_LIMIT`) from one address and even a right code waits there; past 10 from all addresses every
+answer is slowed a little more (at most 4 s). A code works once.
 
 Super admins: once your own is on, Super admin › Options › **Super admins must use a second step** sends any super
 admin without it to set one up before any Super admin page works.
@@ -106,8 +109,9 @@ admin without it to set one up before any Super admin page works.
 phone (that also gives new recovery codes). Lost the phone *and* the codes – someone with shell access on the
 server runs `npm run create-user -- you@example.com --no-2fa` (Docker: `docker compose exec logbook-monster node --disable-warning=ExperimentalWarning scripts/create-user.js you@example.com --no-2fa`),
 which sets a new password, signs the account out everywhere and switches its second step off. The key is stored
-encrypted with a key derived from `SESSION_SECRET`: if that changes, authenticator codes stop working (recovery codes
-still do) – sign in with a recovery code and set the step up again.
+encrypted with a key derived from `SEAL_KEY` (or `SESSION_SECRET` without it): if that is lost, authenticator codes stop
+working (recovery codes still do) – sign in with a recovery code and set the step up again. To change it safely see
+**Rotating secrets** below.
 
 ## Run it locally
 
@@ -143,6 +147,8 @@ password is saved on the Super admin page. Nothing secret is ever sent to the br
 | Variable | What it does |
 |---|---|
 | `SESSION_SECRET` | **Required in production.** Random string, 32+ characters, signs the session cookie. `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` |
+| `SESSION_SECRET_OLD` | Optional, only while rotating: the previous `SESSION_SECRET`. Cookies signed with it still work and secrets sealed with it are resealed on start. |
+| `SEAL_KEY` | Optional, 32+ characters: the key the AI key, SMTP password and authenticator keys are sealed with in the database. Without it they're sealed under `SESSION_SECRET`; once set, values sealed under `SESSION_SECRET` are resealed with it on start. |
 | `BASE_URL` | The address you open in the browser, e.g. `https://meals.example.com`. Used for the Google redirect and to turn on secure cookies/HSTS for `https://`. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Turn on "Continue with Google". Leave empty to hide it. |
 | `ALLOWED_EMAILS` | Comma-separated. If set, **only** these emails can sign in, and they can create their own account the first time. |
@@ -258,15 +264,18 @@ docker compose start
 To restore, stop the app, put the database and the `photos` folder back where they were (Docker: `docker run --rm
 -v mealswap_mealswap-data:/data -v "$PWD":/out alpine sh -c "rm -rf /data/* && tar xzf /out/logbook-monster-backup.tgz -C /data"`),
 remove any `logbook-monster.db-wal` / `-shm` files left beside the restored database, and start it again. Keep the
-same `SESSION_SECRET`: the saved AI key, SMTP password and authenticator keys are sealed with it.
+same `SEAL_KEY` (or `SESSION_SECRET` without one): the saved AI key, SMTP password and authenticator keys are sealed with it.
 
 Each user can also download their own data from the account menu (photo details only, not the pictures).
 
 ## Security notes
 
 - Passwords hashed with scrypt; login and Google sign-in are rate-limited per IP, and 10 wrong
-  passwords for one account in 15 minutes lock it for the rest of that time (kept in SQLite, so a
-  restart doesn't reset it); same response for unknown email, wrong password and a locked account.
+  passwords for one account from one IP (one IPv6 /64) in 15 minutes lock that address out of it for the rest of that
+  time (kept in SQLite, so a restart doesn't reset it); same response for unknown email, wrong password and a locked
+  account. From other addresses the account still signs in – someone who knows the email can't lock the owner out – but
+  each wrong password past 10 from all addresses in 15 minutes slows every answer for it (250 ms more each, at most 4 s).
+  The password and code re-checks count the same way.
 - Sessions are server-side (SQLite, only a SHA-256 of each session ID is stored), in an `HttpOnly`, `SameSite=Lax`
   cookie (on HTTPS `Secure` and named `__Host-logbookmonster.sid`); the session ID changes at sign-in and a session ends `SESSION_DAYS` (30) after sign-in
   however often it's used. Visiting signed out stores nothing on the server.
@@ -275,12 +284,23 @@ Each user can also download their own data from the account menu (photo details 
   password must have signed in within the last 10 minutes. Sign-out sends `Clear-Site-Data`.
 - Optional second step (TOTP, RFC 6238) for any account: until the code is given the session holds no account, so
   no `/api` route answers it; it runs out after 5 minutes. The secret is stored AES-256-GCM-encrypted with a key derived
-  from `SESSION_SECRET`, recovery codes only as SHA-256 hashes; each code is taken once and wrong codes are limited per
-  account. Changing the AI key or the email settings, or removing an account, needs the password or a code again
-  on a sign-in older than 15 minutes.
+  from `SEAL_KEY` (or `SESSION_SECRET`), recovery codes only as SHA-256 hashes; each code is taken once and wrong codes
+  are limited like passwords. Setting the step up, changing the AI key or the email settings, removing an account and
+  loosening an Option (a higher or no AI cap, AI privacy or "super admins must use a second step" off) need the password
+  or a code again on a sign-in older than 15 minutes; switching the step on doesn't count as that re-check. With that
+  Option on, a super admin without the step also loses the other super admin powers (removing others' shared foods and
+  supplements, no AI allowance).
 - The OpenRouter key and SMTP password saved on Super admin are stored sealed the same way (AES-256-GCM, a key derived
-  from `SESSION_SECRET`): if `SESSION_SECRET` changes, enter them again. The database runs with `secure_delete` on and
-  its file (and photos) are created readable by the app's own user only.
+  from `SEAL_KEY`, or `SESSION_SECRET` without it). The database runs with `secure_delete` on and its file (and photos)
+  are created readable by the app's own user only.
+- **Rotating secrets** (e.g. after `.env` leaked): set `SEAL_KEY` to a new random value once, so sealed secrets no longer
+  hang on `SESSION_SECRET`, and restart – they're resealed with it on start. Then for a new `SESSION_SECRET`: put the
+  current one in `SESSION_SECRET_OLD`, the new one in `SESSION_SECRET`, restart, and remove `SESSION_SECRET_OLD` after
+  `SESSION_DAYS` (30 days) – or at once to sign everyone out. Anything still sealed under the old secret is resealed on
+  that start. Changing `SEAL_KEY` itself later works the same way only through `SESSION_SECRET_OLD` (set it to the old
+  `SEAL_KEY` for one start); otherwise the AI key, SMTP password and authenticator apps have to be set up again.
+- On HTTPS an old `logbookmonster.sid` cookie (from before the `__Host-` name) still signs in, and is replaced, for 30
+  days after the first start of the version that added the limit; after that it is ignored.
 - Every write needs a CSRF token header (per session; signed out, an HMAC of a random cookie).
 - Google uses the OpenID Connect code flow with PKCE, `state` and `nonce`; the client secret
   stays on the server and the ID token's issuer, audience, expiry, nonce and verified email
@@ -308,14 +328,16 @@ Each user can also download their own data from the account menu (photo details 
   foods and supplements a super admin removed, coach links made, switched off and first opened each day, and AI daily
   limits reached. Each row has the time, the account, who did it and the IP. It never holds a password, key, code, token,
   cookie or health data; emails are masked (`a***@example.com` plus a keyed hash). Rows are kept **180 days** (pruned at
-  start and daily), at most 5000 per account (`AUDIT_PER_ACCOUNT`). Super admin › Security log shows it all (filter by
+  start and daily); failed sign-ins, codes and re-checks (and their alerts) are also capped at 5000 per account
+  (`AUDIT_PER_ACCOUNT`), so they can't push the other rows out, which go only by age. Super admin › Security log shows it all (filter by
   event and account); everyone sees their own sign-ins, second-step events, password changes and coach-link use on
   Account admin. Failed sign-ins and locks also go to the server log (masked email, IP). `AUDIT_ALERT_FAILS` (default 5)
   failed sign-ins on a super admin account within 15 minutes email the super admins (when email is set up).
 - Logs: the app never logs a request's query string, headers (`x-csrf-token`, `x-file-name`) or a coach secret – a URL in
   an error line goes through `redact()` (`/coach/REDACTED`, no query). Docker keeps 5 × 10 MB of container logs. If you turn
   on a Caddy access log, filter the same way, e.g. `log { format filter { request>uri regexp ^/coach/[^/?]+ /coach/REDACTED
-  request>uri query delete  request>headers>X-Csrf-Token delete  request>headers>X-File-Name delete  request>headers>Cookie delete } }`.
+  request>uri query delete  request>headers>X-Csrf-Token delete  request>headers>X-File-Name delete  request>headers>X-Photo-Note delete
+  request>headers>Cookie delete } }`. Photo notes travel only in the `X-Photo-Note` header, never in the URL.
 
 ## Working on it
 

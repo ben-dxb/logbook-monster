@@ -1,6 +1,7 @@
 'use strict';
 /* The other tests raise AUTH_RATE_LIMIT; this one checks the real defaults still stop guessing:
-   20 sign-ins per IP and 10 wrong passwords per account every 15 minutes. */
+   20 sign-ins per IP, 10 wrong passwords per account from one address every 15 minutes (a lock for that address), and
+   past that from many addresses a slowdown rather than a lock, so nobody can keep the owner out (NEW-SEC-03). */
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const { spawn, execFileSync } = require('node:child_process');
@@ -57,21 +58,43 @@ test('sign-in attempts are limited to 20 per 15 minutes by default', async () =>
   assert.strictEqual((await login('nobody@example.com', 'wrong-password-1')).status, 429);
 });
 
-test('10 wrong passwords for one account, from any addresses, lock it for 15 minutes – across a restart', async () => {
-  const a = await browser('10.0.1.1'), b = await browser('10.0.2.1'), c = await browser('10.0.3.1');
+test('10 wrong passwords for one account from one address lock that address for 15 minutes – across a restart', async () => {
+  const a = await browser('10.0.1.1'), b = await browser('10.0.2.1');
   const wrong = await a('real@example.com', 'wrong-password-1');
   assert.strictEqual(wrong.status, 401);
-  for (let i = 1; i < 10; i++) assert.strictEqual((await (i % 2 ? b : a)('real@example.com', 'wrong-password-1')).status, 401, `attempt ${i + 1}`);
-  /* the right password, from a third address, gets exactly the wrong-password answer */
-  assert.deepStrictEqual(await c('real@example.com', PASSWORD), wrong);
-  assert.deepStrictEqual(await c('REAL@example.com', PASSWORD), wrong);
+  for (let i = 1; i < 10; i++) assert.strictEqual((await a('real@example.com', 'wrong-password-1')).status, 401, `attempt ${i + 1}`);
+  /* the right password, from that address, gets exactly the wrong-password answer */
+  assert.deepStrictEqual(await a('real@example.com', PASSWORD), wrong);
+  assert.deepStrictEqual(await a('REAL@example.com', PASSWORD), wrong);
   await restart();
-  assert.deepStrictEqual(await (await browser('10.0.4.1'))('real@example.com', PASSWORD), wrong, 'still locked after a restart');
-  /* 15 minutes later it signs in again */
+  assert.deepStrictEqual(await (await browser('10.0.1.1'))('real@example.com', PASSWORD), wrong, 'still locked after a restart');
+  /* from anywhere else the owner signs in */
+  assert.strictEqual((await b('real@example.com', PASSWORD)).status, 200);
+  /* 15 minutes later the first address does too */
   const db = new DatabaseSync(DB);
   db.prepare('UPDATE login_failures SET at = at - 16 * 60 * 1000').run();
   db.close();
-  assert.strictEqual((await (await browser('10.0.4.1'))('real@example.com', PASSWORD)).status, 200);
+  assert.strictEqual((await (await browser('10.0.1.1'))('real@example.com', PASSWORD)).status, 200);
+});
+
+test('wrong passwords from many addresses never lock the account: past 10 they slow every answer a little more, at most a few seconds', async () => {
+  const time = async (ip, pw) => { const t = Date.now(), r = await (await browser(ip))('real@example.com', pw); return { status: r.status, ms: Date.now() - t }; };
+  for (let i = 0; i < 10; i++) assert.strictEqual((await time(`10.1.${i}.1`, 'wrong-password-1')).status, 401);
+  const fast = await time('10.1.50.1', PASSWORD);
+  assert.strictEqual(fast.status, 200, 'the owner, from a new address');
+  for (let i = 10; i < 18; i++) assert.strictEqual((await time(`10.1.${i}.1`, 'wrong-password-1')).status, 401);
+  const slow = await time('10.1.51.1', PASSWORD);
+  assert.strictEqual(slow.status, 200, 'still signs in, only slower');
+  assert.ok(slow.ms >= 1500 && slow.ms < 8000, `slowed: ${slow.ms} ms`);
+  /* IPv6 addresses in one /64 count as one */
+  process.env.DB_PATH = path.join(dir, 'unit.db');   /* failures.js opens a database: a throwaway one */
+  const { addr } = require('../server/failures');
+  assert.strictEqual(addr('2001:db8:1:2:aaaa::1'), addr('2001:db8:1:2:bbbb:cccc:dddd:eeee'));
+  assert.notStrictEqual(addr('2001:db8:1:2::1'), addr('2001:db8:1:3::1'));
+  assert.strictEqual(addr('::ffff:10.0.0.1'), '10.0.0.1');
+  const db = new DatabaseSync(DB);
+  db.prepare('DELETE FROM login_failures').run();
+  db.close();
 });
 
 test('without TRUST_PROXY a forged X-Forwarded-For is ignored: every address shares one bucket', async () => {

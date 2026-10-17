@@ -65,3 +65,23 @@ test('a new sign-in stores only the hash of its id', async () => {
   assert.ok(sids().includes(sha(sid)), 'hash stored');
   assert.ok(!sids().includes(sid), 'raw id not stored');
 });
+
+test('the old cookie name works only for 30 days from the first start that had the limit, then it is ignored (NEW-SEC-05)', async () => {
+  const db = new DatabaseSync(DB);
+  const start = JSON.parse(db.prepare("SELECT data FROM app_config WHERE key = 'cookieMigration'").get().data).start;
+  assert.ok(Date.now() - start < 60000, 'stored on the first start');
+  db.prepare("UPDATE app_config SET data = ? WHERE key = 'cookieMigration'").run(JSON.stringify({ start: Date.now() - 31 * 86400000 }));
+  db.close();
+  const gone = new Promise(r => srv.once('exit', r));
+  srv.kill(); await gone;
+  srv = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server/index.js'], { cwd: root, env, stdio: 'ignore' });
+  for (let i = 0; i < 50; i++) {
+    try { if ((await fetch(BASE + '/healthz')).ok) break; } catch {}
+    await new Promise(r => setTimeout(r, 100));
+  }
+  const old = await fetch(BASE + '/api/me', { headers: { ...HTTPS, cookie: 'logbookmonster.sid=' + encodeURIComponent(signed(RAW)) } });
+  assert.strictEqual(old.status, 401, 'the old name no longer signs in');
+  assert.ok(old.headers.getSetCookie().some(c => /^logbookmonster\.sid=;/.test(c)), 'and is cleared');
+  const both = await fetch(BASE + '/api/me', { headers: { ...HTTPS, cookie: `logbookmonster.sid=x; __Host-logbookmonster.sid=${encodeURIComponent(signed(RAW))}` } });
+  assert.strictEqual(both.status, 200, 'the __Host- cookie still works beside it');
+});
