@@ -688,11 +688,13 @@ function route(){
 const VIEW_NAMES={dash:'Dashboard',day:'Daily Tracker',history:'History',timeline:'Timeline',gym:'Gym',foods:'Food Library',supps:'Supplements',
   photos:'Progress photos',account:'Account admin',admin:'Super admin',none:'Page not found'};
 const AD_TAB_NAMES={ai:'AI',people:'People',email:'Email',options:'Options',log:'Security log',keys:'Keys'};
+const MY_TAB_NAMES={plan:'Plan',checklist:'Checklist',sharing:'Sharing',security:'Security & data'};
 let focusedView=null;
 function viewTitle(){
   let name=VIEW_NAMES[view]||'Logbook Monster';
   if(view==='day')name+=' – '+fmtLong(S.cur);
   else if(view==='admin'&&typeof adTab==='string'&&AD_TAB_NAMES[adTab])name+=' – '+AD_TAB_NAMES[adTab];
+  else if(view==='account'&&typeof myTab==='string'&&MY_TAB_NAMES[myTab])name+=' – '+MY_TAB_NAMES[myTab];
   else if(view==='none'&&location.hash.replace(/^#/,'').split('/')[0]==='admin')name='Super admin – not available';
   document.title=name+' – Logbook Monster';
   const h=$('#vh');h.textContent=name;
@@ -872,17 +874,21 @@ document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(
 $('#acct').addEventListener('keydown',e=>{const d=$('#acct');if(e.key==='Escape'&&d.open){e.preventDefault();d.open=false;d.querySelector('summary').focus();}});
 $('#acct').addEventListener('focusout',e=>{const d=$('#acct'),to=e.relatedTarget;if(d.open&&to&&!d.contains(to)&&!$('#recheck').contains(to))d.open=false;});
 
-/* two-step sign-in: set up (key + otpauth link, confirmed with one code, then 10 recovery codes) and switch off */
+/* two-step sign-in: set up (a QR code of the otpauth link, the key and the link, confirmed with one code, then 10 recovery
+   codes to copy or download) and switch off */
 let TF=null,tfNew=null,tfCodes=null;
 async function tfLoad(){try{TF=await api('GET','/api/totp');}catch(e){TF=null;}tfRender();}
 function tfRender(msg=''){
   const b=$('#tfbody');let h='';
   if(tfCodes)h=`<p class="sub">Two-step sign-in is on. Save these recovery codes somewhere safe – each one works once, if you lose your phone. They won’t be shown again.</p>
-    <ul class="tfcodes" id="tf-codes">${tfCodes.map(c=>`<li>${esc(c)}</li>`).join('')}</ul><button class="ghost" type="button" data-tf="done">I’ve saved them</button>`;
+    <ul class="tfcodes" id="tf-codes">${tfCodes.map(c=>`<li>${esc(c)}</li>`).join('')}</ul>
+    <div class="tfacts"><button class="ghost" type="button" data-tf="copy">Copy codes</button><button class="ghost" type="button" data-tf="dl">Download codes</button>
+      <button class="btn" type="button" data-tf="done">I’ve saved them</button></div>`;
   else if(TF&&TF.on)h=`<p class="sub">On: after your password you’re asked for a code from your authenticator app. ${TF.recoveryLeft} recovery code${TF.recoveryLeft===1?'':'s'} left.</p>
     <form data-tf="off" class="pwform"><label class="f"><span class="lbl">Password or code, to switch it off</span><input id="tf-offin" type="password" autocomplete="current-password"></label>
     <button class="ghost" type="submit">Switch off</button></form>`;
-  else if(tfNew)h=`<p class="sub">Add this key to an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password…) as a time-based key, or open the link on your phone:</p>
+  else if(tfNew)h=`<p class="sub">Scan this with an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password…):</p>
+    ${tfQr(tfNew.uri)}<p class="sub">Or add the key by hand as a time-based key, or open the link on your phone:</p>
     <p class="tfsecret" id="tf-secret">${esc(tfNew.secret.replace(/(.{4})/g,'$1 ').trim())}</p><a class="ghost" href="${esc(tfNew.uri)}">Open in authenticator app</a>
     <form data-tf="on" class="pwform"><label class="f"><span class="lbl">The 6-digit code it shows</span><input id="tf-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7"></label>
     <label class="tog"><input type="checkbox" id="tf-out"> Also sign out my other sessions</label>
@@ -891,12 +897,19 @@ function tfRender(msg=''){
     <button class="btn" type="button" data-tf="start">Set up</button>`;
   b.innerHTML=h+`<p class="sub" id="tfmsg" role="status">${esc(msg)}</p>`;
 }
+/* the set-up link as a QR code (qr.js, inline SVG); without it, the key and the link still work */
+function tfQr(uri){try{return typeof QR==='object'?`<div class="tfqr">${QR.svg(uri,{label:'QR code of the set-up link – scan it with your authenticator app'})}</div>`:'';}catch{return '';}}
+const tfText=()=>`Logbook Monster recovery codes for ${ME}\nEach one works once, in place of a code from your authenticator app.\n\n${(tfCodes||[]).join('\n')}\n`;
 function tfShow(){$('#acct').open=true;$('#tfbox').open=true;tfLoad();}
 $('#tfbox').addEventListener('toggle',()=>{if($('#tfbox').open&&!tfNew&&!tfCodes)tfLoad();});
 $('#tfbody').addEventListener('click',async e=>{
   const a=e.target.closest('button[data-tf]');if(!a)return;
   if(a.dataset.tf==='start'){await once(a,async()=>{try{tfNew=await api('POST','/api/totp/setup',{});tfRender();$('#tf-code').focus();}catch(err){if(!err.signedOut)tfRender(err.message);}},'Setting up…');}
   else if(a.dataset.tf==='done'){tfCodes=null;tfLoad();}
+  else if(a.dataset.tf==='copy'){try{await navigator.clipboard.writeText(tfText());$('#tfmsg').textContent='Codes copied.';}
+    catch{const r=document.createRange();r.selectNodeContents($('#tf-codes'));const s=getSelection();s.removeAllRanges();s.addRange(r);$('#tfmsg').textContent='Couldn’t copy – they’re selected: press Ctrl+C (⌘C).';}}
+  else if(a.dataset.tf==='dl'){const l=document.createElement('a');l.href=URL.createObjectURL(new Blob([tfText()],{type:'text/plain'}));
+    l.download='logbook-monster-recovery-codes.txt';l.hidden=true;$('#tfbody').appendChild(l);   /* inside the menu, so its click doesn't close it */l.click();l.remove();setTimeout(()=>URL.revokeObjectURL(l.href),1000);$('#tfmsg').textContent='Codes downloaded.';}
 });
 $('#tfbody').addEventListener('submit',e=>{
   e.preventDefault();const form=e.target,f=form.dataset.tf;

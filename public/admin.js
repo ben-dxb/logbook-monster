@@ -1,8 +1,9 @@
 'use strict';
 /* Admin view, in two scopes on one page:
-   - account admin (#account, anyone): your own meal plan – foods, day templates (each with its meals and targets),
-     which template each weekday uses and free foods – kept as dated changes. There are no app-wide defaults:
-     a new account starts with no plan and builds or uploads its own here;
+   - account admin (#account, anyone), in tabs: Plan (#account – your own meal plan: foods, day templates, each with its
+     meals and targets, which template each weekday uses and free foods – kept as dated changes. There are no app-wide
+     defaults: a new account starts with no plan and builds or uploads its own here), Checklist (#account/checklist),
+     Sharing (#account/sharing – coach links) and Security & data (#account/security – sign-ins, photo and account deletes);
    - super admin (#admin, ADMIN_EMAILS): app-wide settings in tabs – AI (#admin/ai: OpenRouter key and a model per
      task), People (#admin/people), Email (#admin/email), Options (#admin/options), the Security log (#admin/log) and Keys
      (#admin/keys, keys.js – credential ages and rotation).
@@ -22,6 +23,8 @@ const loadErr=(what,k)=>`<p class="aderr" role="alert">Couldn’t load ${what}: 
 const loadTry=async(k,fn)=>{try{const v=await fn();delete LOADERR[k];return v;}catch(e){if(e.signedOut)throw e;LOADERR[k]=e.message||'Something went wrong';return null;}};
 const AD_TABS=['ai','people','email','options','log','keys'];
 let adTab='ai';                              /* the super admin tab shown */
+const MY_TABS=['plan','checklist','sharing','security'];
+let myTab='plan';                            /* the account admin tab shown */
 const adOpen=new Set();                      /* food editors left open */
 
 /* ---------- your plan from the server ---------- */
@@ -95,11 +98,16 @@ function adAddTpl(name,from){
 }
 
 /* ---------- rendering ---------- */
-/* from the route: #admin/ai, #admin/people, #admin/email; #admin opens the first tab */
-function adRoute(arg){adTab=AD_TABS.includes(arg)?arg:AD_TABS[0];if(adTab==='log')LG=null;if(view==='account')ML=null;renderAdmin();}
+/* from the route: #admin/ai, #admin/people…, #account/checklist…; #admin and #account open the first tab */
+function adRoute(arg){
+  if(view==='account'){myTab=MY_TABS.includes(arg)?arg:MY_TABS[0];if(myTab==='security')ML=null;}
+  else{adTab=AD_TABS.includes(arg)?arg:AD_TABS[0];if(adTab==='log')LG=null;}
+  renderAdmin();
+}
 function adTabs(){
-  document.querySelectorAll('#v-admin [data-adtab]').forEach(el=>{el.hidden=el.dataset.adtab!==adTab;});
-  document.querySelectorAll('#ad-tabs a').forEach(a=>{if(a.dataset.adt===adTab)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
+  const mine=view==='account', on=mine?myTab:adTab, k=mine?'mytab':'adtab', t=mine?'myt':'adt';
+  document.querySelectorAll(`#v-admin [data-${k}]`).forEach(el=>{el.hidden=el.dataset[k]!==on;});
+  document.querySelectorAll(mine?'#ad-mytabs a':'#ad-tabs a').forEach(a=>{if(a.dataset[t]===on)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
 }
 function renderAdmin(){
   if(view!=='admin'&&view!=='account')return;
@@ -114,11 +122,14 @@ function renderAdmin(){
     if(typeof kyLoad==='function'&&(!KY||adTab==='keys'||adTab==='ai'||adTab==='email'))kyLoad();   /* the Keys tab, its banner and the rotation controls (keys.js) */
     adTabs();return;}
   if(!AD){adPick();adLoad();}
+  adTabs();
   if(!SH)shLoad();
-  if(!ML)mlLoad();
+  if(myTab==='security'&&!ML)mlLoad();
   pbSync();
   if(!clDraft)clLoad();else clRender();
   adVersions();
+  /* nothing to download until there is a plan (the CSV holds the meals; the JSON the foods too) */
+  $('#ad-csv').hidden=!AD.templates.length;$('#ad-json').hidden=!AD.templates.length&&!Object.keys(AD.foods).length;
   const numIn=(id,val,attrs,label)=>`<input id="${id}" type="number" inputmode="decimal" min="0" value="${val==null?'':esc(val)}" ${attrs} aria-label="${esc(label)}">`;
   const has=AD.templates.length>0;
   /* plan */
@@ -143,15 +154,15 @@ function renderAdmin(){
   $('#ad-meals').innerHTML=!has?'':meals.map((m,mi)=>`<section class="meal admeal">
       <header class="adhead"><span class="mn">Meal ${esc(m.id)}</span>
         <input id="ad-mn-${mi}" class="adname" data-ad="mname" data-m="${mi}" value="${esc(m.name)}" aria-label="Meal name">
-        <button type="button" class="x" data-ad="mdel" data-m="${mi}" aria-label="Remove meal ${esc(m.id)}">×</button></header>
-      <input id="ad-note-${mi}" class="adnote" data-ad="mnote" data-m="${mi}" value="${esc(m.note||'')}" placeholder="Note (optional)" aria-label="Meal note">
+        <button type="button" class="x" data-ad="mdel" data-m="${mi}" aria-label="Remove meal ${esc(m.id)}${m.name?` (${esc(m.name)})`:''}">×</button></header>
+      <label class="f adnotef"><span class="lbl">Note (optional)</span><input id="ad-note-${mi}" class="adnote" data-ad="mnote" data-m="${mi}" value="${esc(m.note||'')}"></label>
       <span class="ml" id="ad-mt-${mi}"></span>
       <div class="boxes">${AD_BOXES.map(([b,l])=>`<div class="box"><span class="lbl">${l}</span>
         ${(m[b]||[]).map((i,ii)=>{const u=(AD.foods[i.f]||FOODS[i.f]||{}).unit||'g';const k=`${mi}-${b}-${ii}`;
           return `<div class="adrow"><select id="ad-f-${k}" data-ad="ifood" data-m="${mi}" data-b="${b}" data-i="${ii}" aria-label="Food, meal ${esc(m.id)} ${esc(l.toLowerCase())}">${foodOpts(i.f,b)}</select>
           <span class="amt">${numIn('ad-g-'+k,i.g,`step="1" data-ad="igram" data-m="${mi}" data-b="${b}" data-i="${ii}"`,`Amount of ${adFoodName(i.f)} in ${u}`)}<em>${esc(u)}</em></span>
           <label class="lock"><input type="checkbox" id="ad-l-${k}" data-ad="ilock" data-m="${mi}" data-b="${b}" data-i="${ii}"${i.lock?' checked':''}><span>Lock<span class="vh"> ${esc(adFoodName(i.f))}</span></span></label>
-          <button type="button" class="x" data-ad="idel" data-m="${mi}" data-b="${b}" data-i="${ii}" aria-label="Remove ${esc(adFoodName(i.f))} from meal ${esc(m.id)}">×</button></div>`;}).join('')||'<p class="empty">Nothing here</p>'}
+          <button type="button" class="x" data-ad="idel" data-m="${mi}" data-b="${b}" data-i="${ii}" aria-label="Remove ${esc(adFoodName(i.f))} from ${esc(m.name||'meal '+m.id)}">×</button></div>`;}).join('')||'<p class="empty">Nothing here</p>'}
         <div class="add"><select id="ad-a-${mi}-${b}" data-ad="iadd" data-m="${mi}" data-b="${b}" aria-label="Add a food"><option value="">${foodIds().length?'+ Add a food…':'+ Add foods in My foods first'}</option>${foodOpts(null,b)}</select></div>
       </div>`).join('')}</div></section>`).join('')
     +`${meals.length?'':'<p class="empty">No meals in this template yet.</p>'}<div class="adplanfoot"><span class="ml" id="ad-tot"></span><button type="button" class="ghost" data-ad="madd"${meals.length>=12?' disabled':''}>+ Add a meal</button></div>`;
@@ -160,7 +171,7 @@ function renderAdmin(){
   $('#ad-week').innerHTML=has?DAYS.map((d,i)=>`<label class="f"><span class="lbl">${d}</span><select id="ad-wd-${i}" data-ad="wday" data-i="${i}">${opts(AD.schedule[i])}</select></label>`).join('')
     :'<p class="empty">Add a day template first.</p>';
   $('#ad-targets').innerHTML=has?'<span></span><span class="lbl">kcal</span><span class="lbl">Protein g</span><span class="lbl">Carbs g</span><span class="lbl">Fat g</span>'+
-    AD.templates.map(({id,name})=>`<span class="adtl">${esc(name)}</span>`+MAC.map(m=>numIn(`ad-tg-${esc(id)}-${m}`,AD.targets[id][m],`data-ad="target" data-t="${esc(id)}" data-k="${m}"`,`${name}: ${{k:'kcal',p:'protein g',c:'carbs g',f:'fat g'}[m]}`)).join('')).join('')
+    AD.templates.map(({id,name})=>`<span class="adtl">${esc(name)}</span>`+MAC.map(m=>numIn(`ad-tg-${esc(id)}-${m}`,AD.targets[id][m],`data-ad="target" data-t="${esc(id)}" data-k="${m}"`,`${name} ${{k:'kcal',p:'protein g',c:'carbs g',f:'fat g'}[m]}`)).join('')).join('')
     :'';
   $('#ad-targets').hidden=!has;
   /* free foods */
@@ -209,20 +220,32 @@ function adTotals(){
   const el=$('#ad-tot');
   if(el)el.innerHTML=`<b>${esc(adTplName(adType))} as written:</b> ${r0(t.k)} kcal · P ${r1(t.p)} · C ${r1(t.c)} · F ${r1(t.f)} – target ${r0(+tg.k)} kcal · P ${r0(+tg.p)} · C ${r0(+tg.c)} · F ${r0(+tg.f)}. Each new day balances these amounts to its targets.`;
 }
+/* What saving does with the date in "Takes effect from": replace the change open here (same date), replace another change that
+   starts on that date, or add a new change – the one open here stays for the days it covers. A change in use today opens
+   with today's date, so saving it never rewrites the days before today. */
+function adFromHint(){
+  const when=f=>f?fmtShort(f):'the start', from=adFrom||null, same=adVer&&(adVer.from||null)===from;
+  const other=!same&&(DEFS.myVersions||[]).find(v=>(v.from||null)===from);
+  if(!adVer)return from?`Your days from ${when(from)} start from this plan; earlier days keep the plan they had.`:'Every day starts from this plan, back to the start.';
+  if(same)return `Saving changes this plan from ${when(from)}${from?'; earlier days keep the plan they had':''}.`;
+  if(other)return `Saving replaces your plan from ${when(from)}; the one from ${when(adVer.from)} stays as it is.`;
+  return `Saving makes a new change from ${when(from)} (the one from ${when(adVer.from)} stays${adVer.from&&(!from||adVer.from<from)?' for the days before':''}).`;
+}
 function adStatus(){
   const d=adDirty(), fe=$('#ad-from');
   fe.min='2000-01-01';fe.max=lastDate();
   if(document.activeElement!==fe&&!adFromBad)fe.value=adFrom;
   fe.setAttribute('aria-invalid',String(adFromBad));$('#ad-fromhint').classList.toggle('bad',adFromBad);
   const later=(DEFS.myVersions||[]).filter(v=>v.from&&v.from>(adFrom||'')&&v!==adVer).map(v=>fmtShort(v.from));
-  $('#ad-fromhint').textContent=adFromBad?'Pick a date from 2000 to a year from today – or clear the box for “from the start”. Nothing is saved until then.':(adFrom?`Your days from ${fmtShort(adFrom)} start from this plan; earlier days keep the plan they had.`:'Every day starts from this plan, back to the start.')
+  $('#ad-fromhint').textContent=adFromBad?'Pick a date from 2000 to a year from today – or clear the box for “from the start”. Nothing is saved until then.':adFromHint()
     +(later.length?` Later changes still apply from ${later.join(', ')}.`:'');
   $('#ad-status').innerHTML=adBusy?'<span class="chip info">Saving…</span>'
     :d?'<span class="chip bad">Unsaved changes</span> Nothing changes for your days until you save.'
     :!AD.templates.length&&adEmpty(adVer)?(adVer?`<span class="chip">No plan from ${esc(adVer.from?fmtShort(adVer.from):'the start')}</span> ${adVer.from?'Your days from then have no meal plan until a later change.':'Your days have no meal plan.'} Add a day template or upload a plan, then save it.`
       :'<span class="chip">No plan saved yet</span> Add a day template or upload a plan, then save it.')
-    :`<span class="chip ok">✓ Saved</span> ${adVer&&adVer.from?`Your days from ${esc(fmtShort(adVer.from))} start from this plan.`:'Your new days start from this plan.'} Days already in your history keep their own amounts.`;
+    :`<span class="chip ok">✓ Saved</span> ${adVer&&adVer.from?`This is your plan from ${esc(fmtShort(adVer.from))}.`:'This is your plan from the start.'} Days already in your history keep their own amounts.`;
   if(!$('#ad-save').hasAttribute('aria-busy'))$('#ad-save').disabled=!d||adBusy||adFromBad;$('#ad-discard').hidden=!d;
+  $('#ad-mytabs .admydirty').hidden=!d;
   adSaveErrs();
 }
 
@@ -344,7 +367,7 @@ $('#ad-admintotp').addEventListener('change',async e=>{
   el.disabled=false;
 });
 $('#ad-capform').addEventListener('submit',e=>{
-  e.preventDefault();const f=e.target,u=$('#ad-capuser'),all=$('#ad-capall'),need=x=>x.value.trim()===''?'Enter a number (0 = no limit)':'';
+  e.preventDefault();const f=e.target,u=$('#ad-capuser'),all=$('#ad-capall'),need=x=>x.value.trim()===''?'Enter a number (0 = no limit)':numWhy(x);
   $('#ad-capmsg').textContent='';
   if(!fieldErrors(f,[[u,need(u)],[all,need(all)]]))return;
   once(f,async()=>{
@@ -352,6 +375,7 @@ $('#ad-capform').addEventListener('submit',e=>{
     catch(err){if(!err.signedOut&&!errToField(err,[[/aiDailyUser|per account/i,u],[/aiDailyAll|whole app/i,all]]))$('#ad-capmsg').textContent=err.message;}
   },'Saving…');
 });
+$('#ad-capform').addEventListener('input',()=>{$('#ad-capmsg').textContent='';});   /* "Limits saved." is about the last save, not what's in the boxes now */
 $('#ad-file').addEventListener('change',e=>{const el=e.target;adUpload(el.files&&el.files[0]).finally(()=>{el.value='';});});
 window.addEventListener('beforeunload',e=>{if(adDirty()){e.preventDefault();e.returnValue='';}});
 
@@ -974,12 +998,55 @@ const LG_EV={'signin.ok':'Signed in','signin.failed':'Failed sign-in','signin.lo
   'supp.removed':'Shared supplement removed','coach.created':'Coach link made','coach.off':'Coach link switched off','coach.used':'Coach link opened','ai.cap':'AI daily limit reached','ai.breaker':'AI service paused or back',
   'secret.next':'Next key saved','secret.tested':'Key tested','secret.promoted':'Next key promoted','secret.stale':'Key due for rotation','coach.renewed':'Coach link renewed','coach.reminded':'Coach link reminder sent'};
 let LG=null, ML=null;
-const lgDetail=d=>Object.entries(d||{}).filter(([k])=>k!=='eh').map(([k,v])=>`${k}: ${Array.isArray(v)?v.join(', ')||'–':v}`).join(' · ');
+/* A row's detail in words: dates in this browser's format, a coach link by its name where this page knows it (your own links),
+   options and settings by their labels. The server has already masked emails and dropped secrets (audit.clean); a key this
+   doesn't know is shown as it is. */
+const LG_VIA={password:'with the password',google:'with Google',second:'with the password and a code',register:'new account'};
+const LG_OPT={planFiles:'Plan files',aiPrivate:'Private AI only',adminTotp:'Super admins must use a second step',aiDailyUser:'AI calls a day per account',aiDailyAll:'AI calls a day, whole app'};
+const lgDay=d=>isDate(d)?fmtLong(d):String(d);
+const lgLink=id=>{const x=SH&&SH.find(s=>s.id===id);return x?`“${x.label||'Coach link'}”`:`link #${id}`;};
+const lgCred=n=>{const c=((typeof KY!=='undefined'&&KY&&KY.credentials)||[]).find(x=>x.name===n);return c?c.label:n;};
+function lgDetail(ev,d){
+  d={...(d||{})};delete d.eh;
+  const out=[], n=(k,w)=>`${k} ${w}${k===1?'':'s'}`;
+  const take=k=>{const v=d[k];delete d[k];return v;};
+  if(ev.startsWith('coach.')&&d.id!=null){const id=take('id'),nm=take('name');out.push(nm?`“${nm}”`:lgLink(id));if(d.was!=null)out.push('replaces the link before it');delete d.was;}
+  if(d.expires)out.push('live until '+shWhen(take('expires')));
+  if(d.via)out.push(LG_VIA[d.via]||take('via'));delete d.via;
+  if(d.by)out.push(d.by==='code'?'with a code':'with the password');delete d.by;
+  if(d.for)out.push(d.for==='recheck'?'to confirm it’s you':`for ${d.for}`);delete d.for;
+  if('locked' in d)out.push(take('locked')?'now locked for a while':'');
+  if('signedOut' in d){const k=+take('signedOut');if(k)out.push(`signed out ${n(k,'other session')}`);}
+  if('linksOff' in d){const k=+take('linksOff');if(k)out.push(`switched off ${n(k,'coach link')}`);}
+  if(ev.startsWith('secret.'))delete d.id;
+  else if(d.id!=null&&(ev==='food.removed'||ev==='supp.removed'))delete d.id;
+  else if(d.id!=null&&ev==='photo.deleted')out.push(`photo #${take('id')}`);
+  if(d.email)out.push(take('email'));
+  if(d.resent)out.push('sent again');delete d.resent;
+  if(d.name&&(ev.startsWith('secret.')))out.push(lgCred(take('name')));
+  if(d.name)out.push(`“${take('name')}”`);
+  if(d.slot)out.push(`${take('slot')} slot`);
+  if('ok' in d||'dead' in d){const ok=take('ok'),dead=take('dead');out.push(dead?'refused – it’s dead':ok?'it works':'didn’t work');}
+  if(d.days!=null)out.push(`${n(+take('days'),'day')} old`);
+  if(ev==='secret.next'&&'set' in d)out.push(take('set')?'saved':'cleared');
+  if(d.from||d.to){const f=take('from'),t=take('to');out.push([f&&`from ${lgDay(f)}`,t&&`to ${lgDay(t)}`].filter(Boolean).join(' '));}
+  if(d.n!=null)out.push(ev.startsWith('photo')?n(+take('n'),'photo'):`${take('n')} failed sign-ins`);
+  if(d.date)out.push(lgDay(take('date')));
+  if(Array.isArray(d.fields)){const f=take('fields');out.push(f.length?'changed: '+f.map(k=>AM_LBL[k]||k).join(', '):'nothing changed');}
+  if(d.apiKey)out.push(take('apiKey')==='set'?'key saved':'key removed');
+  if(d.model)out.push('default model changed');delete d.model;
+  if(Array.isArray(d.tasks)){const t=take('tasks');if(t.length)out.push('task models: '+t.join(', '));}
+  if(d.cap)out.push(take('cap')==='account'?'the per-account limit':'the whole app’s limit');
+  if(ev==='ai.breaker'&&d.id){out.push(take('id')==='open'?'paused':'back');if(d.why)out.push(take('why'));}
+  if(ev==='options.changed')for(const k of Object.keys(LG_OPT))if(k in d){const v=take(k);out.push(`${LG_OPT[k]}: ${typeof v==='boolean'?v?'on':'off':v===0?'no limit':v}`);}
+  for(const [k,v] of Object.entries(d))out.push(`${k}: ${Array.isArray(v)?v.join(', ')||'–':v}`);
+  return out.filter(Boolean).join(' · ');
+}
 const lgAcct=a=>a.email||`account #${a.id} (removed)`;
 function lgRow(r,all){
   const who=all?[r.user&&lgAcct(r.user),r.actor&&(!r.user||r.actor.id!==r.user.id)&&`by ${lgAcct(r.actor)}`].filter(Boolean).join(' '):'';
   return `<div class="aduser"><span class="who"><b>${esc(LG_EV[r.event]||r.event)}</b><span class="sub">${esc([shWhen(r.at),who,r.ip&&'from '+r.ip].filter(Boolean).join(' · '))}</span>`
-    +`${lgDetail(r.detail)?`<span class="sub">${esc(lgDetail(r.detail))}</span>`:''}</span></div>`;
+    +`${(t=>t?`<span class="sub">${esc(t)}</span>`:'')(lgDetail(r.event,r.detail))}</span></div>`;
 }
 $('#ad-lg-ev').insertAdjacentHTML('beforeend',Object.entries(LG_EV).map(([k,l])=>`<option value="${esc(k)}">${esc(l)}</option>`).join(''));
 async function lgLoad(more){

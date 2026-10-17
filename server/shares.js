@@ -80,7 +80,7 @@ function create(user, b) {
 const mine = express.Router();
 mine.get('/', (req, res) => res.json({ shares: list(req.user) }));
 mine.post('/', (req, res) => {
-  try { const r = create(req.user, req.body); audit.log(req, 'coach.created', { id: r.id, expires: r.expires }); res.json(r); } catch (e) { send(res, e); }
+  try { const r = create(req.user, req.body); audit.log(req, 'coach.created', { id: r.id, name: r.label || undefined, expires: r.expires }); res.json(r); } catch (e) { send(res, e); }
 });
 /* Renew: a new link (new secret, same name, DEFAULT_DAYS unless expires says) in place of a live one, which is switched off in
    the same transaction. The new link is in the reply only, like a new one. key: as for switching off. */
@@ -96,15 +96,17 @@ mine.post('/:id/renew', (req, res) => {
     r = create(req.user, { label: old.label, expires: o.expires });
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); return send(res, e); }
-  audit.log(req, 'coach.renewed', { id: r.id, was: id, expires: r.expires });
+  audit.log(req, 'coach.renewed', { id: r.id, was: id, name: old.label || undefined, expires: r.expires });
   res.json(r);
 });
 /* Switching a link off deletes it: the next request with it finds nothing. */
 mine.delete('/:id', (req, res) => {
   const id = idOf(req.params.id), key = req.query.key;
-  if (key === undefined) { if (q.del.run(req.user.id, id).changes) audit.log(req, 'coach.off', { id }); return res.json({ ok: true }); }
+  /* the log keeps the link's name: the row itself is gone */
+  const was = q.get.get(req.user.id, id), name = (was && was.label) || undefined;
+  if (key === undefined) { if (q.del.run(req.user.id, id).changes) audit.log(req, 'coach.off', { id, name }); return res.json({ ok: true }); }
   if (!q.delKey.run(req.user.id, id, String(key)).changes) return res.status(404).json({ error: 'That link was switched off already – reload to see your links.' });
-  audit.log(req, 'coach.off', { id });
+  audit.log(req, 'coach.off', { id, name });
   res.json({ ok: true });
 });
 
@@ -131,7 +133,7 @@ function resolve(req, res, next) {
   if (!found) return res.status(404).json({ error: 'This link has run out or been switched off. Ask for a new one.', gone: true });
   const { row, user } = found;
   req.user = user; req.share = row;
-  audit.once(req, 'coach.used', { id: row.id }, row.user_id);
+  audit.once(req, 'coach.used', { id: row.id, name: row.label || undefined }, row.user_id);
   next();
 }
 /* Only reads get through, whatever the routes mounted below would otherwise take. */
@@ -168,9 +170,9 @@ function remind() {
     const when = new Date(r.expires_at).toUTCString().replace(/:\d\d GMT$/, ' UTC');
     mail.notify({ to: r.email, subject: `Logbook Monster: your coach link ${r.label ? `“${r.label}” ` : ''}runs out soon`,
       text: `Your coach link ${r.label ? `“${r.label}” ` : ''}stops working on ${when}.\n\n`
-        + `To keep sharing, open Account admin › Share with your coach and press Renew on it. You get a new link to send your coach yourself; `
-        + `the old one stops working straight away.\n${config.baseUrl}/#account\n\nIf you no longer want to share, do nothing – it runs out by itself.\n` });
-    audit.log(null, 'coach.reminded', { id: r.id }, r.user_id);
+        + `To keep sharing, open Account admin › Sharing and press Renew on it. You get a new link to send your coach yourself; `
+        + `the old one stops working straight away.\n${config.baseUrl}/#account/sharing\n\nIf you no longer want to share, do nothing – it runs out by itself.\n` });
+    audit.log(null, 'coach.reminded', { id: r.id, name: r.label || undefined }, r.user_id);
   }
   return rows.length;
 }

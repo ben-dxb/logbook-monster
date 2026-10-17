@@ -216,16 +216,16 @@ test('export, day / checklist / photo deletes, shared items removed by the super
 test('coach links: made, first use each day, switched off', async () => {
   const made = (await ann('POST', '/api/shares', { label: 'Coach', expires: daysAgo(-7) })).body;
   coachToken = made.url.split('/').pop();
-  assert.deepStrictEqual(last('coach.created', ANN).detail, { id: made.id, expires: made.expires });
+  assert.deepStrictEqual(last('coach.created', ANN).detail, { id: made.id, name: 'Coach', expires: made.expires });   /* the name: the log can say which link once it's gone */
   for (let i = 0; i < 3; i++) assert.strictEqual((await fetch(made.url + '/api/info')).status, 200);
   await fetch(made.url + '/api/weights');
   const used = rows("event = 'coach.used'");
   assert.strictEqual(used.length, 1, 'one row a day');
   assert.strictEqual(used[0].user_id, ANN);
   assert.strictEqual(used[0].actor_id, null);
-  assert.deepStrictEqual(used[0].detail, { id: made.id });
+  assert.deepStrictEqual(used[0].detail, { id: made.id, name: 'Coach' });
   assert.strictEqual((await ann('DELETE', `/api/shares/${made.id}?key=${made.key}`)).status, 200);
-  assert.deepStrictEqual(last('coach.off', ANN).detail, { id: made.id });
+  assert.deepStrictEqual(last('coach.off', ANN).detail, { id: made.id, name: 'Coach' });
 });
 
 test('failed sign-ins on a super admin account raise one alert', async () => {

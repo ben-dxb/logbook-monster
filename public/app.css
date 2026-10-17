@@ -241,6 +241,7 @@ footer{font-size:var(--fs-xs);color:var(--muted)}
 .adfile.off input{cursor:default}
 .adkey{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px;align-items:end;margin-top:6px}
 .adtabs{margin-top:8px}
+.adtabs .admydirty{margin-left:6px;font-size:var(--fs-xs)}
 #ad-aipanel a{color:var(--info)}
 .admodels{display:flex;flex-direction:column;gap:8px}
 .admrow{display:grid;grid-template-columns:minmax(0,12em) minmax(0,1fr);gap:2px 10px;align-items:center}
@@ -255,16 +256,17 @@ footer{font-size:var(--fs-xs);color:var(--muted)}
 .adhead{display:flex;align-items:center;gap:8px}
 .meal .adhead{flex-wrap:nowrap;align-items:center}
 .adhead .adname{flex:1 1 0}
-.adname{flex:1 1 auto;min-width:0;font-weight:700;font-size:15px;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:4px 6px}
-.adnote{width:100%;border:1px dashed var(--line);background:transparent;border-radius:6px;padding:3px 6px;font-size:var(--fs-xs);color:var(--muted)}
+.adname{flex:1 1 auto;min-width:0;font-weight:700;font-size:15px;border:1px solid var(--field-line);background:var(--surface);border-radius:6px;padding:4px 6px}
+.adnotef{margin:2px 0 4px}
+.adnotef .adnote{font-size:var(--fs-s)}
 .adrow{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:6px;align-items:center}
-.adrow select{min-width:0;width:100%;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:4px;font-size:var(--fs-s)}
+.adrow select{min-width:0;width:100%;border:1px solid var(--field-line);background:var(--surface);border-radius:6px;padding:4px;font-size:var(--fs-s)}
 .adplanfoot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
 .adplanfoot .ml{flex:1 1 260px}
 .adweek{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
-.adweek select,.adnewfood select,.adfgrid select{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 4px;font-size:var(--fs-s)}
+.adweek select,.adnewfood select,.adfgrid select{width:100%;border:1px solid var(--field-line);background:var(--surface);border-radius:6px;padding:5px 4px;font-size:var(--fs-s)}
 .adtargets{display:grid;grid-template-columns:minmax(0,1.4fr) repeat(4,minmax(0,1fr));gap:6px;align-items:center}
-.adtargets input{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px}
+.adtargets input{width:100%;border:1px solid var(--field-line);background:var(--surface);border-radius:6px;padding:5px 6px}
 .adtl{font-size:var(--fs-s);font-weight:700}
 .adnewfood{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1.2fr) repeat(4,minmax(0,1fr)) auto;gap:6px;align-items:end}
 .adfoods{display:flex;flex-direction:column}
@@ -281,7 +283,7 @@ footer{font-size:var(--fs-xs);color:var(--muted)}
 .adshare .btn{justify-self:start}
 #ad-mailtest{grid-template-columns:minmax(0,1fr) auto}
 .admail{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;align-items:end}
-.admail select{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 4px;font-size:var(--fs-s)}
+.admail select{width:100%;border:1px solid var(--field-line);background:var(--surface);border-radius:6px;padding:5px 4px;font-size:var(--fs-s)}
 .admail .pwf{grid-column:span 2}
 .admailact{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .adsrc{flex-basis:100%}
@@ -678,7 +680,7 @@ a.dcard:hover{border-color:var(--info)}
 /* Account admin › Daily checklist */
 .adcl{display:flex;flex-direction:column;gap:8px}
 .adclrow{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr) auto;gap:6px 8px;align-items:end}
-.adclrow input,.adclrow select{width:100%;min-width:0;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px;color:inherit}
+.adclrow input,.adclrow select{width:100%;min-width:0;border:1px solid var(--field-line);background:var(--surface);border-radius:6px;padding:5px 6px;color:inherit}
 .adclrow .gmv{display:flex;gap:4px;align-items:center}
 @media (max-width:640px){.adclrow{grid-template-columns:minmax(0,1fr) minmax(0,1fr);border-top:1px solid var(--line);padding-top:8px}.adclrow .adclname{grid-column:1/-1}.adclrow .gmv{grid-column:1/-1;justify-content:flex-end}}
 /* a number box that refused a typo (app.js numNote) */
@@ -693,6 +695,9 @@ a.dcard:hover{border-color:var(--info)}
 
 /* ---------- two-step sign-in (account menu) and the re-check dialog ---------- */
 .tfsecret{font-family:ui-monospace,monospace;font-size:var(--fs-s);word-break:break-all;user-select:all;background:var(--soft);border-radius:6px;padding:6px 8px;margin:0}
+.tfqr{width:min(220px,100%);margin:4px 0}
+.tfqr svg{display:block;width:100%;height:auto;border-radius:6px}
+.tfacts{display:flex;flex-wrap:wrap;gap:8px}
 .tfcodes{font-family:ui-monospace,monospace;font-size:var(--fs-s);display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin:0;padding:0;list-style:none;user-select:all}
 .recheck{border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);padding:16px;width:min(360px,calc(100vw - 32px))}
 .recheck h2{margin:0;font-size:18px}

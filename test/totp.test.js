@@ -152,7 +152,12 @@ test('setting it up: a key and otpauth URI, confirmed with one code, 10 recovery
 
   assert.strictEqual(r.body.signedOut, 0, 'other sessions stay unless asked to end');
   assert.strictEqual((await other('GET', '/api/me')).status, 200);
-  assert.ok(await mailTo('ann@example.com', /switched on/), 'the account is told by email');
+  const told = await mailTo('ann@example.com', /switched on/);
+  assert.ok(told, 'the account is told by email');
+  /* pointing at the part of Account admin that lists sign-ins, by the name it has there (quoted-printable undone) */
+  const text = Buffer.from(told.data.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))), 'latin1').toString('utf8');
+  assert.match(text, /Account admin › Security & data › Sign-ins and security/);
+  assert.match(text, /\/#account\/security/);
   assert.deepStrictEqual((await ann('GET', '/api/totp')).body, { on: true, recoveryLeft: 10, readable: true });
   assert.strictEqual((await ann('GET', '/api/me')).body.totp, true);
   assert.strictEqual((await ann('POST', '/api/totp/setup', {})).status, 409, 'no new key while it is on');
