@@ -141,6 +141,9 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Something went wrong' });
 });
 
+/* compacts an older database before serving; photo file sweep and permissions, then daily (server/upkeep.js) */
+require('./upkeep').start();
+
 app.listen(config.port, config.host, () => {
   console.log(`Logbook Monster listening on ${config.baseUrl} (bound to ${config.host}:${config.port})`);
   if (!config.google.enabled) console.log('Google sign-in is off - set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to turn it on.');

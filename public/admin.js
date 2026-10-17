@@ -13,7 +13,7 @@ const AD_FREE_OPTS=[['','No'],['sauce','Sauce'],['veg','Green veg']];
 const AD_LEGACY={T:'Training',R:'Rest',S:'Saturday training'};   /* day types before templates had names */
 const AD_MAX_TPL=12;
 let AD=null, AD_BASE=null, adSaved='', adType=null, adMsg='', adErrs=[], adBusy=false;
-let DEFS={mine:null,myVersions:[]};          /* your plan from the server: the change in effect today and every dated change */
+let DEFS={myVersions:[]};          /* your plan from the server: every dated change (mineOn picks the one in effect on a date) */
 let DEFS_ON, adVer=null, adFrom='', adFromToday=false, adFromBad=false;   /* adFromBad: the box holds a date that can't be used – refused, never read as blank */          /* plan change applied now; the one being edited; the date a save takes effect from ('' = from the start) */
 let adAi=null, adNotes=[], adSuper=false;
 const LOADERR={};   /* a part of the page whose data didn't load: its message, shown in its place */
@@ -34,7 +34,7 @@ function typeOn(date){const v=mineOn(date),ids=((v&&v.templates)||[]).map(t=>t.i
 function tnameOn(date,id){const v=mineOn(date),t=((v&&v.templates)||[]).find(x=>x.id===id);return t?t.name:AD_LEGACY[id]||'';}
 function freshOn(date,t){useDefs(date);const D=freshDay(wdOf(date),t);libSync(D,date);return D;}   /* with its copy of the plan foods, as persist() keeps it */
 function adApplyInUse(){useDefs(S.cur,true);}
-function setDefaults(d){DEFS=d||{mine:null,myVersions:[]};adApplyInUse();}
+function setDefaults(d){DEFS=d||{myVersions:[]};adApplyInUse();}
 const adEmpty=v=>!v||(!(v.templates||[]).length&&!Object.keys(v.foods||{}).length);   /* as the server sees it: no templates, no foods */
 /* choose which of your plan changes to edit (the one in effect today unless one is named) */
 function adPick(v){
@@ -708,6 +708,9 @@ let pdTok=0, pdN=0;
 async function pdCount(){
   const from=$('#ad-pd-from').value, to=$('#ad-pd-to').value, msg=$('#ad-pdmsg'), btn=$('#ad-pd-btn'), tok=++pdTok;
   pdN=0;btn.disabled=true;
+  /* "Download" takes the range picked (a ZIP of those photos), or every photo while no range is */
+  const dl=$('#ad-pd-dl'), range=isDate(from)&&isDate(to)&&from<=to;
+  dl.href=range?`/api/photos/zip?from=${from}&to=${to}`:'/api/photos/zip';dl.textContent=range?'Download the photos in this range':'Download all my photos';
   if(!isDate(from)||!isDate(to)){msg.textContent='';return;}
   clearFieldErrors($('#ad-pdel'));
   if(from>to){msg.textContent='';fieldError($('#ad-pd-to'),'Pick a date on or after the From date',{focus:false});return;}
@@ -725,7 +728,7 @@ $('#ad-pdel').addEventListener('submit',async e=>{
   btn.disabled=true;$('#ad-pdmsg').textContent='Deleting…';
   try{const r=await api('DELETE',`/api/photos?from=${from}&to=${to}`);
     PHOTOS=null;pPick=[];                      /* the Photos page loads again next time */
-    $('#ad-pd-from').value=$('#ad-pd-to').value='';pdN=0;++pdTok;
+    $('#ad-pd-from').value=$('#ad-pd-to').value='';pdN=0;++pdTok;$('#ad-pd-dl').href='/api/photos/zip';$('#ad-pd-dl').textContent='Download all my photos';
     $('#ad-pdmsg').textContent=`Deleted ${r.deleted} photo${r.deleted===1?'':'s'}.`;}
   catch(err){if(!err.signedOut)$('#ad-pdmsg').textContent=err.message;btn.disabled=!pdN;}
 });
@@ -958,7 +961,7 @@ const LG_EV={'signin.ok':'Signed in','signin.failed':'Failed sign-in','signin.lo
   'recovery.used':'Recovery code used','twostep.on':'Two-step sign-in on','twostep.off':'Two-step sign-in off','recheck.ok':'Confirmed it’s you',
   'recheck.failed':'Failed to confirm it’s you',signout:'Signed out','password.changed':'Password changed','google.linked':'Google linked','invite.created':'Invite made','invite.accepted':'Invite accepted',
   'account.removed':'Account removed','account.deleted':'Deleted their own account','ai.settings':'AI settings changed','email.settings':'Email settings changed','options.changed':'Options changed',
-  export:'Data downloaded','day.deleted':'Day deleted','checklist.reset':'Checklist reset','photos.deleted':'Photos deleted','food.removed':'Shared food removed',
+  export:'Data downloaded','day.deleted':'Day deleted','checklist.reset':'Checklist reset','photos.deleted':'Photos deleted','photo.deleted':'Photo deleted','photos.downloaded':'Photos downloaded','food.removed':'Shared food removed',
   'supp.removed':'Shared supplement removed','coach.created':'Coach link made','coach.off':'Coach link switched off','coach.used':'Coach link opened','ai.cap':'AI daily limit reached'};
 let LG=null, ML=null;
 const lgDetail=d=>Object.entries(d||{}).filter(([k])=>k!=='eh').map(([k,v])=>`${k}: ${Array.isArray(v)?v.join(', ')||'–':v}`).join(' · ');

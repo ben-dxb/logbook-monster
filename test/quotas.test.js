@@ -143,6 +143,9 @@ test('per-account caps: saved days, plan history and photo bytes', async () => {
   assert.match(r.body.error, /photos have reached/);
   assert.strictEqual((await bob('POST', `/api/photos?date=${TODAY}&pose=back`, jpeg(150))).status, 200);
   assert.strictEqual((await bob('PUT', `/api/photos/${p1.body.id}/thumb`, jpeg(300))).status, 413, 'a bigger thumbnail counts too');
+  /* 468 of 600 bytes used: a new thumbnail counts in full while it is written (the old one is still on disk until the swap) */
+  assert.strictEqual((await bob('PUT', `/api/photos/${p1.body.id}/thumb`, jpeg(140))).status, 413, 'the new thumbnail is reserved in full (146 bytes, though only 40 more than the old)');
+  assert.strictEqual((await bob('PUT', `/api/photos/${p1.body.id}/thumb`, jpeg(120))).status, 200);
   assert.strictEqual((await cat('POST', `/api/photos?date=${TODAY}&pose=back`, jpeg(300))).status, 200, 'the cap is per account');
 });
 

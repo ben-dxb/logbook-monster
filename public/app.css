@@ -509,6 +509,16 @@ footer{font-size:var(--fs-xs);color:var(--muted)}
 .pside select{width:100%;min-width:0;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px}
 .pside .ghost{align-self:center}
 .pside .pzoom{align-self:stretch;border-radius:10px}
+/* a photo whose size is known keeps its room before it loads (pSize in photos.js sets --ar and --nw on the frame) */
+.pbig .pzoom.sized{width:min(100%,calc(75vh * var(--ar)),calc(var(--nw) * 1px))}
+.pbig .pzoom.sized img,.pside .pzoom.sized img{width:100%;height:auto;aspect-ratio:var(--ar)}
+.pbig .pzoom.sized img{max-height:none}
+.pzbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px;font-size:13px}
+.pzbar button{min-width:40px;min-height:36px}
+.pzbar .sub,.pzhint{flex:1 1 100%;text-align:center}
+.pcpick{display:flex;gap:6px;align-items:end;min-width:0}
+.pcpick .f{flex:1 1 auto;min-width:0}
+.gbar a.pback{flex:none;white-space:nowrap}
 .ptools{display:flex;flex-direction:column;gap:8px}
 .prow{display:flex;flex-wrap:wrap;gap:8px;align-items:end}
 .prow .f{flex:0 1 auto;min-width:0}
@@ -538,7 +548,7 @@ footer{font-size:var(--fs-xs);color:var(--muted)}
 .tchips .sub a{color:var(--info)}
 .tm{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:4px 11px;font-size:var(--fs-s);color:var(--muted);max-width:100%;overflow-wrap:anywhere;text-align:left}
 .tm[aria-pressed="true"]{color:var(--ink);border-color:var(--tc,var(--ink));font-weight:700;box-shadow:inset 0 0 0 1px var(--tc,var(--ink))}
-.tm.none{border-style:dashed}
+.tm.none{border-style:dashed}   /* no data in the range: dashed, but its text keeps full contrast (p5-photos-10) */
 .tsw{display:inline-block;flex:none;width:10px;height:10px;border-radius:99px;background:var(--tc,var(--muted))}
 .tm[aria-pressed="false"] .tsw{background:transparent;border:2px solid var(--tc,var(--muted))}
 .ttools{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}

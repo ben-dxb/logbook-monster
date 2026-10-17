@@ -189,7 +189,7 @@ function storeMine(user, list, grow) {
 /* With a from date (null = from the start) this saves the change taking effect then, replacing one with the
    same date; changes dated later still apply from their dates. An empty change means "no plan from then on".
    Without a date it replaces everything. */
-function putMine(input, user, today) {
+function putMine(input, user) {
   const data = clean(input);
   const has = isObj(input) && Object.prototype.hasOwnProperty.call(input, 'from');
   const from = has && input.from != null && input.from !== '' ? input.from : null;
@@ -198,22 +198,23 @@ function putMine(input, user, today) {
   if (list.length >= MAX_VERSIONS) throw new Error('Too many plan changes – delete some old ones first');
   list.push({ from, ...data, updatedAt: stamp() });
   storeMine(user, list, true);
-  return forUser(user, today);
+  return forUser(user);
 }
 /* Without a date: no plan for any day. With one ('start' for the first): delete that change,
    so the one before it applies again. */
-function delMine(user, from, today) {
-  if (from === undefined) { q.delMine.run(user.id); return forUser(user, today); }
+function delMine(user, from) {
+  if (from === undefined) { q.delMine.run(user.id); return forUser(user); }
   const key = from === 'start' ? null : from;
   if (key !== null && !isDate(key)) throw new Error('Bad date');
   const list = myVersions(user);
   const rest = list.filter(x => x.from !== key);
   if (rest.length === list.length) throw Object.assign(new Error('There is no plan change from that date'), { status: 404 });
   storeMine(user, rest);
-  return forUser(user, today);
+  return forUser(user);
 }
-/* What the browser gets: the plan in effect today (the person's date, server/dates.js) and all its dated changes. */
-function forUser(user, today) { return { mine: mine(user, today || undefined), myVersions: myVersions(user) }; }
+/* What the browser (and a coach link) gets: every dated change of the plan. The one in effect on a date is the last one from on or
+   before it (mineOn in admin.js / coach.js); it isn't sent a second time. */
+function forUser(user) { return { myVersions: myVersions(user) }; }
 /* What the account's days start from on a date (today by default). */
 function effective(user, date) { return mine(user, date) || clean({}); }
 
