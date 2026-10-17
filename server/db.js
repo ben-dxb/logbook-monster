@@ -337,6 +337,11 @@ if (!db.prepare('PRAGMA table_info(sets)').all().some(c => c.name === 'updated_a
   db.exec('ALTER TABLE sets ADD COLUMN updated_at TEXT');
 }
 
+/* Added later: when the account was emailed that a coach link runs out within a week (server/shares.js), so it's once. */
+if (!db.prepare('PRAGMA table_info(shares)').all().some(c => c.name === 'reminded_at')) {
+  db.exec('ALTER TABLE shares ADD COLUMN reminded_at TEXT');
+}
+
 /* Added later: the security log (server/audit.js). No foreign keys: a removed account's rows stay, to show who removed it. */
 /* Emails nobody waits on (mail.notify): kept until sent, or dropped once too old (server/mail.js). Times in ms. */
 db.exec(`CREATE TABLE IF NOT EXISTS outbox (

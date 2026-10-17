@@ -1,6 +1,6 @@
 'use strict';
 /* Browser smoke test: starts a throwaway server, signs in, weighs a meal-prep pack, edits and saves a day, logs a weight,
-   opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, checks that pages load only versioned scripts and styles and that the Dashboard and Timeline keep what they read until a write, shares a read-only coach link and opens it signed out, sets up two-step sign-in and signs in with a code and a recovery code, opens the privacy page and deletes an account, confirms a sensitive admin change on an old sign-in, uploads a plan and adds a day template on Account admin, sets up AI models and invites someone on the Super admin tabs, builds a plan from nothing as the new account, switches a day to another template, edits one day in two tabs, at desktop and phone widths. Fails on any page error.
+   opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, checks that pages load only versioned scripts and styles and that the Dashboard and Timeline keep what they read until a write, shares a read-only coach link and opens it signed out, sets up two-step sign-in and signs in with a code and a recovery code, opens the privacy page and deletes an account, confirms a sensitive admin change on an old sign-in, uploads a plan and adds a day template on Account admin, sets up AI models and invites someone on the Super admin tabs, lists credential ages on Keys and saves a next AI key, builds a plan from nothing as the new account, switches a day to another template, edits one day in two tabs, at desktop and phone widths. Fails on any page error.
    Needs Playwright and its Chromium (README, Run it locally); without them it fails, so `npm run check` never passes untested. */
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -1690,6 +1690,21 @@ async function recheck(browser) {
         await pg.waitForFunction(() => [...document.querySelectorAll('#ad-log .aduser b')].every(b => b.textContent === 'AI settings changed'), null, { timeout: 5000 });
         expect(!/sk-or-v1-smoke/.test(await pg.textContent('#ad-log')), 'the key is never in the log');
         await pg.selectOption('#ad-lg-ev', '');
+        /* Keys (Phase 4): every credential with its age – the smoke server's SESSION_SECRET has no date, so the banner shows –
+           and the rotation controls on the AI tab: Save as next turns on Test next and Promote (not pressed: no real OpenRouter here) */
+        await pg.click('#ad-tabs [data-adt=keys]'); await pg.waitForSelector('[data-adtab=keys]:not([hidden]) #ad-keys .kyrow', { timeout: 5000 });
+        const ky = await pg.textContent('#ad-keys');
+        expect(/SESSION_SECRETS/.test(ky) && /OPENROUTER/.test(ky) && /age unknown/.test(ky), 'the Keys tab should list the credentials: ' + ky.slice(0, 200));
+        expect(!/sk-or-v1-smoke/.test(ky), 'the Keys tab never shows a key');
+        expect(await pg.isVisible('#ad-keybanner') && /unknown age/.test(await pg.textContent('#ad-keybanner')), 'a credential of unknown age should show the banner');
+        const kyScroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        expect(kyScroll <= 1, `horizontal overflow of ${kyScroll}px on the Keys tab at ${w}px wide`);
+        await pg.click('#ad-tabs [data-adt=ai]'); await pg.waitForSelector('[data-adtab=ai]:not([hidden]) [data-ky-form=ai]');
+        expect(await pg.isDisabled('[data-ky=promote][data-k=ai]'), 'Promote is off until a next key is saved');
+        await pg.fill('[data-ky-in=ai]', 'sk-or-v1-smoke-next-key'); await pg.click('[data-ky-form=ai] button[type=submit]');
+        await pg.waitForFunction(() => /Saved as next/.test(document.querySelector('[data-ky-msg=ai]').textContent) && !document.querySelector('[data-ky=promote][data-k=ai]').disabled, null, { timeout: 5000 });
+        const rotScroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        expect(rotScroll <= 1, `horizontal overflow of ${rotScroll}px on the AI tab with the rotation controls at ${w}px wide`);
         const gctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
         const gp = await gctx.newPage();
         gp.on('pageerror', e => errs.push('invite page: ' + e.message));

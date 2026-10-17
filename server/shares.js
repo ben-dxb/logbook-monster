@@ -1,6 +1,9 @@
 'use strict';
 /* Coach links: an account makes a link that shows its data read only – no password, no sign-in – until a
-   time it picks (an hour to a year), or until it switches the link off. The link carries a random secret;
+   time it picks (an hour to a year, DEFAULT_DAYS unless it says), or until it switches the link off. The secret is held by a
+   third party (the coach), so it isn't rotated on a schedule; instead the account is emailed REMIND_DAYS before a link runs
+   out, and Renew makes a new link (new secret, same name) and switches the old one off – the person sends the new one
+   themselves. A live link nobody opened for IDLE_DAYS is flagged on Account admin. The link carries a random secret;
    only its SHA-256 is stored, so the link is shown once, when it's made.
    The coach's page (/coach/<secret>, public/coach.js) only reads, through GET routes under
    /coach/<secret>/api: the account's name, its defaults (food names and its week), day summaries, weights,
@@ -29,11 +32,14 @@ const q = {
   del: db.prepare('DELETE FROM shares WHERE user_id = ? AND id = ?'),
   delKey: db.prepare('DELETE FROM shares WHERE user_id = ? AND id = ? AND substr(token_hash, 1, 12) = ?'),
   purge: db.prepare('DELETE FROM shares WHERE user_id = ? AND expires_at < ?'),
+  ending: db.prepare(`SELECT s.id, s.user_id, s.label, s.expires_at, u.email FROM shares s JOIN users u ON u.id = s.user_id
+    WHERE s.reminded_at IS NULL AND s.expires_at > ? AND s.expires_at <= ? AND datetime(s.created_at) < datetime(s.expires_at, ?)`),
+  reminded: db.prepare("UPDATE shares SET reminded_at = datetime('now') WHERE id = ? AND reminded_at IS NULL"),
   sums: db.prepare('SELECT date, summary FROM days WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date'),
   weights: db.prepare('SELECT date, kg FROM weights WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date'),
 };
 
-const MAX_LIVE = 20, MAX_DAYS = 366, KEEP_EXPIRED_DAYS = 30;
+const MAX_LIVE = 20, MAX_DAYS = 366, KEEP_EXPIRED_DAYS = 30, DEFAULT_DAYS = 90, REMIND_DAYS = 7, IDLE_DAYS = 30;
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 const fail = (msg, status = 400) => Object.assign(new Error(msg), { status });
 const hash = t => crypto.createHash('sha256').update(t).digest('hex');
@@ -45,7 +51,9 @@ const send = (res, e) => { if (!e.status) console.error(e); res.status(e.status 
 /* key: a piece of the secret's hash, which a reused id doesn't share – switching off sends it, so a stale tab can't
    switch off a newer link that took the same id */
 function view(r) {
-  return { id: r.id, key: r.token_hash.slice(0, 12), label: r.label, expires: r.expires_at, created: sqlIso(r.created_at), used: sqlIso(r.used_at), live: r.expires_at > nowIso() };
+  const live = r.expires_at > nowIso(), last = Date.parse(sqlIso(r.used_at || r.created_at));
+  return { id: r.id, key: r.token_hash.slice(0, 12), label: r.label, expires: r.expires_at, created: sqlIso(r.created_at), used: sqlIso(r.used_at), live,
+    idle: live && Date.now() - last >= IDLE_DAYS * 86400000 };
 }
 
 /* ---------- the account's own links (under /api, signed in) ---------- */
@@ -59,7 +67,7 @@ function create(user, b) {
   const o = b && typeof b === 'object' ? b : {};
   const label = String(o.label == null ? '' : o.label).replace(/\s+/g, ' ').trim();
   if (label.length > 60) throw fail('Name the link in 60 characters or fewer');
-  const t = Date.parse(typeof o.expires === 'string' ? o.expires : '');
+  const t = o.expires == null || o.expires === '' ? Date.now() + DEFAULT_DAYS * 86400000 : Date.parse(typeof o.expires === 'string' ? o.expires : '');
   if (!Number.isFinite(t)) throw fail('Pick how long the link stays live');
   if (t <= Date.now() + 60000) throw fail('Pick a time in the future for the link to run out');
   if (t > Date.now() + MAX_DAYS * 86400000) throw fail('A link can stay live for a year at most');
@@ -73,6 +81,23 @@ const mine = express.Router();
 mine.get('/', (req, res) => res.json({ shares: list(req.user) }));
 mine.post('/', (req, res) => {
   try { const r = create(req.user, req.body); audit.log(req, 'coach.created', { id: r.id, expires: r.expires }); res.json(r); } catch (e) { send(res, e); }
+});
+/* Renew: a new link (new secret, same name, DEFAULT_DAYS unless expires says) in place of a live one, which is switched off in
+   the same transaction. The new link is in the reply only, like a new one. key: as for switching off. */
+mine.post('/:id/renew', (req, res) => {
+  const id = idOf(req.params.id), o = req.body && typeof req.body === 'object' ? req.body : {};
+  const old = q.get.get(req.user.id, id);
+  if (!old || (o.key !== undefined && old.token_hash.slice(0, 12) !== String(o.key))) return res.status(404).json({ error: 'That link was switched off already – reload to see your links.' });
+  if (old.expires_at <= nowIso()) return res.status(409).json({ error: 'That link has run out – make a new one instead.' });
+  db.exec('BEGIN IMMEDIATE');
+  let r;
+  try {
+    q.del.run(req.user.id, id);
+    r = create(req.user, { label: old.label, expires: o.expires });
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); return send(res, e); }
+  audit.log(req, 'coach.renewed', { id: r.id, was: id, expires: r.expires });
+  res.json(r);
 });
 /* Switching a link off deletes it: the next request with it finds nothing. */
 mine.delete('/:id', (req, res) => {
@@ -132,4 +157,26 @@ coach.use('/timeline', timeline.router);
 coach.use('/photos', photos.router);
 coach.use((req, res) => res.status(404).json({ error: 'Not found' }));
 
-module.exports = { mine, coach };
+/* Daily (and on start): an email to the account for each link that runs out within REMIND_DAYS – once per link, and only for
+   links made to last longer than that (mail.notify does nothing while email isn't set up). */
+function remind() {
+  const mail = require('./mail');
+  if (!mail.configured()) return 0;
+  const rows = q.ending.all(nowIso(), new Date(Date.now() + REMIND_DAYS * 86400000).toISOString(), `-${REMIND_DAYS} days`);
+  for (const r of rows) {
+    if (!q.reminded.run(r.id).changes) continue;
+    const when = new Date(r.expires_at).toUTCString().replace(/:\d\d GMT$/, ' UTC');
+    mail.notify({ to: r.email, subject: `Logbook Monster: your coach link ${r.label ? `“${r.label}” ` : ''}runs out soon`,
+      text: `Your coach link ${r.label ? `“${r.label}” ` : ''}stops working on ${when}.\n\n`
+        + `To keep sharing, open Account admin › Share with your coach and press Renew on it. You get a new link to send your coach yourself; `
+        + `the old one stops working straight away.\n${config.baseUrl}/#account\n\nIf you no longer want to share, do nothing – it runs out by itself.\n` });
+    audit.log(null, 'coach.reminded', { id: r.id }, r.user_id);
+  }
+  return rows.length;
+}
+function schedule() {
+  try { remind(); } catch (e) { console.error('Coach link reminders failed:', e.message); }
+  setInterval(() => { try { remind(); } catch (e) { console.error('Coach link reminders failed:', e.message); } }, 24 * 60 * 60 * 1000).unref();
+}
+
+module.exports = { mine, coach, remind, schedule, DEFAULT_DAYS };

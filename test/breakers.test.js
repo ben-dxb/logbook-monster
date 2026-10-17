@@ -149,7 +149,7 @@ test('at most 3 calls at once per account and 16 app-wide; past 10 s (here 300 m
   const all = await Promise.all([1, 2, 3, 4].flatMap(u => [1, 2, 3].map(() => post('/fill', 1000 + u).then(r => r.status))));
   assert.ok(all.every(s => s === 200), String(all));
   assert.strictEqual(most, 5, 'app-wide: 5 sockets at most');
-  assert.strictEqual(ai.slots.all, 0, 'every slot given back');
+  assert.strictEqual(ai.seats.all, 0, 'every slot given back');
 });
 
 test('the breaker opens after 5 failures, fails at once with Retry-After, half-opens and closes on an answer', async () => {
@@ -224,4 +224,11 @@ test('file reads running out of time never open the breaker for the other tasks;
   mode = 'hang';
   for (let i = 0; i < 5; i++) await assert.rejects(text({ timeout: 100 }), e => e.status === 502);
   assert.strictEqual(ai.breaker.state, 'open', 'five text-task timeouts open it');
+});
+
+test('checking a key (Keys tab: Test active / next / old) never feeds the breaker, even a revoked one’s 401', async () => {
+  mode = '401';
+  for (let i = 0; i < 6; i++) assert.strictEqual((await ai.verify('active')).dead, true);
+  assert.strictEqual(ai.breaker.state, 'closed');
+  mode = 'ok';
 });
