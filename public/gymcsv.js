@@ -6,11 +6,16 @@
 const GymCsv=(()=>{
 
 /* RFC 4180-ish: quoted fields, "" inside quotes, CRLF or LF, comma / semicolon / tab. */
-function parseCsv(text){
+/* the separator is whichever of them the heading row uses most */
+function csvSep(text){
   text=String(text||'').replace(/^﻿/,'');
   const first=text.slice(0,text.search(/\r?\n|$/));
   const count=c=>first.split(c).length;
-  const sep=[',',';','\t'].reduce((b,c)=>count(c)>count(b)?c:b,',');
+  return [',',';','\t'].reduce((b,c)=>count(c)>count(b)?c:b,',');
+}
+function parseCsv(text){
+  text=String(text||'').replace(/^﻿/,'');
+  const sep=csvSep(text);
   const rows=[];let row=[],f='',q=false;
   for(let i=0;i<text.length;i++){
     const ch=text[i];
@@ -73,8 +78,42 @@ function readWhen(ds,ts,order){
   const t=readTime(ts)||readTime(rest)||[12,0,0];
   return `${y}-${p2(mo)}-${p2(d)}T${p2(t[0])}:${p2(t[1])}:${p2(t[2])}`;
 }
-const readNum=v=>{const s=String(v==null?'':v).trim().replace(/\s/g,'');if(!s)return null;
-  const n=+(/^-?\d+,\d+$/.test(s)?s.replace(',','.'):s.replace(/[^\d.\-]/g,''));return Number.isFinite(n)?n:NaN;};
+/* Numbers as exports write them: 12.5 or 12,5 (decimal comma), 1,025 / 1.025 / 1 025 / 1,025.5 / 1.025,5 (thousands), "80 kg".
+   A single comma or dot before exactly three digits (1,025) could be either: the decimal mark the file uses elsewhere settles it
+   (mark, from decimalMark), else a dot is a decimal point and a comma is left as AMBIGUOUS. Returns a number, null when blank,
+   NaN when it isn't a number, or AMBIGUOUS. */
+const AMBIGUOUS='ambiguous';
+const numText=v=>String(v==null?'':v).trim().replace(/[\s\u00a0\u202f']/g,'').replace(/(kgs?|lbs?|reps?|g|ml)$/i,'');
+const grouped=(s,t)=>new RegExp(`^\\d{1,3}(\\${t}\\d{3})+$`).test(s);
+/* what one number says about the decimal mark: ',' or '.', or '' if it can't tell */
+function markOf(v){
+  const s=numText(v).replace(/^[+-]/,'');if(!/^[\d.,]*\d[\d.,]*$/.test(s))return '';
+  const c=s.includes(','),d=s.includes('.');
+  if(c&&d)return s.lastIndexOf(',')>s.lastIndexOf('.')?',':'.';
+  if(!c&&!d)return '';
+  const ch=c?',':'.',p=s.split(ch);
+  if(p.length>2)return grouped(s,ch)?(ch===','?'.':','):'';
+  if(p[1].length!==3||p[0].length>3||/^0/.test(p[0]))return ch;
+  return '';
+}
+/* the decimal mark a set of numbers agree on, or null if none says or they disagree */
+function decimalMark(values){const m=new Set(values.map(markOf).filter(Boolean));return m.size===1?[...m][0]:null;}
+function readNum(v,mark){
+  let s=numText(v);if(!s)return null;
+  const neg=/^-/.test(s);s=s.replace(/^[+-]/,'');
+  if(!/^[\d.,]*\d[\d.,]*$/.test(s))return NaN;
+  const c=s.includes(','),d=s.includes('.');let n;
+  if(!c&&!d)n=+s;
+  else if(c&&d){const dec=s.lastIndexOf(',')>s.lastIndexOf('.')?',':'.',th=dec===','?'.':',',i=s.lastIndexOf(dec),a=s.slice(0,i),b=s.slice(i+1);
+    if(!grouped(a,th)||!/^\d+$/.test(b))return NaN;n=+(a.split(th).join('')+'.'+b);}
+  else{const ch=c?',':'.',p=s.split(ch);
+    if(p.length>2){if(!grouped(s,ch))return NaN;n=+p.join('');}
+    else if(!p[1])n=p[0]?+p[0]:NaN;   /* "10." */
+    else{const k=markOf(s)||mark||(ch==='.'?'.':'');
+      if(!k)return AMBIGUOUS;
+      n=k===ch?+((p[0]||'0')+'.'+p[1]):grouped(s,ch)?+p.join(''):NaN;}}
+  return Number.isFinite(n)?(neg?-n:n):NaN;
+}
 
 /* opts: {dateOrder:'dmy'|'mdy', unit:'kg'|'lb'} – only used where the file itself doesn't say. */
 function readHistory(text,opts={}){
@@ -97,18 +136,22 @@ function readHistory(text,opts={}){
   const unitFromHead=/lb/.test(weightKey)?'lb':/kg/.test(weightKey)?'kg':null;
   const unit=unitFromHead||opts.unit||'kg';
   let unitSeen=!!unitFromHead;
+  /* the file's decimal mark, from its own numbers; a comma-separated file can't use bare decimal commas, so there a lone 1,025 is 1025 */
+  const sep=csvSep(text), mark=decimalMark(body.flatMap(r=>[cell(r,'weight'),cell(r,'reps')]))||(sep===','?'.':null);
+  const numWhy=(what,v,n)=>n===AMBIGUOUS?`${what} “${v}” could be ${v.replace(/[,.]/,'')} or ${v.replace(',','.')} – write it without the separator`:`${what} “${v}” isn’t a number`;
   const sets=[], skipped=[];
   body.forEach((r,ri)=>{
     const line=ri+2, name=cell(r,'exercise').replace(/\s+/g,' ').slice(0,80);
     if(!name){skipped.push({line,why:'no exercise name'});return;}
     const at=readWhen(cell(r,'date'),cell(r,'time'),order);
     if(!at){skipped.push({line,why:`date “${cell(r,'date').slice(0,30)}” not understood`});return;}
-    const reps=readNum(cell(r,'reps'));
+    const reps=readNum(cell(r,'reps'),mark);
     if(reps==null){skipped.push({line,why:`${name}: no reps (a timed or cardio set?)`});return;}
-    if(!Number.isFinite(reps)||reps<0||reps>1000){skipped.push({line,why:`${name}: reps “${cell(r,'reps')}” isn’t a number`});return;}
-    let kg=readNum(cell(r,'weight'));
+    if(!Number.isFinite(reps)){skipped.push({line,why:`${name}: ${numWhy('reps',cell(r,'reps'),reps)}`});return;}
+    if(reps<0||reps>1000){skipped.push({line,why:`${name}: reps “${cell(r,'reps')}” should be from 0 to 1000`});return;}
+    let kg=readNum(cell(r,'weight'),mark);
     if(kg==null)kg=0;
-    if(!Number.isFinite(kg)){skipped.push({line,why:`${name}: weight “${cell(r,'weight')}” isn’t a number`});return;}
+    if(!Number.isFinite(kg)){skipped.push({line,why:`${name}: ${numWhy('weight',cell(r,'weight'),kg)}`});return;}
     const u=cell(r,'unit').toLowerCase();
     if(u)unitSeen=true;
     if(/lb|pound/.test(u)||(!/kg|kilo/.test(u)&&unit==='lb'))kg*=0.45359237;
@@ -116,7 +159,7 @@ function readHistory(text,opts={}){
     if(kg<-500||kg>2000){skipped.push({line,why:`${name}: weight out of range`});return;}
     const label=/^(normal|working|work)$/i.test(cell(r,'label'))?'':cell(r,'label');
     const note=[label,cell(r,'note')].filter(Boolean).join(' · ').replace(/\s+/g,' ').slice(0,300);
-    const ord=readNum(cell(r,'order'));
+    const ord=readNum(cell(r,'order'),mark);
     sets.push({name,reps:Math.round(reps),kg,note,at,_o:Number.isFinite(ord)?ord:0,_i:ri});
   });
   /* oldest first; sets done at the same moment keep the file's set order */
@@ -142,6 +185,6 @@ function importBatches(sets,max=200000,maxSets=2000){
   return out;
 }
 
-return {parseCsv,readWhen,readHistory,importBatches};
+return {parseCsv,csvSep,readWhen,readNum,decimalMark,AMBIGUOUS,readHistory,importBatches};
 })();
 if(typeof module!=='undefined')module.exports=GymCsv;

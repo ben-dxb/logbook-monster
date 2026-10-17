@@ -5,6 +5,7 @@
 const express = require('express');
 const db = require('./db');
 const { isDate, writeError } = require('./dates');
+const { isNum } = require('./num');
 const ai = require('./ai');
 const jobs = require('./jobs');
 
@@ -80,8 +81,8 @@ function cleanSet(b, user) {
   const e = idOf(b.exercise);
   if (!q.exercise.get(user.id, e)) throw fail('Pick an exercise');
   const reps = +b.reps, kg = +b.kg;
-  if (!Number.isInteger(reps) || reps < 0 || reps > 1000) throw fail('Reps must be a whole number from 0 to 1000');
-  if (!Number.isFinite(kg) || kg < -500 || kg > 2000) throw fail('Weight must be between -500 and 2000 kg');
+  if (!isNum(b.reps) || !Number.isInteger(reps) || reps < 0 || reps > 1000) throw fail('Reps must be a whole number from 0 to 1000');
+  if (!isNum(b.kg) || kg < -500 || kg > 2000) throw fail('Weight must be between -500 and 2000 kg');
   const m = AT_RE.exec(String(b.at || ''));
   if (!m || !isDate(m[1])) throw fail('Date and time look wrong');
   if (writeError(m[1])) throw fail(writeError(m[1]));

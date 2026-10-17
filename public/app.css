@@ -626,3 +626,6 @@ footer{font-size:12px;color:var(--muted)}
 .adclrow input,.adclrow select{width:100%;min-width:0;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px;color:inherit}
 .adclrow .gmv{display:flex;gap:4px;align-items:center}
 @media (max-width:640px){.adclrow{grid-template-columns:minmax(0,1fr) minmax(0,1fr);border-top:1px solid var(--line);padding-top:8px}.adclrow .adclname{grid-column:1/-1}.adclrow .gmv{grid-column:1/-1;justify-content:flex-end}}
+/* a number box that refused a typo (app.js numNote) */
+.numnote{position:fixed;left:16px;bottom:16px;z-index:60;margin:0;width:min(380px,calc(100vw - 32px));background:var(--surface);color:var(--ink);
+  border:1px solid var(--line);border-left:4px solid var(--bad);border-radius:10px;padding:10px 12px;box-shadow:0 6px 20px rgba(0,0,0,.14);overflow-wrap:anywhere}

@@ -116,3 +116,26 @@ test('real Setgraph export layout: both lb and kg columns, decimal reps, duratio
   ]);
   assert.deepStrictEqual(r.skipped.map(s => s.line), [4]);   /* a timed set has no reps */
 });
+
+test('numbers: decimal commas and thousands separators read on purpose, letters and ambiguous ones left out with a reason', () => {
+  const { readNum, decimalMark, AMBIGUOUS } = GymCsv;
+  assert.deepStrictEqual(['12.5', '12,5', '1,025.5', '1.025,5', '1 025', '1,000,000', '0,025', '80 kg', '-20', ''].map(v => readNum(v)),
+    [12.5, 12.5, 1025.5, 1025.5, 1025, 1000000, 0.025, 80, -20, null]);
+  assert.ok(Number.isNaN(readNum('abc')) && Number.isNaN(readNum('80e')) && Number.isNaN(readNum('1,2,3')));
+  assert.strictEqual(readNum('1,025'), AMBIGUOUS);
+  assert.deepStrictEqual([readNum('1,025', '.'), readNum('1,025', ','), readNum('1.025'), readNum('1.025', ',')], [1025, 1.025, 1.025, 1025]);
+  assert.deepStrictEqual([decimalMark(['12,5', '1,025']), decimalMark(['12.5', '1,025']), decimalMark(['1,025']), decimalMark(['12,5', '12.5'])], [',', '.', null, null]);
+  /* a comma-separated file: "1,025" lb is a thousand and twenty-five; reps "abc" is not 0 reps */
+  let r = readHistory('Exercise,Date,Reps,Weight (lbs)\nLeg press,2026-10-01 10:00,10,"1,025"\nCurl,2026-10-01 10:05,abc,20\n');
+  assert.deepStrictEqual(r.sets.map(s => [s.name, s.reps, s.kg]), [['Leg press', 10, 464.93]]);
+  assert.deepStrictEqual(r.skipped, [{ line: 3, why: 'Curl: reps “abc” isn’t a number' }]);
+  /* semicolons: a decimal comma elsewhere in the file makes 1,025 one point oh two five, a decimal point makes it 1025;
+     alone it is reported, not guessed */
+  r = readHistory('Exercise;Date;Reps;Weight\nPress;2026-10-01 10:00;10;1,025\nCurl;2026-10-01 10:05;8;12,5\n');
+  assert.deepStrictEqual(r.sets.map(s => s.kg), [1.02, 12.5]);
+  r = readHistory('Exercise;Date;Reps;Weight\nPress;2026-10-01 10:00;10;1,025\nCurl;2026-10-01 10:05;8;1,250.5\n');
+  assert.deepStrictEqual(r.sets.map(s => s.kg), [1025, 1250.5]);
+  r = readHistory('Exercise;Date;Reps;Weight\nPress;2026-10-01 10:00;10;1,025\n');
+  assert.deepStrictEqual(r.sets, []);
+  assert.match(r.skipped[0].why, /could be 1025 or 1\.025/);
+});
