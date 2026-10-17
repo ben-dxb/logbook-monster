@@ -37,6 +37,16 @@ const config = {
   /* Wrong passwords allowed per account (email) every 15 minutes, from any address. */
   accountFailLimit: Math.max(1, +process.env.ACCOUNT_FAIL_LIMIT || 10),
   adminEmails: list(process.env.ADMIN_EMAILS),
+  /* Saves (any POST/PUT/DELETE under /api) per account every 10 minutes, and data exports per account an hour. */
+  writeRateLimit: Math.max(1, +process.env.WRITE_RATE_LIMIT || 1000),
+  exportRateLimit: Math.max(1, +process.env.EXPORT_RATE_LIMIT || 10),
+  /* What one account can store, in bytes: saved days' JSON, its plan history, and photo files (thumbnails included).
+     Only the tests lower them. */
+  quota: {
+    days: Math.max(1, +process.env.QUOTA_DAYS_BYTES || 50 * 1024 * 1024),
+    plan: Math.max(1, +process.env.QUOTA_PLAN_BYTES || 10 * 1024 * 1024),
+    photos: Math.max(1, +process.env.QUOTA_PHOTO_BYTES || 5 * 1024 * 1024 * 1024),
+  },
   /* mail servers allowed on internal addresses (a local relay, the tests); any other must be on the internet */
   smtpAllowHosts: list(process.env.SMTP_ALLOW_HOSTS),
   google: {

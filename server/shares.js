@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const db = require('./db');
+const { isDate } = require('./dates');
 const config = require('./config');
 const auth = require('./auth');
 const defaults = require('./defaults');
@@ -30,8 +31,6 @@ const q = {
 };
 
 const MAX_LIVE = 20, MAX_DAYS = 366, KEEP_EXPIRED_DAYS = 30;
-const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
-const isDate = s => typeof s === 'string' && DATE_RE.test(s) && new Date(s + 'T00:00:00Z').toISOString().startsWith(s);
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 const fail = (msg, status = 400) => Object.assign(new Error(msg), { status });
 const hash = t => crypto.createHash('sha256').update(t).digest('hex');

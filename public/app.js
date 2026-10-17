@@ -9,7 +9,9 @@ const parse=s=>{const [y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d);
 const addDays=(s,n)=>{const d=parse(s);d.setDate(d.getDate()+n);return ymd(d);};
 const wdOf=s=>(parse(s).getDay()+6)%7; /* 0 = Monday */
 const todayStr=()=>ymd(new Date());
-const isDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||'')&&!isNaN(parse(s));
+/* a real date (not 2026-02-31) from 2000 to a year from today – what the server stores (server/dates.js) */
+const lastDate=()=>{const d=new Date();d.setFullYear(d.getFullYear()+1);return ymd(d);};
+const isDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||'')&&ymd(parse(s))===s&&s>='2000-01-01'&&s<=lastDate();
 const fmtLong=s=>parse(s).toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 const fmtShort=s=>parse(s).toLocaleDateString(undefined,{day:'numeric',month:'short'});
 const fmtMonth=s=>parse(s).toLocaleDateString(undefined,{month:'long',year:'numeric'});
@@ -225,7 +227,7 @@ function render(){
   $('#dtitle').textContent=S.cur===td?'Today':S.cur===addDays(td,-1)?'Yesterday':S.cur===addDays(td,1)?'Tomorrow':parse(S.cur).toLocaleDateString(undefined,{weekday:'long'});
   $('#dsub').textContent=fmtLong(S.cur)+(templateName(t)?` · ${templateName(t)}`:'');
   $('#todaybtn').hidden=S.cur===td;
-  $('#datepick').value=S.cur;
+  const dp=$('#datepick');dp.min='2000-01-01';dp.max=lastDate();dp.value=S.cur;
   renderWeek();
   renderWeightInline();
   const names={k:'Calories',p:'Protein min',c:'Carbs',f:'Fat max'};

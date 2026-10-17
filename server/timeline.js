@@ -7,6 +7,7 @@
    over the exercises trained in the 60 days before. */
 const express = require('express');
 const db = require('./db');
+const { isDate } = require('./dates');
 const ai = require('./ai');
 const photos = require('./photos');
 const supps = require('./supps');
@@ -26,8 +27,6 @@ const q = {
   exercises: db.prepare('SELECT id, name, trend FROM exercises WHERE user_id = ?'),
 };
 
-const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
-const isDate = s => typeof s === 'string' && DATE_RE.test(s) && new Date(s + 'T00:00:00Z').toISOString().startsWith(s);
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 const fail = (msg, status = 400) => Object.assign(new Error(msg), { status });
 const addDays = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);

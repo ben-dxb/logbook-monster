@@ -276,6 +276,7 @@ test('account admin: plan changes take effect from a date, earlier days keep the
   await friend.req('GET', '/auth/config');
   await friend.req('POST', '/auth/login', { email: 'friend@example.com', password: 'longenough2' });
   await friend.req('GET', '/api/me');
+  const FUT = new Date(Date.now() + 200 * 864e5).toISOString().slice(0, 10);   /* changes can be dated up to a year ahead */
   const plan = name => ({ foods: { oats: OATS }, templates: [{ id: 'R', name: 'Rest' }],
     plan: { R: [{ id: '1', name, p: [], c: [{ f: 'oats', g: 100 }], x: [] }] } });
   const names = r => r.body.myVersions.map(v => [v.from, v.plan && v.plan.R ? v.plan.R[0].name : null]);
@@ -283,14 +284,14 @@ test('account admin: plan changes take effect from a date, earlier days keep the
   assert.deepStrictEqual(names(r), [[null, 'Old bowl']]);
   assert.strictEqual(r.body.mine.plan.R[0].name, 'Old bowl');
 
-  r = await friend.req('PUT', '/api/my/defaults', { ...plan('Future bowl'), from: '2999-01-04' });
+  r = await friend.req('PUT', '/api/my/defaults', { ...plan('Future bowl'), from: FUT });
   assert.strictEqual(r.status, 200);
-  assert.deepStrictEqual(names(r), [[null, 'Old bowl'], ['2999-01-04', 'Future bowl']]);
+  assert.deepStrictEqual(names(r), [[null, 'Old bowl'], [FUT, 'Future bowl']]);
   assert.strictEqual(r.body.mine.plan.R[0].name, 'Old bowl', 'today still uses the plan in effect now');
   r = await friend.req('PUT', '/api/my/defaults', { ...plan('Past bowl'), from: '2020-03-02' });
   assert.strictEqual(r.body.mine.plan.R[0].name, 'Past bowl');
   r = await friend.req('PUT', '/api/my/defaults', { ...plan('Past bowl 2'), from: '2020-03-02' });   /* same date replaces it */
-  assert.deepStrictEqual(names(r), [[null, 'Old bowl'], ['2020-03-02', 'Past bowl 2'], ['2999-01-04', 'Future bowl']]);
+  assert.deepStrictEqual(names(r), [[null, 'Old bowl'], ['2020-03-02', 'Past bowl 2'], [FUT, 'Future bowl']]);
   /* nothing from a date = no plan from then on */
   r = await friend.req('PUT', '/api/my/defaults', { from: '2021-01-01' });
   assert.strictEqual(r.body.mine, null);
@@ -304,13 +305,13 @@ test('account admin: plan changes take effect from a date, earlier days keep the
   await admin.req('POST', '/auth/login', { email: 'me@example.com', password: 'longenough1' });
   await admin.req('GET', '/api/me');
   assert.deepStrictEqual((await admin.req('GET', '/api/defaults')).body.myVersions, []);
-  assert.strictEqual((await admin.req('DELETE', '/api/my/defaults/2999-01-04')).status, 404);
+  assert.strictEqual((await admin.req('DELETE', '/api/my/defaults/' + FUT)).status, 404);
 
   assert.strictEqual((await friend.req('DELETE', '/api/my/defaults/2998-01-01')).status, 404);
   r = await friend.req('DELETE', '/api/my/defaults/2021-01-01');
   assert.strictEqual(r.body.mine.plan.R[0].name, 'Past bowl 2');
   r = await friend.req('DELETE', '/api/my/defaults/start');
-  assert.deepStrictEqual(names(r), [['2020-03-02', 'Past bowl 2'], ['2999-01-04', 'Future bowl']]);
+  assert.deepStrictEqual(names(r), [['2020-03-02', 'Past bowl 2'], [FUT, 'Future bowl']]);
   /* without a date, a save replaces every change */
   r = await friend.req('PUT', '/api/my/defaults', plan('Only bowl'));
   assert.deepStrictEqual(names(r), [[null, 'Only bowl']]);

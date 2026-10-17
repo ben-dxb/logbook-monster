@@ -1,5 +1,6 @@
 'use strict';
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const { requireAuth, csrfProtect, csrfToken } = require('./auth');
 const defaults = require('./defaults');
@@ -15,6 +16,7 @@ const photos = require('./photos');
 const timeline = require('./timeline');
 const shares = require('./shares');
 const jobs = require('./jobs');
+const { isDate, writeError } = require('./dates');
 
 const q = {
   getSettings: db.prepare('SELECT data FROM settings WHERE user_id = ?'),
@@ -29,7 +31,9 @@ const q = {
   putWeight: db.prepare(`INSERT INTO weights (user_id, date, kg) VALUES (?, ?, ?)
     ON CONFLICT(user_id, date) DO UPDATE SET kg = excluded.kg, updated_at = datetime('now')`),
   delWeight: db.prepare('DELETE FROM weights WHERE user_id = ? AND date = ?'),
-  allDays: db.prepare('SELECT date, data FROM days WHERE user_id = ? ORDER BY date'),
+  daysSize: db.prepare('SELECT COALESCE(SUM(length(data)), 0) AS n FROM days WHERE user_id = ?'),   /* covered by days_size */
+  daySize: db.prepare('SELECT length(data) AS n FROM days WHERE user_id = ? AND date = ?'),
+  daysAfter: db.prepare('SELECT date, data FROM days WHERE user_id = ? AND date > ? ORDER BY date LIMIT ?'),
   getOptions: db.prepare("SELECT data FROM app_config WHERE key = 'options'"),
   putOptions: db.prepare(`INSERT INTO app_config (key, data, updated_by) VALUES ('options', ?, ?)
     ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_by = excluded.updated_by, updated_at = datetime('now')`),
@@ -49,8 +53,6 @@ function options() {
   return out;
 }
 
-const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
-const isDate = s => typeof s === 'string' && DATE_RE.test(s) && !isNaN(Date.parse(s + 'T00:00:00Z'));
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 const MAX_JSON = 256 * 1024;
 
@@ -77,6 +79,15 @@ router.use(requireAuth);
 router.use(express.json({ limit: '300kb' }));
 router.use(csrfProtect);
 router.use(ai.scope);
+/* Every account's saves, whatever the route: the tracker saves a changed day 0.6 s after the last edit, so even nonstop
+   editing stays far below this; a script hammering saves doesn't. Photo uploads have their own byte, count and rate caps. */
+const SAFE = new Set(['GET', 'HEAD', 'OPTIONS']);
+const photoUpload = req => (req.method === 'POST' && req.path === '/photos') || (req.method === 'PUT' && /^\/photos\/\d+\/thumb$/.test(req.path));
+router.use(rateLimit({
+  windowMs: 10 * 60 * 1000, limit: config.writeRateLimit, standardHeaders: 'draft-7', legacyHeaders: false,
+  keyGenerator: req => 'u' + req.user.id, skip: req => SAFE.has(req.method) || photoUpload(req),
+  message: { error: 'That’s a lot of saving in a short time – wait a few minutes and try again.' },
+}));
 
 router.get('/me', (req, res) => {
   res.json({ email: req.user.email, name: req.user.name, hasPassword: !!req.user.password_hash,
@@ -87,7 +98,7 @@ router.get('/me', (req, res) => {
 router.get('/defaults', (req, res) => res.json(defaults.forUser(req.user)));
 /* Account admin: anyone keeps their own plan. */
 router.put('/my/defaults', (req, res) => {
-  try { res.json(defaults.putMine(req.body, req.user)); } catch (e) { bad(res, e.message); }
+  try { res.json(defaults.putMine(req.body, req.user)); } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 router.delete('/my/defaults', (req, res) => res.json(defaults.delMine(req.user)));
 router.delete('/my/defaults/:from', (req, res) => {
@@ -179,12 +190,19 @@ router.get('/days/:date', (req, res) => {
   if (!row) return res.status(404).json({ error: 'No entry for this day' });
   res.json({ date: req.params.date, updated: row.updated_at, data: JSON.parse(row.data) });
 });
+/* all of an account's saved days together (a day is a few KB; 50 MB is decades of them) */
+const MAX_DAYS_TOTAL = config.quota.days;
 router.put('/days/:date', (req, res) => {
-  if (!isDate(req.params.date)) return bad(res, 'Bad date');
+  const err = writeError(req.params.date);
+  if (err) return bad(res, err);
   const { data, summary } = req.body || {};
   if (!isObj(data) || !Array.isArray(data.meals)) return bad(res, 'Day data is missing its meals');
   const json = JSON.stringify(data);
   if (json.length > MAX_JSON) return bad(res, 'Day data too large');
+  const old = q.daySize.get(req.user.id, req.params.date);
+  if (q.daysSize.get(req.user.id).n - (old ? old.n : 0) + json.length > MAX_DAYS_TOTAL) {
+    return res.status(413).json({ error: `Your saved days have reached the ${Math.round(MAX_DAYS_TOTAL / 1048576)} MB an account can keep – delete some old days first` });
+  }
   q.putDay.run(req.user.id, req.params.date, json, JSON.stringify(cleanSummary(summary)));
   res.json({ ok: true });
 });
@@ -198,7 +216,8 @@ router.get('/weights', (req, res) => {
   res.json(q.listWeights.all(req.user.id, ...range(req)));
 });
 router.put('/weights/:date', (req, res) => {
-  if (!isDate(req.params.date)) return bad(res, 'Bad date');
+  const err = writeError(req.params.date);
+  if (err) return bad(res, err);
   const kg = +(req.body && req.body.kg);
   if (!Number.isFinite(kg) || kg < 20 || kg > 400) return bad(res, 'Weight must be between 20 and 400 kg');
   q.putWeight.run(req.user.id, req.params.date, Math.round(kg * 100) / 100);
@@ -219,24 +238,57 @@ router.use('/timeline', timeline.router);
 router.use('/shares', shares.mine);
 router.use('/jobs', jobs.router);
 
-/* Everything you've stored, as one JSON file. */
-router.get('/export', (req, res) => {
-  const s = q.getSettings.get(req.user.id);
+/* Everything you've stored, as one JSON file. Written a section (and a few hundred days) at a time, letting other
+   requests run in between, and only a few times an hour per account. */
+const exportLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, limit: config.exportRateLimit, standardHeaders: 'draft-7', legacyHeaders: false,
+  keyGenerator: req => 'u' + req.user.id, message: { error: 'You’ve downloaded your data a lot this hour – try again later.' },
+});
+const EXPORT_DAYS = 200;
+const breathe = () => new Promise(r => setImmediate(r));
+router.get('/export', exportLimit, async (req, res) => {
+  const user = req.user;
+  const write = str => (res.write(str) ? null : new Promise(r => {
+    const go = () => { res.off('drain', go); res.off('close', go); r(); };
+    res.on('drain', go); res.on('close', go);
+  }));
+  const field = async (name, value, first) => { await write(`${first ? '{' : ','}${JSON.stringify(name)}:${JSON.stringify(value)}`); await breathe(); };
+  const sections = [
+    ['settings', () => { const s = q.getSettings.get(user.id); return s ? JSON.parse(s.data) : {}; }],
+    ['defaults', () => defaults.mine(user)],
+    ['planChanges', () => defaults.myVersions(user)],
+    ['days', null],
+    ['weights', () => q.listWeights.all(user.id, '0000-01-01', '9999-12-31')],
+    ['gym', () => gym.exportFor(user)],
+    ['foods', () => foods.exportFor(user)],
+    ['supplements', () => supps.exportFor(user)],
+    ['checklist', () => checklist.exportFor(user)],
+    ['photos', () => photos.exportFor(user)],
+  ];
   res.attachment(`logbook-monster-${new Date().toISOString().slice(0, 10)}.json`);
-  res.json({
-    exported: new Date().toISOString(),
-    email: req.user.email,
-    settings: s ? JSON.parse(s.data) : {},
-    defaults: defaults.mine(req.user),
-    planChanges: defaults.myVersions(req.user),
-    days: q.allDays.all(req.user.id).map(r => ({ date: r.date, data: JSON.parse(r.data) })),
-    weights: q.listWeights.all(req.user.id, '0000-01-01', '9999-12-31'),
-    gym: gym.exportFor(req.user),
-    foods: foods.exportFor(req.user),
-    supplements: supps.exportFor(req.user),
-    checklist: checklist.exportFor(req.user),
-    photos: photos.exportFor(req.user),
-  });
+  res.type('json');
+  try {
+    await field('exported', new Date().toISOString(), true);
+    await field('email', user.email);
+    for (const [name, get] of sections) {
+      if (res.destroyed) return;
+      if (get) { await field(name, get()); continue; }
+      /* days are stored as JSON already: copied as they are, a batch at a time */
+      await write(',"days":[');
+      for (let after = '', n = 0; ;) {
+        const rows = q.daysAfter.all(user.id, after, EXPORT_DAYS);
+        for (const r of rows) await write(`${n++ ? ',' : ''}{"date":${JSON.stringify(r.date)},"data":${r.data}}`);
+        if (rows.length < EXPORT_DAYS || res.destroyed) break;
+        after = rows[rows.length - 1].date;
+        await breathe();
+      }
+      await write(']');
+    }
+    res.end('}');
+  } catch (e) {
+    console.error(e);
+    if (!res.headersSent) res.status(500).json({ error: 'Something went wrong' }); else res.destroy();
+  }
 });
 
 router.use((req, res) => res.status(404).json({ error: 'Not found' }));

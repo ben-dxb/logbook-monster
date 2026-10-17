@@ -14,7 +14,9 @@ const parse=s=>{const [y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d);
 const addDays=(s,n)=>{const d=parse(s);d.setDate(d.getDate()+n);return ymd(d);};
 const wdOf=s=>(parse(s).getDay()+6)%7;
 const todayStr=()=>ymd(new Date());
-const isDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||'')&&!isNaN(parse(s));
+/* a real date (not 2026-02-31) from 2000 to a year from today – what the server stores (server/dates.js) */
+const lastDate=()=>{const d=new Date();d.setFullYear(d.getFullYear()+1);return ymd(d);};
+const isDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||'')&&ymd(parse(s))===s&&s>='2000-01-01'&&s<=lastDate();
 const fmtLong=s=>parse(s).toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 const fmtShort=s=>parse(s).toLocaleDateString(undefined,{day:'numeric',month:'short'});
 const OLD_TYPES={T:'Training',R:'Rest',S:'Saturday training'};   /* day types before templates had names */
