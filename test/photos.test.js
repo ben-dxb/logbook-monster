@@ -106,7 +106,9 @@ test('progress photos: upload, catalog by date, edit, private to their owner, fi
   assert.strictEqual(r.status, 200);
   assert.strictEqual(r.type, 'image/jpeg');
   assert.ok(r.bytes.equals(jpeg('a')));
-  assert.match(r.headers.get('cache-control'), /private/);
+  assert.strictEqual(r.headers.get('cache-control'), 'private, no-cache', 'checked with the server on every use, never kept for a year');
+  assert.ok(r.headers.get('etag'), 'so an unchanged picture comes back as a 304');
+  assert.strictEqual((await ann('GET', `/api/photos/${a.id}/thumb`)).headers.get('cache-control'), 'private, no-cache');
   assert.strictEqual(r.headers.get('x-content-type-options'), 'nosniff');
   assert.strictEqual((await ann('GET', `/api/photos/${b.id}/file`)).type, 'image/png');
   assert.ok((await ann('GET', `/api/photos/${a.id}/thumb`)).bytes.equals(jpeg('a')));
@@ -165,12 +167,18 @@ test('progress photos: removing an account removes its pictures', async () => {
 test('progress photos: the AI tags the pose, from the thumbnail, only when asked to save', async () => {
   const ann = await signIn('ann@example.com'), other = await signIn('admin@example.com');
   assert.strictEqual((await ann('GET', '/api/photos')).body.ai, true);
-  const p = (await ann('POST', '/api/photos?date=2026-10-05&pose=other&note=gym', jpeg('pose:front style:most_muscular'))).body;
+  const p = (await ann('POST', '/api/photos?date=2026-10-05&pose=other&note=gym', jpeg('pose:back'))).body;
   assert.strictEqual(p.style, '', 'no pose type until one is set');
   aiSeen.length = 0;
 
-  /* just asking: the answer comes back, nothing is saved */
+  /* only ever the thumbnail: without one nothing is sent */
   let r = await ann('POST', `/api/photos/${p.id}/ai-pose`, {});
+  assert.strictEqual(r.status, 409);
+  assert.strictEqual(aiSeen.length, 0, 'the full-size photo never goes to the AI');
+  await ann('PUT', `/api/photos/${p.id}/thumb`, jpeg('pose:front style:most_muscular'));
+
+  /* just asking: the answer comes back, nothing is saved */
+  r = await ann('POST', `/api/photos/${p.id}/ai-pose`, {});
   assert.strictEqual(r.status, 200);
   assert.deepStrictEqual([r.body.pose, r.body.style], ['front', 'most_muscular']);
   assert.deepStrictEqual([r.body.photo.pose, r.body.photo.style], ['other', '']);
@@ -178,7 +186,7 @@ test('progress photos: the AI tags the pose, from the thumbnail, only when asked
   assert.match(aiSeen[0].messages[0].content, /"front" \| "back" \| "left" \| "right" \| "other"/);
   assert.match(aiSeen[0].messages[0].content, /"front_double_biceps" \| "back_double_biceps" \| "most_muscular"/);
 
-  /* the thumbnail is what is sent once there is one */
+  /* a new thumbnail is what is sent next */
   await ann('PUT', `/api/photos/${p.id}/thumb`, jpeg('pose:back style:back_double_biceps'));
   r = await ann('POST', `/api/photos/${p.id}/ai-pose`, { save: true });
   assert.deepStrictEqual({ pose: r.body.pose, saved: r.body.photo.pose, style: r.body.photo.style, note: r.body.photo.note, date: r.body.photo.date },
@@ -250,4 +258,54 @@ test('progress photos: delete every photo between two dates, only your own, file
   assert.deepStrictEqual(left.sort(), [ids['2025-12-31'], ids['2026-02-01']].sort());
   assert.strictEqual((await ann('GET', `/api/photos/${annPhoto.id}/file`)).status, 200, 'someone else’s photos in the range stay');
   assert.deepStrictEqual((await me('DELETE', '/api/photos?from=2026-01-01&to=2026-01-31')).body, { deleted: 0 });
+});
+
+/* A camera JPEG with a GPS block in its EXIF (APP1), an XMP block (APP1) and IPTC (APP13); a PNG with eXIf and text chunks;
+   a WebP with EXIF and XMP chunks. None of it may reach the disk, whatever the client sent. */
+test('progress photos: camera data (GPS included) is stripped on upload, even from an un-shrunk picture', async () => {
+  const ann = await signIn('ann@example.com');
+  const seg = (m, body) => Buffer.concat([Buffer.from([0xff, m, (body.length + 2) >> 8, (body.length + 2) & 255]), body]);
+  /* TIFF, little-endian: IFD0 with one GPSInfo pointer → GPS IFD with GPSLatitudeRef 'N' */
+  const gpsTiff = Buffer.from([0x49, 0x49, 42, 0, 8, 0, 0, 0, 1, 0, 0x25, 0x88, 4, 0, 1, 0, 0, 0, 26, 0, 0, 0, 0, 0, 0, 0,
+    1, 0, 1, 0, 2, 0, 2, 0, 0, 0, 0x4e, 0, 0, 0, 0, 0, 0, 0]);
+  const exif = seg(0xe1, Buffer.concat([Buffer.from('Exif\0\0GPS-SECRET', 'latin1'), gpsTiff]));
+  const xmp = seg(0xe1, Buffer.from('http://ns.adobe.com/xap/1.0/\0<x:xmpmeta exif:GPSLatitude="25,12.5N"/>', 'latin1'));
+  const iptc = seg(0xed, Buffer.from('Photoshop 3.0\0IPTC-SECRET', 'latin1'));
+  const app0 = seg(0xe0, Buffer.from('JFIF\0\x01\x01\0\0\x01\0\x01\0\0', 'latin1'));
+  const icc = seg(0xe2, Buffer.from('ICC_PROFILE\0keep-me', 'latin1'));
+  const scan = Buffer.concat([seg(0xdb, Buffer.alloc(65, 1)), seg(0xda, Buffer.from([1, 1, 0, 0, 63, 0])), Buffer.from('image-data'), Buffer.from([0xff, 0xd9])]);
+  const camera = Buffer.concat([Buffer.from([0xff, 0xd8]), app0, exif, xmp, icc, iptc, scan]);
+  const want = Buffer.concat([Buffer.from([0xff, 0xd8]), app0, icc, scan]);
+  const ondisk = async id => fs.readFileSync(path.join(PHOTO_DIR, new DatabaseSync(env.DB_PATH).prepare('SELECT file FROM photos WHERE id = ?').get(id).file));
+
+  let r = await ann('POST', '/api/photos?date=2026-07-01&pose=front', camera);
+  assert.strictEqual(r.status, 200);
+  const disk = await ondisk(r.body.id);
+  assert.ok(disk.equals(want), 'EXIF, XMP and IPTC gone; JFIF, colour profile and the image itself kept as they were');
+  for (const x of ['Exif', 'GPS-SECRET', 'IPTC-SECRET', '25,12.5N']) assert.ok(!disk.toString('latin1').includes(x), x);
+  assert.strictEqual(r.body.size, want.length);
+  assert.ok((await ann('GET', `/api/photos/${r.body.id}/file`)).bytes.equals(want));
+  /* the thumbnail too */
+  r = await ann('PUT', `/api/photos/${r.body.id}/thumb`, camera);
+  assert.strictEqual(r.status, 200);
+  assert.ok((await ann('GET', `/api/photos/${r.body.id}/thumb`)).bytes.equals(want));
+
+  /* PNG: eXIf, tEXt, zTXt and iTXt chunks go; the rest stays */
+  const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); return Buffer.concat([len, Buffer.from(type, 'latin1'), data, Buffer.alloc(4)]); };
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = chunk('IHDR', Buffer.alloc(13, 1)), idat = chunk('IDAT', Buffer.from('pixels')), iend = chunk('IEND', Buffer.alloc(0));
+  const pngIn = Buffer.concat([sig, ihdr, chunk('eXIf', gpsTiff), chunk('tEXt', Buffer.from('GPS\0secret')), chunk('iTXt', Buffer.from('XML:com.adobe.xmp\0GPS')), idat, iend]);
+  r = await ann('POST', '/api/photos?date=2026-07-02&pose=front', pngIn, 'image/png');
+  assert.strictEqual(r.status, 200);
+  assert.ok((await ondisk(r.body.id)).equals(Buffer.concat([sig, ihdr, idat, iend])));
+
+  /* WebP: EXIF and XMP chunks go, the VP8X flags for them are cleared and the RIFF size fixed */
+  const wchunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32LE(data.length); return Buffer.concat([Buffer.from(type, 'latin1'), len, data, data.length & 1 ? Buffer.alloc(1) : Buffer.alloc(0)]); };
+  const riff = body => { const h = Buffer.from('RIFF0000WEBP', 'latin1'); h.writeUInt32LE(body.length + 4, 4); return Buffer.concat([h, body]); };
+  const vp8x = flags => wchunk('VP8X', Buffer.from([flags, 0, 0, 0, 9, 0, 0, 9, 0, 0]));
+  const frame = wchunk('VP8 ', Buffer.from('frame-data'));
+  const webpIn = riff(Buffer.concat([vp8x(0x2c), frame, wchunk('EXIF', gpsTiff), wchunk('XMP ', Buffer.from('<x:xmpmeta GPS/>'))]));
+  r = await ann('POST', '/api/photos?date=2026-07-03&pose=front', webpIn, 'image/webp');
+  assert.strictEqual(r.status, 200);
+  assert.ok((await ondisk(r.body.id)).equals(riff(Buffer.concat([vp8x(0x20), frame]))));
 });
