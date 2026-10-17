@@ -155,9 +155,9 @@ router.put('/admin/options', adminOnly, (req, res) => {
 
 /* The account the app sends email from (SMTP). */
 router.get('/admin/email', adminOnly, (req, res) => res.json(mail.status()));
-router.put('/admin/email', adminOnly, (req, res) => {
+router.put('/admin/email', adminOnly, async (req, res) => {
   if (!isObj(req.body)) return bad(res, 'Settings must be an object');
-  try { res.json(mail.save(req.body, req.user)); } catch (e) { bad(res, e.message); }
+  try { res.json(await mail.save(req.body, req.user)); } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 router.post('/admin/email/test', adminOnly, async (req, res) => {
   const to = String((req.body && req.body.to) || req.user.email).trim();

@@ -55,7 +55,7 @@ or Google.
   recent days (calories against target, macros, weight) and the Timeline – trends and each day's
   food, weight, photos, supplements and gym sets – read only. Pick how long it stays live (an hour
   to a year, or until a date); it stops at once when it runs out or you **Switch off** it.
-- **Super admin** (`ADMIN_EMAILS` only; if that's empty, the first account created) – settings for
+- **Super admin** (`ADMIN_EMAILS` only; on a local setup with it empty, the first account created) – settings for
   the whole app, in tabs: **AI** (the OpenRouter API key – kept on the server, never shown again; or
   set `OPENROUTER_API_KEY` in `.env` – and a model for each kind of AI task), **People** and **Email**.
   There are no app-wide meal plan defaults: when this version first starts, every account that had
@@ -91,11 +91,13 @@ All secrets live only in `.env` on the server – nothing secret is ever sent to
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Turn on "Continue with Google". Leave empty to hide it. |
 | `ALLOWED_EMAILS` | Comma-separated. If set, **only** these emails can sign in, and they can create their own account the first time. |
 | `ALLOW_REGISTRATION` | `true` lets anyone sign up. Default `false`. |
-| `ADMIN_EMAILS` | Comma-separated. Who can open the Super admin page. Empty = the first account created. |
+| `ADMIN_EMAILS` | Comma-separated. Who can open the Super admin page. **Required in production** (the server won't start without it); empty on a local setup = the first account created. |
 | `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | Optional. AI import of plan PDFs. A key saved on the Super admin page wins over this one. |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` | Optional. The email account invites and notifications are sent from. Easier to fill in on the Super admin page (Email); settings saved there win. |
-| `DB_PATH` | SQLite file. Default `./data/logbook-monster.db` (an existing `./data/mealswap.db` from before the rename is used if present). |
-| `TRUST_PROXY` | Set to `1` when running behind nginx/Caddy (default in production). |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` | Optional. The email account invites and notifications are sent from. Easier to fill in on the Super admin page (Email); settings saved there win. The server must be on the internet (no private, loopback or link-local addresses), and on a port other than 465 it must offer STARTTLS. |
+| `SMTP_ALLOW_HOSTS` | Comma-separated mail servers allowed on internal addresses anyway, e.g. a relay on `127.0.0.1` (plain SMTP is allowed to a loopback one). |
+| `DB_PATH` | SQLite file. Default `./data/logbook-monster.db` (an existing `./data/mealswap.db` from before the rename is used if present). A relative path is taken from the folder the server starts in. |
+| `PHOTO_DIR` | Where progress photo files go. Default `photos/` next to the database. |
+| `TRUST_PROXY` | Set to `1` when running behind nginx/Caddy (docker-compose.yml does), so sign-in limits see the visitor's address. Off by default: without a proxy that overwrites `X-Forwarded-For`, anyone could fake their address. |
 
 ## Google sign-in
 

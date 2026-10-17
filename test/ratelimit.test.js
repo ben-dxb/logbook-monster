@@ -73,3 +73,10 @@ test('10 wrong passwords for one account, from any addresses, lock it for 15 min
   db.close();
   assert.strictEqual((await (await browser('10.0.4.1'))('real@example.com', PASSWORD)).status, 200);
 });
+
+test('without TRUST_PROXY a forged X-Forwarded-For is ignored: every address shares one bucket', async () => {
+  env.TRUST_PROXY = '';
+  await restart();
+  for (let i = 0; i < 20; i++) assert.strictEqual((await (await browser(`203.0.113.${i + 1}`))('nobody@example.com', 'wrong-password-1')).status, 401, `attempt ${i + 1}`);
+  assert.strictEqual((await (await browser('198.51.100.7'))('nobody@example.com', 'wrong-password-1')).status, 429);
+});
