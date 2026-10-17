@@ -645,7 +645,11 @@ function newDay(){const cur=S.cur;if(todayStr()===TODAY)return;rollToday();
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){wrote();newDay();}});
 ['pointerdown','keydown'].forEach(t=>document.addEventListener(t,newDay,true));
 (function atMidnight(){const n=new Date(),m=new Date(n.getFullYear(),n.getMonth(),n.getDate()+1,0,0,1);setTimeout(()=>{newDay();atMidnight();},m-n);})();
+/* a page tapped while the deferred scripts are still loading (a slow phone) waits for start-up: until it has every script and the
+   account's data, route() does nothing, and start-up's own route() then opens whatever location.hash is by then */
+let booted=false;
 function route(){
+  if(!booted)return;
   rollToday();
   if(/^#weight(\/|$)/.test(location.hash))history.replaceState(null,'','#history/timeline');
   if(/^#timeline(\/|$)/.test(location.hash))history.replaceState(null,'','#history/'+location.hash.slice(1));
@@ -954,7 +958,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
     bootNote(e.network?'You seem to be offline – your changes aren’t lost.':`Couldn’t load your data – ${endStop(e.message)}`,true);}return;}
   showLoading(false);
   if(libErr)bootNote(`Your food library couldn’t load (${libErr}), so its foods are missing until you reload the page.`,true);
-  route();
+  booted=true;route();
   if(pending.size)flush();   /* changes kept from a sign-out go now, whatever page you land on */
   if(skipped.length)bootNote(`Changes you made before you were signed out weren’t put back, because ${skipped.join(', ')} changed on another device or tab since. The newer copy is kept.`);
   jobsInit();
