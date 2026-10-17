@@ -95,17 +95,25 @@ admin › AI) or as `OPENROUTER_API_KEY` in `.env` (move it to the page to rotat
 Every step asks for your password or a code again on a sign-in over 15 minutes old. The plain *Save key* still works
 (it does steps 1 and 3 at once, without the test).
 
-## Gmail app password (two slots, manual at Google)
+## SMTP password (two slots, manual at the email host)
 
-What it does: sends invites and notifications. Blast radius: email sent as your account (an app password can't change
-the Google account itself). Held sealed in the database (Super admin › Email) or as `SMTP_PASS` in `.env`.
+What it does: sends invites and notifications. Recommended: a mailbox of its own on the app's domain (e.g. `noreply@`,
+the owner's on Spacemail), so a leak exposes only that mailbox. Blast radius: email sent as the app's account, and
+whatever that mailbox holds. Held sealed in the database (Super admin › Email) or as `SMTP_PASS` in `.env`.
 
-1. **Provision**: at <https://myaccount.google.com/apppasswords> create a new app password (name it with today's date).
-   On Super admin › Email › *Rotate the password*, paste it and **Save as next**.
+1. **Provision**: make a new password for the mailbox at the email host, and on Super admin › Email › *Rotate the
+   password* paste it and **Save as next**. (Most mailbox hosts end the old password the moment you change it: then do
+   steps 2–3 straight away, and step 4 is already done.)
 2. **Verify**: **Test next** – a real sign-in to the mail server (connect, TLS, AUTH, quit); no email is sent.
 3. **Promote**: **Promote**. Send a test email to be sure.
-4. **Revoke**: delete the old app password on the same Google page.
+4. **Revoke**: delete the old password at the host.
 5. **Prove it dead**: **Test old** within the hour – it must be refused (recorded like the AI key).
+
+**Moving from Gmail to the app's own mailbox.** Add the domain's SPF, DKIM and DMARC records (a host that holds the
+domain's DNS, like Spaceship, can add them for you); on Super admin › Email pick *Other (SMTP)*, enter the SMTP host
+and port your provider shows, the mailbox address and its password, and Save; **Send test email**; then revoke the old
+Gmail app password at <https://myaccount.google.com/apppasswords>. Gmail still works, but an app password opens the
+whole Google mailbox, so it isn't recommended.
 
 ## GitHub deploy key
 

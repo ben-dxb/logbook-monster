@@ -459,7 +459,8 @@ function render(){
       `<b>Whole batch:</b> ${r0(t.k)} kcal · P ${r1(t.p)} · C ${r1(t.c)} · F ${r1(t.f)}<br>`+
       `<b>Biggest serving:</b> ${sv}g (${r0(sv*P.k/100)} kcal · P ${r1(sv*P.p/100)} · C ${r1(sv*P.c/100)} · F ${r1(sv*P.f/100)})`;}
   renderLibForm();
-  if(!$('#sn').options.length){$('#sn').innerHTML=snacksShown().map(x=>`<option value="${x.id}">${esc(x.n)}</option>`).join('');}
+  if(!$('#sn').options.length){$('#sn').innerHTML=snacksShown().map(x=>`<option value="${x.id}">${esc(x.n)}</option>`).join('');
+    if(snackVal($('#sn').value).u==='g')$('#sq').value=20;}   /* a snack weighed in grams starts at 20 g, as picking it does – not 1 g */
   $('#su').textContent=snackVal($('#sn').value).u==='g'?'Grams':'How many';
   $('#snackvals').innerHTML='<div class="sv"><span class="lbl">Per item / 100g</span><span class="lbl">kcal</span><span class="lbl">P</span><span class="lbl">C</span><span class="lbl">F</span>'+
     snacksShown().filter(x=>x.id!=='pudding').map(x=>{const v=snackVal(x.id);return `<span>${esc(x.n)}${x.u==='g'?' (per 100g)':''}${x.est&&!(S.snackOv||{})[x.id]?' <span class="est">estimate</span>':''}</span>`+
@@ -645,7 +646,11 @@ function newDay(){const cur=S.cur;if(todayStr()===TODAY)return;rollToday();
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){wrote();newDay();}});
 ['pointerdown','keydown'].forEach(t=>document.addEventListener(t,newDay,true));
 (function atMidnight(){const n=new Date(),m=new Date(n.getFullYear(),n.getMonth(),n.getDate()+1,0,0,1);setTimeout(()=>{newDay();atMidnight();},m-n);})();
+/* a page tapped while the deferred scripts are still loading (a slow phone) waits for start-up: until it has every script and the
+   account's data, route() does nothing, and start-up's own route() then opens whatever location.hash is by then */
+let booted=false;
 function route(){
+  if(!booted)return;
   rollToday();
   if(/^#weight(\/|$)/.test(location.hash))history.replaceState(null,'','#history/timeline');
   if(/^#timeline(\/|$)/.test(location.hash))history.replaceState(null,'','#history/'+location.hash.slice(1));
@@ -843,6 +848,9 @@ $('#coach').addEventListener('click',()=>act(D=>{const t=hasTemplate(D.type)?D.t
 /* ---------- account ---------- */
 window.addEventListener('hashchange',route);
 $('#logout').addEventListener('click',async()=>{
+  /* a form or the plan editor with unsaved edits (not kept like a day's changes): ask before the session goes, not after */
+  if((leaveDirty()||(typeof adDirty==='function'&&adDirty()))&&!await ask('You have changes that aren’t saved. Sign out without saving them?',{title:'Unsaved changes',yes:'Sign out without saving',no:'Stay',danger:true}))return;
+  leaveOk=true;
   if(pending.size){clearTimeout(saveTimer);await flush();}
   const keep=[];try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k.startsWith(STASH))keep.push([k,localStorage.getItem(k)]);}}catch{}
   try{await api('POST','/auth/logout',{});}catch{}
@@ -954,7 +962,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
     bootNote(e.network?'You seem to be offline – your changes aren’t lost.':`Couldn’t load your data – ${endStop(e.message)}`,true);}return;}
   showLoading(false);
   if(libErr)bootNote(`Your food library couldn’t load (${libErr}), so its foods are missing until you reload the page.`,true);
-  route();
+  booted=true;route();
   if(pending.size)flush();   /* changes kept from a sign-out go now, whatever page you land on */
   if(skipped.length)bootNote(`Changes you made before you were signed out weren’t put back, because ${skipped.join(', ')} changed on another device or tab since. The newer copy is kept.`);
   jobsInit();

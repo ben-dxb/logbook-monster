@@ -78,17 +78,25 @@ pruneUsage();
 setInterval(pruneUsage, 24 * 60 * 60 * 1000).unref();
 /* An hourly limit per account on a route that calls the AI. A request refused before any AI call (bad file, bad input,
    cap reached, a read already running) doesn't count, nor one whose AI calls all failed (timeout, outage, busy). A read in the
-   background has answered 202 before the AI does: req.ai.refund() gives its count back if it fails (jobs.js). */
+   background has answered 202 before the AI does: req.ai.refund() gives its count back if it fails (jobs.js).
+   The count is given back here, once the answer has gone – not by the library's skipFailedRequests, which also gives it back
+   when the browser drops the connection, while the AI call it started goes on and is answered (and paid for). */
 function limiter(limit, message, more = {}) {
   const store = new rateLimit.MemoryStore();
   const mw = rateLimit({
     windowMs: 60 * 60 * 1000, limit, standardHeaders: 'draft-7', legacyHeaders: false, store,
-    keyGenerator: req => 'u' + req.user.id, message: { error: message },
-    skipFailedRequests: true, requestWasSuccessful: (req, res) => res.statusCode === 202 || (req.ai && req.ai.calls > 0) || (res.statusCode < 400 && !(req.ai && req.ai.failed)), ...more,
+    keyGenerator: req => 'u' + req.user.id, message: { error: message }, ...more,
   });
+  const ok = (req, res) => res.statusCode === 202 || (req.ai && req.ai.calls > 0) || (res.statusCode < 400 && !(req.ai && req.ai.failed));
   const refund = (req, res, next) => {
     const key = req.rateLimit && req.rateLimit.key;
-    if (key && req.ai) { let done = false; req.ai.refund = () => { if (!done) { done = true; store.decrement(key).catch(() => {}); } }; }
+    if (key) {
+      let done = false;
+      const give = () => { if (!done) { done = true; store.decrement(key).catch(() => {}); } };
+      if (req.ai) req.ai.refund = give;
+      /* a connection dropped before the answer keeps its count: the work it started may still reach the AI */
+      res.once('close', () => { if (res.writableEnded && !ok(req, res)) give(); });
+    }
     next();
   };
   return [mw, refund];
@@ -206,12 +214,19 @@ function foodList(user, date) {
 /* rice pudding is always there: its values come from the person's own batch on the Daily Tracker */
 const PUDDING = 'pudding | Rice pudding (the person’s own batch – the app knows its values) | per 100g: from the batch';
 
-function prompt(foods) {
+/* the person's own day templates, so a plan read again reuses their ids (D1…) rather than adding a second "Training" as T */
+function templateList(user, date) {
+  const t = defaults.effective(user, date).templates;
+  return Array.isArray(t) ? t.filter(x => x && typeof x.id === 'string').map(x => `${x.id} | ${String(x.name || x.id).slice(0, 40)}`) : [];
+}
+
+function prompt(foods, templates = []) {
   const list = [...Object.entries(foods).map(([id, F]) => `${id} | ${F.n} | per 100${F.unit}: ${F.k} kcal, P ${F.p}, C ${F.c}, F ${F.f}`), PUDDING].join('\n');
+  const own = templates.length ? `\nThe person already has these day templates (id | name):\n${templates.join('\n')}\nWhen the document's day is the same kind as one of these (e.g. its training day and their "Training"), use that id and name instead of T or R, so it replaces theirs rather than adding a second one.\n` : '';
   return `You turn a nutrition coach's meal plan document into JSON for a meal planning app.
 
 The app keeps a plan as day templates: one for each kind of day the document gives its own meals or targets for (e.g. training day, rest day, high carb day, refeed). List them in "templates" as {"id": short id, "name": short name}. Use id "T" for a training day and "R" for a rest day; any other template gets an id of capital letters and digits starting with a letter, e.g. "HC". If the document has one plan for every day, make one template.
-
+${own}
 "plan" has a list of meals for each template id. Each meal has:
 - "id": the meal number as a string ("1", "2", ...)
 - "name": a short name, e.g. "Breakfast – eggs on sourdough"
@@ -515,7 +530,7 @@ async function send(c, t, o, system, content, maxTokens, wait, task) {
 
 async function importPlan(buf, type, user, date) {
   const foods = foodList(user, date);
-  const { reply, model } = await ask(prompt(foods), buf, type, 'meal plan', { task: 'plan' });
+  const { reply, model } = await ask(prompt(foods, templateList(user, date)), buf, type, 'meal plan', { task: 'plan' });
   return { ...tidy(reply, foods), model };
 }
 

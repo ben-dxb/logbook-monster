@@ -195,6 +195,8 @@ function focusHead(h,scroll=true){if(!h)return;if(!h.hasAttribute('tabindex'))h.
    tab asks too (beforeunload). Saying leave calls drop() – the page forgets its draft – and goes on. */
 const LEAVE=[];
 function leaveGuard(g){LEAVE.push(g);}
+/* set once the person has said to leave anyway (sign out without saving): the browser's own Leave? box isn't shown again */
+let leaveOk=false;
 const leaveDirty=()=>LEAVE.find(g=>{try{return g.dirty();}catch{return false;}});
 let leaveAsking=false;
 async function leaveAsk(g){
@@ -219,7 +221,7 @@ if(typeof document!=='undefined'){
     e.stopImmediatePropagation();history.replaceState(null,'',from||'#');
     leaveAsk(g).then(yes=>{if(yes)leaveTo(g,to);});
   });
-  window.addEventListener('beforeunload',e=>{if(leaveDirty()){e.preventDefault();e.returnValue='';}});
+  window.addEventListener('beforeunload',e=>{if(!leaveOk&&leaveDirty()){e.preventDefault();e.returnValue='';}});
 }
 
 /* ---------- a refusal with no words of its own ----------

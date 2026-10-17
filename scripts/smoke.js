@@ -408,6 +408,8 @@ async function trackerP5(browser, w, h) {
   await pg.click('a[data-view=day]'); await pg.waitForSelector('#v-day:not([hidden]) #meals .noplan');
   expect(await pg.locator('#sum .chip').count() === 0 && /no target/.test(await pg.textContent('#sum')), 'no on-target chips while the targets are 0');
   expect(await pg.isHidden('#ft-pack') && await pg.isHidden('#pudpanel'), 'no pack-in-sauce note or pudding panel without them in the plan');
+  /* a snack weighed in grams starts at 20 g, not 1 g */
+  if (await pg.textContent('#su') === 'Grams') expect(await pg.inputValue('#sq') === '20', 'grams snack starts at 20: ' + await pg.inputValue('#sq'));
   expect(!(await pg.evaluate(() => $('.dhelp').open)) && /shrinks to make room/.test(await pg.textContent('#v-day [aria-labelledby=oh] > p')), 'the balancing help is folded away');
   await pg.focus('#datepick');
   expect(await pg.evaluate(() => getComputedStyle($('.pick')).outlineStyle) === 'solid', 'Pick date shows its focus');
@@ -434,6 +436,11 @@ async function trackerP5(browser, w, h) {
   /* a failed AI read is said once, not "The AI couldn’t read …: The AI couldn’t …" */
   const job = await pg.evaluate(() => { JOBS = [{ id: 1, kind: 'plan', status: 'failed', label: 'a.pdf', error: 'The AI couldn’t find a meal plan in that file' }]; jRender(); const t = $('#jobs').textContent; JOBS = []; jRender(); return t; });
   expect(/^Your meal plan \(a\.pdf\) wasn’t read: The AI couldn’t find a meal plan in that file\./.test(job), 'job failure text: ' + job);
+  /* signing out with an unsaved plan asks first (the app's own dialog, before the session goes) – Stay keeps it all */
+  await pg.goto(BASE + '/#account'); await pg.waitForSelector('#v-admin:not([hidden]) [data-ad=tadd]'); await pg.click('[data-ad=tadd]');
+  await pg.click('#acct>summary'); await pg.click('#logout');
+  expect(/Sign out without saving/.test(await answer(pg, false)), 'sign-out with an unsaved plan asks');
+  expect(!/login/.test(pg.url()) && await pg.evaluate(() => adDirty()) && (await pg.evaluate(() => fetch('/api/me').then(r => r.status))) === 200, 'Stay keeps the plan and the sign-in');
   expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
   await ctx.close();
 }
@@ -994,6 +1001,25 @@ async function versionedAssets(browser) {
   await pg.evaluate(() => api('PUT', '/api/weights/' + todayStr(), { kg: 80.4 }));
   await hash('#dash', '#v-dash:not([hidden]) #d-body .dcard');
   expect(await until(() => asked.some(u => u.startsWith('/api/photos?latest=1'))), 'a write reads the Dashboard again');
+  expect(!errs.length, 'page errors: ' + errs.join(' | '));
+  await ctx.close();
+}
+
+/* A page tapped while the deferred scripts are still loading (a slow phone): app.js has run, photos.js hasn't. route() waits for
+   start-up, so there's no page error and the photos page is drawn once everything has loaded. */
+async function earlyHash(browser) {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } }), pg = await ctx.newPage(), errs = [];
+  pg.on('pageerror', e => errs.push(e.message));
+  await pg.goto(BASE + '/login'); await signIn(pg); await pg.waitForSelector('#v-dash:not([hidden])');
+  const late = await ctx.newPage(); late.on('pageerror', e => errs.push(e.message));
+  let held = false;
+  await late.route(/\/photos\.js(\?|$)/, async r => { held = true; await new Promise(res => setTimeout(res, 1500)); await r.continue(); });
+  await late.goto(BASE + '/#dash', { waitUntil: 'commit' });
+  await late.waitForFunction(() => typeof route === 'function' && typeof renderPhotos === 'undefined', null, { timeout: 5000, polling: 20 });
+  expect(held, 'photos.js should have been held back');
+  await late.evaluate(() => { location.hash = '#photos'; });
+  await late.waitForSelector('#v-photos:not([hidden]) #p-form', { state: 'attached', timeout: 8000 });
+  expect(await late.evaluate(() => view === 'photos' && /^Progress photos/.test(document.title)), 'the photos page should be the one shown');
   expect(!errs.length, 'page errors: ' + errs.join(' | '));
   await ctx.close();
 }
@@ -2234,6 +2260,7 @@ async function formKit(browser) {
     }
     await versionedAssets(browser);
     await recheck(browser);
+    await earlyHash(browser);
     await phase1c(browser);
     await phase2c(browser);
     await phase2cLibrary(browser);
