@@ -62,7 +62,7 @@ async function trackerKeepsFood(browser, pg, ctx) {
   const td = await server(today);
   expect(td.off.some(o => o.n === 'Smoke shortbread') && !('smooth' in td.targets) && !('date' in td.targets), 'logged food should survive the Timeline and Account admin');
   /* signed out with a change waiting, then signed in from a freshly opened /login: it is saved, and the stash goes */
-  const d3 = '2032-02-02';
+  const [d3, d4, d6] = await pg.evaluate(() => [40, 47, 54].map(n => addDays(todayStr(), n)));   /* days nobody has saved */
   await pg.goto(BASE + '/#day/' + d3); await pg.waitForFunction(d => document.querySelector('#datepick').value === d && document.querySelector('#meals .meal'), d3);
   await ctx.clearCookies();
   await pg.selectOption('#sn', 'reese'); await pg.click('#snackform button'); await pg.waitForURL(/\/login/, { timeout: 5000 });
@@ -70,7 +70,6 @@ async function trackerKeepsFood(browser, pg, ctx) {
   expect(await until(async () => /Reese/.test(await offOf(d3))), 'a change stashed at sign-out should be saved after signing in from /login');
   expect(await until(() => pg.evaluate(() => localStorage.getItem('logbook-monster-unsaved:' + UID) === null)), 'the stash should go once it is saved');
   /* … but not over a copy changed on another device since */
-  const d4 = '2032-02-09';
   await pg.goto(BASE + '/#day/' + d4); await pg.waitForFunction(d => document.querySelector('#datepick').value === d && document.querySelector('#meals .meal'), d4);
   await pg.selectOption('#sn', 'reese'); await pg.click('#snackform button');
   await pg.waitForFunction(() => /Saved/.test(document.querySelector('#status').textContent) && !pending.size, null, { timeout: 5000 });
@@ -88,32 +87,35 @@ async function trackerKeepsFood(browser, pg, ctx) {
   const off4 = await offOf(d4);
   expect(/Phone yoghurt/.test(off4) && !/Skittles/.test(off4) && /Phone yoghurt/.test(await pg.textContent('#offlist')), 'a stash should not overwrite a newer copy: ' + off4);
   /* a broken stash doesn't stop the app; another account's is never applied (kept for it), an expired one goes */
-  const other = JSON.stringify({ at: Date.now(), jobs: [['2032-02-16', JSON.stringify({ meals: [], off: [{ n: 'Other person snack', k: 1, p: 0, c: 0, f: 0 }] })]] });
+  const other = JSON.stringify({ at: Date.now(), jobs: [[d6, JSON.stringify({ meals: [], off: [{ n: 'Other person snack', k: 1, p: 0, c: 0, f: 0 }] })]] });
   await pg.evaluate(o => { localStorage.setItem('logbook-monster-unsaved:' + UID, JSON.stringify({ at: Date.now(), jobs: [['2026-10-17', '{}'], 'x'] }));
     localStorage.setItem('logbook-monster-unsaved:' + (UID + 1000), o); localStorage.setItem('logbook-monster-unsaved:' + (UID + 1001), JSON.stringify({ at: 1, jobs: [] })); }, other);
   await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
-  expect(await server('2032-02-16') === null, 'another account’s stash must not be applied');
+  expect(await server(d6) === null, 'another account’s stash must not be applied');
   expect(await pg.evaluate(o => localStorage.getItem('logbook-monster-unsaved:' + (UID + 1000)) === o && localStorage.getItem('logbook-monster-unsaved:' + (UID + 1001)) === null
     && localStorage.getItem('logbook-monster-unsaved:' + UID) === null, other), 'another account’s stash should be kept, an expired or broken one dropped');
   await pg.evaluate(() => localStorage.removeItem('logbook-monster-unsaved:' + (UID + 1000)));
   /* a tab left open past midnight: the Timeline's Today, a plan change and the Daily Tracker use the new date */
   const c3 = await browser.newContext({ viewport: { width: 1100, height: 900 } }), p3 = await c3.newPage();
   p3.on('pageerror', e => errs.push(e.message)); p3.on('dialog', d => d.accept());
-  await p3.clock.install({ time: new Date(2031, 2, 4, 23, 58) });
+  const eve = new Date(); eve.setDate(eve.getDate() + 30); eve.setHours(23, 58, 0, 0);
+  const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const day1 = ymd(eve), day2 = ymd(new Date(eve.getFullYear(), eve.getMonth(), eve.getDate() + 1));
+  await p3.clock.install({ time: eve });
   await p3.goto(BASE + '/login'); await signIn(p3); await p3.waitForSelector('#v-dash:not([hidden])');
   await p3.evaluate(() => { location.hash = '#account'; }); await p3.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
   await p3.evaluate(() => { location.hash = '#history/timeline'; }); await p3.waitForSelector('#v-timeline:not([hidden]) #t-pick');
   await p3.clock.fastForward('05:00');
   await p3.click('#t-pick [data-ta=go] >> nth=0');
-  expect(await until(() => p3.evaluate(() => location.hash === '#history/timeline/2031-03-05')), 'the Timeline’s Today should be the new day');
+  expect(await until(() => p3.evaluate(d => location.hash === '#history/timeline/' + d, day2)), 'the Timeline’s Today should be the new day');
   await p3.keyboard.press('Escape');
   await p3.evaluate(() => { location.hash = '#account'; }); await p3.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
-  const froms = await p3.evaluate(async () => { await adSave(); const f = DEFS.myVersions.map(v => v.from);
-    for (const d of ['2031-03-04', '2031-03-05']) if (f.includes(d)) await api('DELETE', '/api/my/defaults/' + d); return f; });
-  expect(froms.includes('2031-03-05') && !froms.includes('2031-03-04'), 'a plan change saved after midnight should start on the new day: ' + froms);
+  const froms = await p3.evaluate(async ds => { await adSave(); const f = DEFS.myVersions.map(v => v.from);
+    for (const d of ds) if (f.includes(d)) await api('DELETE', '/api/my/defaults/' + d); return f; }, [day1, day2]);
+  expect(froms.includes(day2) && !froms.includes(day1), 'a plan change saved after midnight should start on the new day: ' + froms);
   await p3.evaluate(() => { location.hash = '#dash'; }); await p3.waitForSelector('#v-dash:not([hidden])');
   await p3.evaluate(() => { location.hash = '#day'; });
-  await p3.waitForFunction(() => document.querySelector('#datepick').value === '2031-03-05' && document.querySelector('#dtitle').textContent === 'Today', null, { timeout: 5000 });
+  await p3.waitForFunction(d => document.querySelector('#datepick').value === d && document.querySelector('#dtitle').textContent === 'Today', day2, { timeout: 5000 });
   await c3.close();
   expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
 }
