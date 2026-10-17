@@ -61,7 +61,7 @@ async function api2(method,url,body,ver,again){
     /* a sensitive change on an older sign-in: password or code again, then the same request once more */
     if(r.status===403&&j.recheck&&!again&&await recheck())return api(method,url,body,ver,true);
     if(r.status===403&&j.setup2fa)setTimeout(tfShow,0);
-    const e=new Error(j.error||`HTTP ${r.status}`);e.status=r.status;e.conflict=r.status===409&&ver!==undefined;throw e;}
+    const e=new Error(j.error||httpText(r.status));e.status=r.status;e.conflict=r.status===409&&ver!==undefined;throw e;}
   return j;
 }
 function recheck(){

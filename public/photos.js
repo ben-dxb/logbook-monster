@@ -259,10 +259,10 @@ async function pSend(method,url,blob,more={}){
 async function pSend2(method,url,blob,more){
   let r;
   try{r=await fetch(url,{method,credentials:'same-origin',headers:{'content-type':'image/jpeg','x-csrf-token':csrf,...TZH,...more},body:blob});}
-  catch{throw new Error('Can’t reach the server – is it still running?');}
+  catch{throw netError();}
   if(r.status===401){setTimeout(toLogin,0);const e=new Error('You were signed out');e.signedOut=true;throw e;}
   const j=await r.json().catch(()=>({}));
-  if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);
+  if(!r.ok)throw new Error(j.error||httpText(r.status));
   return j;
 }
 const pGB=n=>n>=1024**3?(n/1024**3).toFixed(1)+' GB':Math.max(0.1,n/1024**2).toFixed(1)+' MB';
@@ -359,7 +359,7 @@ async function pUpload(form){
         for(const [kind,blob,has] of [['thumb',small,'tv'],['mid',mid,'mv']]){
           if(p[has])continue;
           try{p=await pSend('PUT',`/api/photos/${p.id}/${kind}`,blob);}
-          catch(x){if(x.signedOut||/reach the server/.test(x.message))throw x;}
+          catch(x){if(x.signedOut||x.network)throw x;}
         }
         e.t=!!(p.tv&&p.mv);pSentKeep();
         if(PHOTOS){const k=PHOTOS.findIndex(x=>x.id===p.id);if(k>=0)PHOTOS[k]=p;else PHOTOS.push(p);}   /* null: the list was dropped meanwhile (a range delete) and loads again */
@@ -370,7 +370,7 @@ async function pUpload(form){
           catch(x){if(x.signedOut)throw x;aiMiss++;}   /* stays "other", not counted as set by hand */
         }
       }catch(x){
-        if(x.signedOut||/reach the server|most photos|reached the/.test(x.message))stop=stop||x;
+        if(x.signedOut||x.network||/most photos|reached the/.test(x.message))stop=stop||x;
         else fails.push(`${f.name}: ${x.message}`);
       }finally{
         if(many&&!stop)say(`${byAi?'Uploading and tagging':'Uploading'} ${done()+fails.length} of ${n} done…${pStopUp?' Stopping after the photos on their way…':''}`);
@@ -482,7 +482,7 @@ async function pSave(form){
 async function pDelete(id){
   const p=pById(id);if(!p)return;
   if(!await ask(`Delete this ${(pPoseName(p.pose)).toLowerCase()} photo from ${fmtLong(p.date)}? This can’t be undone.`,{yes:'Delete photo',no:'Keep it',danger:true})||!pById(id))return;
-  try{await api('DELETE','/api/photos/'+id);}catch(e){if(!e.signedOut)alert(e.message);return;}
+  try{await api('DELETE','/api/photos/'+id);}catch(e){if(!e.signedOut)noteBy(document.querySelector(`[data-pa=del][data-id="${id}"]`)||null,'Couldn’t delete the photo: '+endStop(e.message));return;}
   PHOTOS=PHOTOS.filter(x=>x.id!==id);pPick=pPick.filter(x=>x!==id);pDirty=false;pMsg='Deleted the photo.';go('photos');
 }
 

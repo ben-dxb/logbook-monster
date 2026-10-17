@@ -161,18 +161,23 @@ function tidyItems(raw, user) {
 /* The OpenRouter key is the admin's, so each account gets a handful of reads an hour. */
 const aiLimit = ai.limiter(12, 'That’s a lot of AI reads – wait a while and try again.');
 
-/* Other people's supplements show their name, never their email. */
-function view(r, user) {
+/* Other people's supplements show their name, never their email. Someone with no name gets a number instead ("another person
+   (#2)"), the same on everything of theirs in this list, so two people's items with the same name can be told apart. */
+function anonOf(rows, user) {
+  const ids = [...new Set(rows.filter(r => r.user_id !== user.id && !r.owner).map(r => r.user_id))].sort((a, b) => a - b);
+  return new Map(ids.map((id, i) => [id, i + 1]));
+}
+function view(r, user, anon) {
   const mine = r.user_id === user.id;
   return { id: r.id, name: r.name, amount: r.amount, unit: r.unit, notes: r.notes,
-    public: !!r.public, mine, by: mine ? null : r.owner || null, updated: r.updated_at };
+    public: !!r.public, mine, by: mine ? null : r.owner || null, ...(anon && anon.has(r.user_id) ? { anon: anon.get(r.user_id) } : {}), updated: r.updated_at };
 }
 
 const router = express.Router();
 const send = (res, e) => { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); };
 
-router.get('/', (req, res) => res.json({ supplements: q.list.all(req.user.id).map(r => view(r, req.user)), units: UNITS, trends: trendsOf(req.user),
-  ai: ai.status().configured }));
+router.get('/', (req, res) => { const rows = q.list.all(req.user.id), anon = anonOf(rows, req.user); res.json({ supplements: rows.map(r => view(r, req.user, anon)), units: UNITS, trends: trendsOf(req.user),
+  ai: ai.status().configured }); });
 
 /* AI: read the file and hand back line items to check. Nothing is saved until /import. ?bg=1 runs it in the background (server/jobs.js). */
 router.post('/ai-import', aiLimit, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), ai.scope, (req, res) => {

@@ -12,7 +12,7 @@ let SUPPS=null, SUNITS=[], sReadAt=0;   /* units the server takes, from GET /api
 const SLOG={}, SREAD={};            /* date -> that day's entries; date -> when they were read */
 let STREND=new Set();             /* names followed on the Timeline chart, lower case */
 let sDate=todayStr(), sPick='', sUnit='mg', sQuery='', sFilter='all', sMsg='', sTok=0;
-let SAI=false, sAi=null, sAiMsg='';   /* AI set up; the regime being checked; its error (jobBusy('supps'): reading now) */
+let SAI=false, sAi=null, sAiMsg='', sDirty=false;   /* sDirty: the library form has changes not saved */   /* AI set up; the regime being checked; its error (jobBusy('supps'): reading now) */
 
 const sById=id=>SUPPS&&SUPPS.find(s=>s.id===id);
 const sNum=n=>String(Math.round(n*1000)/1000);
@@ -58,9 +58,10 @@ async function renderSupps(args){
       let s=a==='new'?null:sById(+a);
       if(a!=='new'&&!(s&&s.mine)){await sLoad();if(tok!==sTok||view!=='supps')return;s=sById(+a);}   /* added in another tab since? */
       if(a!=='new'&&!(s&&s.mine)){box.innerHTML=tabs+gHead('#supps/lib','Supplement')+gEmpty('That supplement isn’t in your library.');return;}
-      box.innerHTML=tabs+sEditPage(s);$('#s-name').focus();return;
+      box.innerHTML=tabs+sEditPage(s);sDirty=false;$('#s-name').focus();return;
     }
-    if(lib){box.innerHTML=tabs+sLibPage();renderSuppList();return;}
+    if(lib){const lost=document.activeElement===document.body||box.contains(document.activeElement);
+      box.innerHTML=tabs+sLibPage();renderSuppList();if(lost)focusHead($('#s-body .gbar h2'),false);return;}
     if(p&&!isDate(p)){box.innerHTML=tabs+gHead('#supps','Supplements')+gEmpty(`There’s no such day as “${p}”.`)+'<p><a class="ghost" href="#supps">Go to today</a></p>';return;}
     if(isDate(p))sDate=p;
     box.innerHTML=tabs+sLogPage();
@@ -70,12 +71,20 @@ async function renderSupps(args){
 }
 
 /* ---------- the day's log ---------- */
+/* the picker and Quick add show the same supplement at the same dose once – yours if you have it – however many people shared it:
+   logging it is the same either way. The library lists each with who shared it. */
+function sPickable(){
+  const seen=new Map();
+  for(const s of SUPPS){const k=[s.name.toLowerCase(),s.amount,s.unit].join('|'), o=seen.get(k);if(!o||s.mine&&!o.mine)seen.set(k,s);}
+  return SUPPS.filter(s=>seen.get([s.name.toLowerCase(),s.amount,s.unit].join('|'))===s||String(s.id)===sPick);
+}
 function sUnitOptions(sel){return SUNITS.map(u=>`<option value="${esc(u)}"${u===sel?' selected':''}>${esc(u)}</option>`).join('');}
 function sLogPage(){
   const t=todayStr(), title=sDate===t?'Today':sDate===addDays(t,-1)?'Yesterday':parse(sDate).toLocaleDateString(undefined,{weekday:'long'});
   const pick=sById(+sPick);if(!pick)sPick='';
-  const opts=`<option value="">Something else – describe it</option>`+(SUPPS.length?`<optgroup label="From the library">${SUPPS.map(s=>`<option value="${s.id}"${String(s.id)===sPick?' selected':''}>${esc(s.name)}${s.amount!=null?' ('+esc(sDose(s.amount,s.unit))+')':''}</option>`).join('')}</optgroup>`:'');
-  const quick=SUPPS.filter(s=>s.amount!=null).map(s=>`<button class="ghost" type="button" data-sa="quick" data-id="${s.id}">+ ${esc(s.name)} ${esc(sDose(s.amount,s.unit))}</button>`).join('');
+  const pickable=sPickable();
+  const opts=`<option value="">Something else – describe it</option>`+(pickable.length?`<optgroup label="From the library">${pickable.map(s=>`<option value="${s.id}"${String(s.id)===sPick?' selected':''}>${esc(s.name)}${s.amount!=null?' ('+esc(sDose(s.amount,s.unit))+')':''}</option>`).join('')}</optgroup>`:'');
+  const quick=pickable.filter(s=>s.amount!=null).map(s=>`<button class="ghost" type="button" data-sa="quick" data-id="${s.id}">+ ${esc(s.name)} ${esc(sDose(s.amount,s.unit))}</button>`).join('');
   return `<div class="datebar">
       <button class="nav" type="button" data-sa="prev" aria-label="Previous day">‹</button>
       <div class="dt"><h2>${esc(title)}</h2><span class="sub">${esc(fmtLong(sDate))}</span></div>
@@ -98,14 +107,14 @@ function sLogPage(){
 function renderSuppLog(){
   const el=$('#s-log');if(!el)return;
   const list=SLOG[sDate]||[];
-  el.innerHTML=(sMsg?`<p class="note fmsg" role="status">${esc(sMsg)}</p>`:'')+(list.length
+  redraw(el,(sMsg?`<p class="note fmsg" role="status">${esc(sMsg)}</p>`:'')+(list.length
     ?list.map(e=>`<div class="orow"${e.tmp?' aria-busy="true"':''} data-sl="${e.id}"><span>${esc(e.name)}</span><b class="sdose">${esc(sDose(e.amount,e.unit))}</b>${e.note?`<span class="ml">${esc(e.note)}</span>`:''}${e.tmp?'<span class="sub">Saving…</span>':`${sTrendBox(e.name)}<button class="x" type="button" data-sa="del" data-id="${e.id}" aria-label="Remove ${esc(e.name)}">×</button>`}</div>`).join('')
-    :gEmpty('Nothing logged for this day.'));
+    :gEmpty('Nothing logged for this day.')));
 }
 async function sAdd(body){
   const e=await api('POST','/api/supps/log',body);
   (SLOG[e.date]=SLOG[e.date]||[]).push(e);sMsg='';
-  if(e.date===sDate)renderSuppLog();
+  if(e.date===sDate){renderSuppLog();say(`Logged ${e.name}, ${sDose(e.amount,e.unit)}.`);}
   return e;
 }
 /* Quick add: the row shows at once ("Saving…") and becomes the server's when it lands; a failure takes it out and says so.
@@ -118,7 +127,7 @@ function sQuickLog(s){
   const drop=()=>{if(SLOG[date])SLOG[date]=SLOG[date].filter(x=>x!==t);};
   api('POST','/api/supps/log',{date,supplement:s.id,amount:s.amount,unit:s.unit}).then(e=>{
     drop();const l=SLOG[e.date]=SLOG[e.date]||[];if(!l.some(x=>x.id===e.id))l.push(e);
-    if(view==='supps'&&e.date===sDate)renderSuppLog();
+    if(view==='supps'&&e.date===sDate){renderSuppLog();say(`Logged ${e.name}, ${sDose(e.amount,e.unit)}.`);}
   },err=>{drop();if(view==='supps'&&date===sDate)renderSuppLog();
     if(!err.signedOut)noteBy(view==='supps'?$(`[data-sa=quick][data-id="${s.id}"]`):null,`Couldn’t log ${s.name}: ${endStop(err.message)}`,()=>sQuickLog(s));
   }).finally(()=>sQuickBusy.delete(s.id+'|'+date));
@@ -126,16 +135,19 @@ function sQuickLog(s){
 /* ×: the row goes at once, with Undo for a moment; a failure puts it back where it was and says so */
 async function sLogDel(id){
   const d=Object.keys(SLOG).find(k=>SLOG[k].some(x=>x.id===id));if(!d)return;
-  const ix=SLOG[d].findIndex(x=>x.id===id), e=SLOG[d][ix];
-  SLOG[d].splice(ix,1);if(view==='supps'&&d===sDate)renderSuppLog();
+  const ix=SLOG[d].findIndex(x=>x.id===id), e=SLOG[d][ix], had=document.activeElement&&document.activeElement.closest&&document.activeElement.closest('#s-log');
+  SLOG[d].splice(ix,1);if(view==='supps'&&d===sDate){renderSuppLog();
+    /* focus goes to the next entry's ×, or the one before; with none left, to Undo below */
+    const xs=[...document.querySelectorAll('#s-log [data-sa=del]')];if(had&&xs.length)(xs[ix]||xs[xs.length-1]).focus();}
   try{await api('DELETE','/api/supps/log/'+id);}
   catch(err){if(err.signedOut)return;
     const l=SLOG[d]=SLOG[d]||[];if(!l.some(x=>x.id===id))l.splice(Math.min(ix,l.length),0,e);
     if(view==='supps'&&d===sDate){renderSuppLog();noteBy($(`#s-log [data-sl="${id}"]`),'Couldn’t remove it – it’s back. '+endStop(err.message));}
     return;}
-  if(view==='supps'&&d===sDate)noteBy($('#s-log'),`Removed ${e.name}.`,()=>{
+  if(view==='supps'&&d===sDate){const n=noteBy($('#s-log'),`Removed ${e.name}.`,()=>{
     const body={date:e.date,name:e.name,amount:e.amount,unit:e.unit,note:e.note||''};if(e.sid&&sById(e.sid))body.supplement=e.sid;
-    sAdd(body).catch(err=>{if(!err.signedOut)noteBy($('#s-log'),`Couldn’t put ${e.name} back: ${endStop(err.message)}`);});},'Undo');
+    sAdd(body).then(()=>say(`${e.name} is back.`),err=>{if(!err.signedOut)noteBy($('#s-log'),`Couldn’t put ${e.name} back: ${endStop(err.message)}`);});},'Undo');
+    if(had&&(document.activeElement===document.body||!document.activeElement))n.querySelector('button').focus();}
 }
 function sPickChanged(){
   sPick=$('#s-pick').value;const s=sById(+sPick);
@@ -184,20 +196,20 @@ function sLibPage(){
 /* ---------- AI: a supplement regime into line items ---------- */
 function sAiBlock(){
   const sAiBusy=jobBusy('supps'), row=SAI
-    ?`<label class="grow gadd gfile${sAiBusy?' off':''}"><span>✦ ${sAiBusy?'Reading your regime – this can take a minute. You can leave this page; you’ll be told when it’s ready.':'Read a supplement regime with AI (PDF or photo)…'}</span>
+    ?`<label class="grow gadd gfile${sAiBusy?' off':''}"><span><span aria-hidden="true">✦</span> ${sAiBusy?'Reading your regime – this can take a minute. You can leave this page; you’ll be told when it’s ready.':'Read a supplement regime with AI (PDF or photo)…'}</span>
         <input id="s-aifile" type="file" accept=".pdf,application/pdf,image/png,image/jpeg,image/webp"${sAiBusy?' disabled':''}></label>`
-    :`<div class="grow gadd off"><span>✦ Read a supplement regime with AI – ${isAdmin?'add an OpenRouter key on the <a href="#admin">Super admin page</a> to turn this on':'the super admin needs to add an OpenRouter key first'}</span></div>`;
+    :`<div class="grow gadd off"><span><span aria-hidden="true">✦</span> Read a supplement regime with AI – ${isAdmin?'add an OpenRouter key on the <a href="#admin">Super admin page</a> to turn this on':'the super admin needs to add an OpenRouter key first'}</span></div>`;
   return `<div class="glist">${row}</div>${sAiMsg?`<p class="aderr" role="alert">${esc(sAiMsg)}</p>`:''}${sAi?sAiPreview():''}`;
 }
-function renderSuppAi(){const el=$('#s-ai');if(el)el.innerHTML=sAiBlock();}
+function renderSuppAi(){const el=$('#s-ai');if(el)redraw(el,sAiBlock());}
 function sAiPreview(){
   const n=sAi.items.filter(x=>x.on).length;
-  return `<section class="panel gai sai" aria-labelledby="s-aih"><h2 id="s-aih">From ${esc(sAi.file)}</h2>
+  return `<section class="panel gai sai" aria-labelledby="s-aih"><h2 id="s-aih" tabindex="-1">From ${esc(sAi.file)}</h2>
     <p class="fintro">Check what the AI found and fix anything it got wrong. Ticked lines go into your library (only you see them until you share one);
       one marked <span class="chip ok">in library</span> has the same name as one of yours and gets this amount, unit and notes.</p>
     ${sAi.items.map((x,i)=>`<div class="sairow${x.on?'':' off'}">
       <label class="sion"><input type="checkbox" data-sai="on" data-i="${i}"${x.on?' checked':''} aria-label="Add ${esc(x.name)}"></label>
-      <label class="f sainame"><span class="lbl">Name<span class="vh">, line ${i+1}</span> ${x.existing?'<span class="chip ok">in library</span>':'<span class="chip info">new</span>'}</span><input data-sai="name" data-i="${i}" maxlength="80" value="${esc(x.name)}"></label>
+      <div class="f sainame"><span class="lbl"><label for="s-ain-${i}">Name<span class="vh"> of line ${i+1}</span></label> <span class="chip ${x.existing?'ok':'info'}" id="s-aist-${i}">${x.existing?'in library':'new'}</span></span><input id="s-ain-${i}" data-sai="name" data-i="${i}" maxlength="80" value="${esc(x.name)}" aria-describedby="s-aist-${i}"></div>
       <label class="f"><span class="lbl">Amount<span class="vh"> of ${esc(x.name)}</span></span><input data-sai="amount" data-i="${i}" type="number" inputmode="decimal" min="0" step="any" value="${x.amount==null?'':esc(sNum(x.amount))}"></label>
       <label class="f"><span class="lbl">Unit<span class="vh"> of ${esc(x.name)}</span></span><select data-sai="unit" data-i="${i}">${sUnitOptions(x.unit)}</select></label>
       <label class="f sainotes"><span class="lbl">Notes<span class="vh"> for ${esc(x.name)}</span></span><input data-sai="notes" data-i="${i}" maxlength="300" value="${esc(x.notes)}" placeholder="e.g. Morning with food"></label>
@@ -223,6 +235,7 @@ J_OPEN.supps=job=>{
   if(job.status!=='done'){sAi=null;sAiMsg='The AI couldn’t read that: '+(job.error||'Something went wrong');}
   else{const j=job.result;sAiMsg='';sAi={file:job.label||'your regime',notes:j.notes||[],items:j.items.map(x=>({...x,on:true})),log:false,day:todayStr()};}
   renderSuppAi();
+  if(view==='supps'&&$('#s-ai')){if(sAi)focusHead($('#s-aih'));else say(sAiMsg);}
 };
 async function sAiAdd(btn){
   const err=$('#s-aierr'), items=sAi.items.filter(x=>x.on).map(({name,amount,unit,notes})=>({name,amount,unit,notes}));
@@ -253,7 +266,7 @@ function renderSuppList(){
 }
 function sCard(s){
   const tag=s.mine?(s.public?'<span class="chip ok">Shared</span>':'<span class="chip">Only you</span>')
-    :`<span class="chip info">Shared${s.by?' by '+esc(s.by):''}</span>`;
+    :`<span class="chip info">${esc(sharedBy(s))}</span>`;
   return `<article class="fcard" data-id="${s.id}">
     <div class="fhead"><h3>${esc(s.name)}</h3>${tag}</div>
     <span class="ml">${s.amount!=null?`Usual amount <b>${esc(sDose(s.amount,s.unit))}</b>`:`Measured in ${esc(s.unit)}`}</span>
@@ -285,20 +298,23 @@ async function sSaveLib(form){
   btn.disabled=true;
   try{
     const s=await api(id?'PUT':'POST','/api/supps'+(id?'/'+id:''),body);
-    SUPPS=SUPPS.filter(x=>x.id!==s.id);SUPPS.push(s);sSort();
+    SUPPS=SUPPS.filter(x=>x.id!==s.id);SUPPS.push(s);sSort();sDirty=false;
     sMsg=id?`Saved “${s.name}”.`:`Added “${s.name}” to your library.`;go('supps/lib');
   }catch(e){btn.disabled=false;if(!e.signedOut){if(/No such/.test(e.message))sLoad().catch(()=>{});
     if(!errToField(e,[[/name|already have/i,$('#s-name')],[/^amount|too small/i,$('#s-lamt')],[/unit/i,$('#s-lunit')],[/notes/i,$('#s-notes')]])){err.textContent=endStop(e.message);err.hidden=false;}}}
 }
 async function sDeleteLib(id){
   const s=sById(id);if(!s)return;
-  if(!await ask(s.mine?`Delete “${s.name}” from your library? Days you’ve already logged it keep it.`:`Delete “${s.name}”${s.by?' (shared by '+s.by+')':''} from the library for everyone?`,
+  if(!await ask(s.mine?`Delete “${s.name}” from your library? Days you’ve already logged it keep it.`:`Delete “${s.name}” (${sharedBy(s).replace(/^S/,'s')}) from the library for everyone?`,
     {yes:s.mine?'Delete supplement':'Delete for everyone',no:'Keep it',danger:true}))return;
   if(!sById(id))return;
-  try{await api('DELETE','/api/supps/'+id);}catch(e){if(!e.signedOut)alert(e.message);return;}
-  SUPPS=SUPPS.filter(x=>x.id!==id);if(sPick===String(id))sPick='';sMsg=`Deleted “${s.name}”.`;
+  try{await api('DELETE','/api/supps/'+id);}catch(e){if(!e.signedOut)noteBy(document.querySelector(`[data-sa=sdel][data-id="${id}"]`),'Couldn’t delete it: '+endStop(e.message));return;}
+  SUPPS=SUPPS.filter(x=>x.id!==id);if(sPick===String(id))sPick='';sMsg=`Deleted “${s.name}”.`;sDirty=false;
   if(location.hash==='#supps/lib')renderSuppList();else go('supps/lib');
 }
+
+/* a supplement being added or edited isn't dropped by leaving it without a word (forms.js leaveGuard) */
+leaveGuard({dirty:()=>sDirty&&view==='supps'&&!!$('#s-lform'),text:'You changed this supplement without saving it. Leave without saving?',drop:()=>{sDirty=false;}});
 
 /* ---------- events ---------- */
 document.addEventListener('click',async e=>{
@@ -328,6 +344,7 @@ document.addEventListener('change',e=>{
 });
 document.addEventListener('input',e=>{
   if(view!=='supps')return;
+  if(e.target.closest&&e.target.closest('#s-lform'))sDirty=true;
   if(e.target.id==='s-q'){sQuery=e.target.value;renderSuppList();}
   else if(sAi&&['name','amount','notes'].includes(e.target.dataset.sai)){
     const x=sAi.items[+e.target.dataset.i], k=e.target.dataset.sai, v=e.target.value;

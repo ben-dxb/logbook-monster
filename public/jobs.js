@@ -24,7 +24,7 @@ async function jobStart(url,kind,file){
   catch{throw netError();}
   if(r.status===401){setTimeout(toLogin,0);const e=new Error('You were signed out');e.signedOut=true;throw e;}
   const j=await r.json().catch(()=>({}));
-  if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);
+  if(!r.ok)throw new Error(j.error||httpText(r.status));
   JOBS.unshift({...j.job,here:true});
   jChanged(kind);jPoll(3000);
   return j.job;

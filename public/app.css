@@ -398,6 +398,11 @@ html.hasjobs{scroll-padding-bottom:calc(var(--jobs-h,56px) + 24px)}
 .gnum small{font-size:var(--fs-xs);font-weight:600;margin-left:2px;color:var(--muted)}
 .gnum.up{color:var(--good)} .gnum.down{color:var(--bad)} .gnum.pr{color:var(--warnink)}
 .gnote{grid-column:2/-1;font-size:var(--fs-xs);color:var(--muted)}
+.gcmp{font-size:var(--fs-xs);margin-left:2px}
+.glegend{margin:2px 0 0}
+/* the page scrolls a focused control clear of the set bar stuck to the bottom (--gq-h: its height, from gym.js) */
+html:has(#g-quick){scroll-padding-bottom:calc(var(--gq-h,170px) + 16px)}
+html.hasjobs:has(#g-quick){scroll-padding-bottom:calc(var(--gq-h,170px) + var(--jobs-h,56px) + 40px)}
 .greps{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:4px 14px;align-items:baseline}
 /* the bar to log a set stays at the bottom of the screen */
 .gquick{position:sticky;bottom:0;z-index:6;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:10px 12px;
@@ -441,6 +446,7 @@ html.hasjobs{scroll-padding-bottom:calc(var(--jobs-h,56px) + 24px)}
 /* ---------- food library ---------- */
 .grid5 .osave{grid-column:1/-1}
 .fintro{margin:0;font-size:var(--fs-s);color:var(--muted);max-width:65ch}
+.fintro p{margin:0}.fintro details{margin-top:2px}.fintro summary{cursor:pointer;width:max-content;max-width:100%}
 .ftools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .ftools input{flex:1 1 220px;min-width:0;border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:6px 12px}
 .flist{display:flex;flex-direction:column;gap:10px}
@@ -706,5 +712,7 @@ html.hasjobs{scroll-padding-bottom:calc(var(--jobs-h,56px) + 24px)}
   .sticky,.adbar,.psel,.tchead{position:static}
   .gquick{position:static;box-shadow:none}
   .gqf{flex-wrap:wrap}.gqin{min-width:6ch}
+  html:has(#g-quick){scroll-padding-bottom:0}
+  html.hasjobs:has(#g-quick){scroll-padding-bottom:calc(var(--jobs-h,56px) + 24px)}
 }
 @media (max-width:400px){.adbar{position:static}}
