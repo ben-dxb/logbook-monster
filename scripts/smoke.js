@@ -1065,6 +1065,13 @@ async function phase5Library(browser) {
   await pg.focus('#g-log'); await pg.keyboard.press('Enter');
   await pg.waitForFunction(() => /^Logged /.test((document.querySelector('#live') || {}).textContent || '') && !gSending.size, null, { timeout: 5000 });
   expect(await on() === 'g-log||', 'Log set keeps focus on its button: ' + await on());
+  /* a fast double tap logs one set, even when the first tap's set has already landed */
+  const nSets = () => pg.evaluate(id => fetch('/api/gym/sets?exercise=' + id).then(r => r.json()).then(j => (j.sets || j).length), ids[0]);
+  const before = await nSets();
+  await tapGap(pg); await pg.click('#g-log'); await pg.waitForFunction(() => !gSending.size, null, { timeout: 5000 });
+  await pg.waitForTimeout(100); await pg.click('#g-log'); await pg.waitForTimeout(150);
+  await pg.waitForFunction(() => !gSending.size, null, { timeout: 5000 });
+  expect(await nSets() === before + 1, `a double tap on Log set logged ${await nSets() - before} sets`);
   await pg.focus('[data-g=tab][data-t=records]'); await pg.keyboard.press('Enter'); await pg.waitForSelector('.wstats');
   expect(await on() === '|tab|', 'a tab keeps focus');
   await pg.focus('[data-g=tab][data-t=sets]'); await pg.keyboard.press('Enter'); await pg.waitForSelector('.gday');
