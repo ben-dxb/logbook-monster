@@ -72,6 +72,18 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       expect(/Reese/.test(await pg.textContent('#offlist')), 'snack should survive reload');
       expect(await pg.inputValue('#meals input[data-act=pack][data-k=w] >> nth=0') === '320', 'pack weight should survive reload');
       expect(await pg.inputValue('#wt') === '80.5', 'weight should survive reload');
+      if (first) { /* a saved day using a food its date's plan no longer has still opens (it used to do nothing) */
+        const old = await pg.evaluate(async () => {
+          const d = addDays(todayStr(), -2), D = freshOn(d);
+          D.meals[0].p.push({ f: 'gone_food', g: 100, a: 100, lock: true });
+          await api('PUT', '/api/days/' + d, { data: D, summary: { k: 0, p: 0, c: 0, f: 0, targets: D.targets } });
+          return d;
+        });
+        await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
+        await pg.goto(BASE + '/#day/' + old);
+        await pg.waitForFunction(d => document.querySelector('#datepick').value === d && /Unknown food \(gone_food\)/.test(document.querySelector('#meals').textContent), old, { timeout: 5000 });
+        await pg.goto(BASE + '/#day'); await pg.click('#todaybtn'); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
+      }
       /* protein driver: switch auto-balance to direct protein, it sticks across a reload, then back to total */
       if (first) {
         await pg.click('[data-act=pbasis][data-v=direct]');
