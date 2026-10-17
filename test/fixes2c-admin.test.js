@@ -111,7 +111,9 @@ test('removing an account: all its rows or none, files deleted after, a file tha
   assert.strictEqual((await adm('DELETE', `/api/admin/users/${id}`)).status, 200);
   assert.ok(!db.prepare('SELECT 1 FROM users WHERE id = ?').get(id));
   assert.ok(!db.prepare('SELECT 1 FROM sessions WHERE user_id = ?').get(id));
-  for (let i = 0; i < 30 && fs.existsSync(path.join(PHOTOS, 'p1.jpg')); i++) await new Promise(r => setTimeout(r, 50));
+  /* files go after the response: wait for both (checking the thumbnail straight after the photo raced under a loaded test run) */
+  const left = () => ['p1.jpg', 'p1t.jpg'].some(f => fs.existsSync(path.join(PHOTOS, f)));
+  for (let i = 0; i < 60 && left(); i++) await new Promise(r => setTimeout(r, 50));
   assert.ok(!fs.existsSync(path.join(PHOTOS, 'p1.jpg')) && !fs.existsSync(path.join(PHOTOS, 'p1t.jpg')));
   assert.strictEqual((await adm('DELETE', `/api/admin/users/${id}`)).status, 404);
   db.close();

@@ -306,6 +306,16 @@ async function phase9(browser) {
   const srv = await pg.evaluate(async () => (await api('GET', `/api/checklist/days?from=${todayStr()}&to=${todayStr()}`)).days[todayStr()] || []);
   expect(ids.every(id => srv.includes(id)), 'both ticks should be saved: ' + srv);
   await pg.unroute('**/api/checklist/days/*');
+  /* away and back while a tick is still on its way: the Dashboard's kept feeds show it, and so does the next read */
+  await slow('**/api/checklist/days/*', 'PUT', 600);
+  await pg.click(box(ids[1]));
+  await hash('#supps'); await hash('#dash', '#v-dash:not([hidden]) .dcheck .dlist');
+  expect(!(await pg.isChecked(box(ids[1]))), 'a tick still on its way should show after leaving the Dashboard and coming back');
+  await pg.waitForFunction(() => !Object.keys(dQ).length, null, { timeout: 5000 });
+  await hash('#supps'); await hash('#dash', '#v-dash:not([hidden]) .dcheck .dlist');
+  expect(!(await pg.isChecked(box(ids[1]))), 'the saved untick should show on the next visit');
+  await pg.click(box(ids[1])); await pg.waitForFunction(() => !Object.keys(dQ).length, null, { timeout: 5000 });
+  await pg.unroute('**/api/checklist/days/*');
   await broken('**/api/checklist/days/*', 'PUT');
   await pg.click(box(ids[0]));
   await pg.waitForFunction(id => /Couldn’t save/.test(document.querySelector('.dcheck').textContent) && document.querySelector(`.dcheck input[data-dk="${id}"]`).checked, ids[0], { timeout: 5000 });
