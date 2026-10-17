@@ -27,7 +27,7 @@ const fmtMonth=s=>parse(s).toLocaleDateString(undefined,{month:'long',year:'nume
 let S={days:{},cur:todayStr()};            /* days: loaded day documents by date; pud & snackOv are account settings */
 const SUMS={};                              /* date -> saved day summary (for calendar and week strip) */
 const WEIGHTS={};                           /* date -> kg */
-const SAVED={days:{},settings:null};        /* last JSON stored on the server, to spot what changed */
+const SAVED={days:{},settings:null,weights:{}};   /* last JSON stored on the server, to spot what changed (weights: only those changed here) */
 const LOGGED=new Set();                     /* dates stored on the server */
 const VER={};                               /* date -> the server's `updated` of the copy this tab has, sent with each save */
 const CONFLICT=new Set();                   /* dates changed in another tab or device since: this tab's edit stays on screen, unsaved */
@@ -74,7 +74,7 @@ let UID=null, stashOut=false;
 const stashKey=()=>STASH+':'+UID;
 function toLogin(gone){
   if(pending.size&&UID!=null){try{localStorage.setItem(stashKey(),JSON.stringify({at:Date.now(),
-    jobs:[...pending.entries()].map(([k,j])=>[k,j,k==='@settings'?SAVED.settings:LOGGED.has(k)?SAVED.days[k]:null])}));}catch{}}
+    jobs:[...pending.entries()].map(([k,j])=>[k,j,k==='@settings'||k.startsWith(WKEY)?savedOf(k):LOGGED.has(k)?SAVED.days[k]:null])}));}catch{}}
   pending.clear();location.href='/login'+(gone?'?error=gone':'')+location.hash;   /* come back to the same day after signing in */
 }
 function dropStash(){stashOut=false;try{localStorage.removeItem(stashKey());}catch{}}
@@ -99,6 +99,11 @@ async function restoreStash(){
         if(j===SAVED.settings)continue;
         if(!old&&job[2]!==SAVED.settings){skipped.push('your settings');continue;}
         S.pud={...PUD_DEFAULT,...(v.pud||{})};S.snackOv=v.snackOv||{};S.pBasis=v.pBasis==='direct'?'direct':'total';recalcPudding();
+      }else if(key.startsWith(WKEY)&&isDate(key.slice(WKEY.length))&&(v===null||typeof v==='number')){   /* a weight: only over the copy it was typed on */
+        const d=key.slice(WKEY.length),now=JSON.stringify(WEIGHTS[d]??null);
+        if(now===j)continue;
+        if(old||job[2]!==now){skipped.push('the weight for '+fmtLong(d));continue;}
+        SAVED.weights[d]=now;if(v==null)delete WEIGHTS[d];else WEIGHTS[d]=v;
       }else if(isDate(key)&&v&&Array.isArray(v.meals)){
         const r=srv[key],sj=r?JSON.stringify(r.data):null;
         if(sj===j)continue;   /* already saved */
@@ -106,7 +111,7 @@ async function restoreStash(){
         if(!same){skipped.push(fmtLong(key));continue;}
         const D=migrate(v,key);S.days[key]=D;SAVED.days[key]=sj;
       }else continue;
-      pending.set(key,j);keep.push([key,j,key==='@settings'?SAVED.settings:SAVED.days[key]]);
+      pending.set(key,j);keep.push([key,j,savedOf(key)]);
     }catch{}   /* a broken entry is dropped */
   }
   if(keep.length){try{localStorage.setItem(stashKey(),JSON.stringify({at:st.at,jobs:keep}));}catch{}stashOut=true;}
@@ -124,6 +129,9 @@ function migrate(D,date){
   return D;
 }
 const pending=new Map(), SENDING=new Map(); let saveTimer=null, saveState='idle', saveErr='', inFlight=false;
+/* a weight goes through the same queue as days, under '@weight:<date>' (JSON kg, null = delete) */
+const WKEY='@weight:';
+const savedOf=k=>k==='@settings'?SAVED.settings:k.startsWith(WKEY)?SAVED.weights[k.slice(WKEY.length)]:SAVED.days[k];
 const settingsJson=()=>JSON.stringify({pud:S.pud,snackOv:S.snackOv||{},pBasis:S.pBasis||'total'});
 /* a save runs in the background, maybe for a day under another plan: the plan in use goes back after, or the day on screen
    would be left with that day's foods (a food picked there then did nothing) */
@@ -156,6 +164,9 @@ async function flush(){
   try{
     for(const [key,j] of jobs){
       if(key==='@settings'){await api('PUT','/api/settings',JSON.parse(j));SAVED.settings=j;continue;}
+      if(key.startsWith(WKEY)){const d=key.slice(WKEY.length),kg=JSON.parse(j);
+        if(kg==null)await api('DELETE','/api/weights/'+d);else await api('PUT','/api/weights/'+d,{kg});
+        SENDING.delete(key);SAVED.weights[d]=j;continue;}
       const D=JSON.parse(j);const summary=summaryOf(key,D);
       let r;
       try{r=await api('PUT','/api/days/'+key,{data:D,summary},VER[key]??null);}
@@ -165,7 +176,7 @@ async function flush(){
     saveState=pending.size?'pending':'saved';saveErr='';
     if(pending.size)saveTimer=setTimeout(flush,600);else if(stashOut)dropStash();
   }catch(e){
-    SENDING.clear();jobs.forEach(([k,j])=>{if(!pending.has(k)&&SAVED.days[k]!==j)pending.set(k,j);});
+    SENDING.clear();jobs.forEach(([k,j])=>{if(!pending.has(k)&&savedOf(k)!==j)pending.set(k,j);});
     inFlight=false;
     if(e.signedOut)return;               /* toLogin() stashes everything still pending */
     saveState='error';saveErr=e.message;
@@ -260,9 +271,37 @@ const ONCE=new WeakSet();
 async function once(el,fn){
   if(ONCE.has(el))return;ONCE.add(el);
   const bs=(el.tagName==='FORM'?[...el.querySelectorAll('button')]:[el]).filter(b=>!b.disabled);
-  bs.forEach(b=>{b.disabled=true;});
+  bs.forEach(b=>{b.disabled=true;});el.setAttribute('aria-busy','true');
   try{return await fn();}
-  finally{bs.forEach(b=>{b.disabled=false;});setTimeout(()=>ONCE.delete(el),400);}
+  finally{bs.forEach(b=>{b.disabled=false;});el.removeAttribute('aria-busy');setTimeout(()=>ONCE.delete(el),400);}
+}
+
+/* A change shown before the server has it that then failed: said next to its control (role=status), with Retry when it can
+   be sent again. A control no longer on the page gets the note at the foot of the screen. */
+function noteBy(el,text,retry,ok){
+  const at=el&&el.isConnected?el.closest('label,.orow')||el:null;
+  if(at&&at.nextElementSibling&&at.nextElementSibling.classList.contains('optnote'))at.nextElementSibling.remove();
+  if(!at)document.querySelectorAll('.optnote.optfloat').forEach(x=>x.remove());
+  const n=document.createElement('span');n.className='optnote'+(at?'':' optfloat')+(ok?' ok':'');n.setAttribute('role','status');n.textContent=text+' ';
+  if(retry){const b=document.createElement('button');b.type='button';b.className='ghost';b.textContent=ok||'Retry';
+    b.addEventListener('click',()=>{n.remove();retry();});n.appendChild(b);}
+  if(at)at.after(n);else document.body.appendChild(n);
+  setTimeout(()=>n.remove(),10000);
+  return n;
+}
+/* An on/off switch that is your own data (a Trend box): show(key,on) puts it on screen at once; send(key,on) saves it. One
+   request per key is in flight; a change made meanwhile is sent when it returns (the latest wins, a double click sends no
+   second request); a failure puts back what the server has and fail(key,err) says so. */
+function optToggle({send,show,fail}){
+  const st=new Map();
+  return async(key,on)=>{
+    let s=st.get(key);if(!s)st.set(key,s={want:on,have:!on,busy:false});
+    s.want=on;show(key,on);
+    if(s.busy)return;s.busy=true;
+    try{while(s.want!==s.have){const v=s.want;await send(key,v);s.have=v;}}
+    catch(e){s.want=s.have;show(key,s.have);if(!e.signedOut)fail(key,e);}
+    finally{st.delete(key);}
+  };
 }
 
 function baseAmount(D,mi,box,f){const m=D.base[mi];if(!m||m.id!==D.meals[mi].id)return null;
@@ -325,7 +364,7 @@ function renderWeek(){
 }
 function renderStatus(){
   if(view!=='day')return;
-  const date=S.cur, logged=LOGGED.has(date), p=pending.has(date);
+  const date=S.cur, logged=LOGGED.has(date), p=pending.has(date)||pending.has(WKEY+date);
   let h;
   const cd=CONFLICT.has(date)?date:CONFLICT.values().next().value;
   if(cd) h=`<span class="chip bad">Not saved</span> ${cd===date?'This day':esc(fmtLong(cd))} changed in another tab or device – reload to see it. Your change here isn’t saved. <button class="ghost" data-act="reload">Reload</button>`;
@@ -537,10 +576,17 @@ async function delBadDate(d){
   delete SUMS[d];delete WEIGHTS[d];LOGGED.delete(d);renderBadDates();
 }
 
-/* ---------- weight ---------- */
-async function setWeight(date,kg){
-  if(kg==null){await api('DELETE','/api/weights/'+date);delete WEIGHTS[date];}
-  else{await api('PUT','/api/weights/'+date,{kg});WEIGHTS[date]=Math.round(kg*100)/100;}
+/* ---------- weight ----------
+   Shown at once and saved through the day's queue (flush): "Saving…", "Not saved – retrying", kept at sign-out and on leaving the page. */
+function setWeight(date,kg){
+  const k=WKEY+date;
+  if(SAVED.weights[date]===undefined)SAVED.weights[date]=JSON.stringify(WEIGHTS[date]??null);
+  if(kg==null)delete WEIGHTS[date];else WEIGHTS[date]=Math.round(kg*100)/100;
+  const j=JSON.stringify(WEIGHTS[date]??null);
+  if((SENDING.has(k)?SENDING.get(k):SAVED.weights[date])!==j)pending.set(k,j);else pending.delete(k);
+  if(pending.size){saveState='pending';clearTimeout(saveTimer);saveTimer=setTimeout(flush,0);}   /* typed once and done: sent straight away */
+  else if(saveState==='pending'&&!inFlight){saveState='saved';clearTimeout(saveTimer);}
+  renderStatus();
 }
 
 /* ---------- routing: #dash (the landing page), #day/2026-10-15, #history/2026-10, #history/timeline/…, #gym/…, #foods/…, #supps/…, #photos/…, #account, #admin ----------
@@ -644,7 +690,7 @@ document.addEventListener('click',e=>{
   else if(a==='mtoday'){go('history/'+todayStr().slice(0,7));}
   else if(a==='baddel'){delBadDate(b.dataset.d);}
   else if(a==='savenow'){saveNow();}
-  else if(a==='unlog'){unlogDay();}
+  else if(a==='unlog'){once(b,unlogDay);}
   else if(a==='retry'){clearTimeout(saveTimer);saveState='pending';flush();}
   else if(a==='reload')location.reload();
   else if(a==='del'){editMeal(+b.dataset.m,b.dataset.b,(D,m)=>{m[b.dataset.b].splice(+b.dataset.i,1);});}
@@ -700,8 +746,8 @@ document.addEventListener('change',e=>{
       act(()=>{});}
   else if(el.id==='datepick'){if(isDate(el.value))go('day/'+el.value);}
   else if(el.id==='wt'){const v=el.value.trim(),date=S.cur;const kg=v===''?null:+v;
-      if(kg!=null&&!(kg>=20&&kg<=400)){alert('Enter a weight between 20 and 400 kg.');renderWeightInline();return;}
-      setWeight(date,kg).then(renderWeightInline,err=>{if(!err.signedOut)alert('Couldn’t save weight: '+err.message);renderWeightInline();});}
+      if(kg!=null&&!(kg>=20&&kg<=400)){noteBy(el,'Enter a weight between 20 and 400 kg.');renderWeightInline();return;}
+      setWeight(date,kg);renderWeightInline();}
 });
 $('#snackform').addEventListener('submit',e=>{
   e.preventDefault();const id=$('#sn').value,q=+$('#sq').value||0;if(!q)return;

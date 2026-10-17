@@ -345,7 +345,7 @@ document.addEventListener('click',e=>{
     const nb=document.querySelector(`.fcard[data-id="${b.dataset.id}"] [data-fa=wt][data-v=${b.dataset.v}]`);if(nb)nb.focus();}
   else if(a==='add'){const f=fShown(fById(b.dataset.id));if(!f)return;fAdding={id:f.id,date:S.cur,qty:libDefault(f.unit),where:'off'};renderFoodList();const q=$('#f-aqty');if(q)q.focus();}
   else if(a==='cancel'){fAdding=null;renderFoodList();}
-  else if(a==='del'){fDelete(+b.dataset.id);}
+  else if(a==='del'){once(b,()=>fDelete(+b.dataset.id));}
 });
 document.addEventListener('change',e=>{
   if(view!=='foods')return;

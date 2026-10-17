@@ -27,6 +27,7 @@ const q = {
 
   workouts: db.prepare('SELECT id, name, description, items, updated_at AS updated FROM workouts WHERE user_id = ? ORDER BY position, id'),
   workout: db.prepare('SELECT id, updated_at FROM workouts WHERE user_id = ? AND id = ?'),
+  workoutRow: db.prepare('SELECT id, name, description, items, updated_at AS updated FROM workouts WHERE user_id = ? AND id = ?'),
   countWorkouts: db.prepare('SELECT COUNT(*) AS n, COALESCE(MAX(position), 0) AS pos FROM workouts WHERE user_id = ?'),
   addWorkout: db.prepare('INSERT INTO workouts (user_id, name, description, items, position) VALUES (?, ?, ?, ?, ?)'),
   putWorkout: db.prepare('UPDATE workouts SET name = ?, description = ?, items = ?, updated_at = ? WHERE user_id = ? AND id = ?'),
@@ -131,6 +132,9 @@ function overview(user) {
   const workouts = q.workouts.all(user.id).map(w => ({ ...w, items: JSON.parse(w.items).filter(i => ids.has(i.e)) }));
   return { exercises, workouts };
 }
+
+/* a workout as GET /api/gym lists it, so the app can show a save without reading everything again */
+function workoutOut(user, id) { const w = q.workoutRow.get(user.id, id); return w && { ...w, items: JSON.parse(w.items) }; }
 
 function tx(fn) {
   db.exec('BEGIN');
@@ -269,7 +273,8 @@ router.post('/workouts', send(req => {
   const w = cleanWorkout(req.body, req.user);
   const c = q.countWorkouts.get(req.user.id);
   if (c.n >= MAX.workouts) throw fail(`You can have ${MAX.workouts} workouts at most`);
-  return tx(() => ({ id: Number(q.addWorkout.run(req.user.id, w.name, w.description, workoutItems(req.user, w.items), c.pos + 1).lastInsertRowid) }));
+  const id = tx(() => Number(q.addWorkout.run(req.user.id, w.name, w.description, workoutItems(req.user, w.items), c.pos + 1).lastInsertRowid));
+  return { id, workout: workoutOut(req.user, id) };
 }));
 router.put('/workouts/:id', send(req => {
   const id = idOf(req.params.id);
@@ -279,7 +284,7 @@ router.put('/workouts/:id', send(req => {
   version.check(req, old.updated_at);
   const updated = version.stamp();
   tx(() => q.putWorkout.run(w.name, w.description, workoutItems(req.user, w.items), updated, req.user.id, id));
-  return { id, updated };
+  return { id, updated, workout: workoutOut(req.user, id) };
 }));
 router.delete('/workouts/:id', send(req => { q.delWorkout.run(req.user.id, idOf(req.params.id)); return { ok: true }; }));
 /* The list order: every workout id, top first. */
