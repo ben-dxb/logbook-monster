@@ -211,7 +211,7 @@ router.delete('/admin/users/:id', adminOnly, fresh, (req, res) => {
     const out = users.remove(id, req.user, defaults.isAdmin);
     audit.log(req, 'account.removed', { email: target && target.email }, id);
     res.json(out);
-    photos.removeFiles(files);
+    try { photos.removeFiles(files); } catch (e) { console.error('Removing the photo files of account #' + id + ' failed:', e.message); }
   } catch (e) { fail(res, e); }
 });
 

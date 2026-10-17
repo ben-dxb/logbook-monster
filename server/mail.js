@@ -70,8 +70,11 @@ function current() {
   const from = pick('from') || (EMAIL_RE.test(pick('user') || '') ? pick('user') : '');
   /* Gmail and most providers sign in as the address you send from, so a blank username means that. */
   const user = pick('user') || (pass ? from : '');
-  return { host: pick('host') || '', port, secure, user, pass, from, fromName: pick('fromName') || 'Logbook Monster',
-    source: s.host ? 'admin' : env.host ? 'env' : null, passSource: s.pass ? 'admin' : env.pass ? 'env' : null };
+  /* where each value in use comes from: saved on the Admin page, .env, or neither (a default) */
+  const from1 = k => (s[k] != null && s[k] !== '' ? 'admin' : env[k] != null && env[k] !== '' && env[k] !== 0 ? 'env' : null);
+  const sources = Object.fromEntries(['host', 'port', 'secure', 'user', 'pass', 'from', 'fromName'].map(k => [k, from1(k)]));
+  return { host: pick('host') || '', port, secure, user, pass, from, fromName: pick('fromName') || 'Logbook Monster', sources,
+    source: Object.values(sources).includes('admin') ? 'admin' : env.host ? 'env' : null, passSource: sources.pass };
 }
 const configured = () => { const c = current(); return !!(c.host && c.from); };
 
@@ -79,7 +82,7 @@ const configured = () => { const c = current(); return !!(c.host && c.from); };
 function status() {
   const c = current();
   return { configured: !!(c.host && c.from), source: c.source, host: c.host, port: c.port, secure: c.secure, user: stored().user || process.env.SMTP_USER || '',
-    hasPassword: !!c.pass, passwordSource: c.passSource, from: c.from, fromName: c.fromName };
+    hasPassword: !!c.pass, passwordSource: c.passSource, from: c.from, fromName: c.fromName, sources: c.sources };
 }
 
 async function save(body) {

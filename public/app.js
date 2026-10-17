@@ -41,14 +41,14 @@ async function api(method,url,body,ver,again){
     headers:{...(body!==undefined?{'content-type':'application/json'}:{}),'x-csrf-token':csrf,...TZH,...(ver!==undefined?{'x-version':ver==null?'none':ver}:{})},
     body:body!==undefined?JSON.stringify(body):undefined});}
   catch{throw new Error('Can’t reach the server – is it still running?');}
-  if(r.status===401){setTimeout(toLogin,0);const e=new Error('You were signed out');e.signedOut=true;throw e;}
+  if(r.status===401){const j=await r.json().catch(()=>({}));setTimeout(()=>toLogin(j.gone),0);const e=new Error('You were signed out');e.signedOut=true;throw e;}
   if(r.status===404&&method==='GET') return null;
   const j=await r.json().catch(()=>({}));
   if(!r.ok){
     /* a sensitive change on an older sign-in: password or code again, then the same request once more */
     if(r.status===403&&j.recheck&&!again&&await recheck())return api(method,url,body,ver,true);
     if(r.status===403&&j.setup2fa)setTimeout(tfShow,0);
-    const e=new Error(j.error||`HTTP ${r.status}`);e.conflict=r.status===409&&ver!==undefined;throw e;}
+    const e=new Error(j.error||`HTTP ${r.status}`);e.status=r.status;e.conflict=r.status===409&&ver!==undefined;throw e;}
   return j;
 }
 function recheck(){
@@ -69,10 +69,10 @@ function recheck(){
 const STASH='logbook-monster-unsaved', STASH_DAYS=14;
 let UID=null, stashOut=false;
 const stashKey=()=>STASH+':'+UID;
-function toLogin(){
+function toLogin(gone){
   if(pending.size&&UID!=null){try{localStorage.setItem(stashKey(),JSON.stringify({at:Date.now(),
     jobs:[...pending.entries()].map(([k,j])=>[k,j,k==='@settings'?SAVED.settings:LOGGED.has(k)?SAVED.days[k]:null])}));}catch{}}
-  pending.clear();location.href='/login'+location.hash;   /* come back to the same day after signing in */
+  pending.clear();location.href='/login'+(gone?'?error=gone':'')+location.hash;   /* come back to the same day after signing in */
 }
 function dropStash(){stashOut=false;try{localStorage.removeItem(stashKey());}catch{}}
 /* returns what wasn't put back because it changed elsewhere since */
@@ -281,6 +281,7 @@ function packHtml(D,mi,i){
 const oldPlan=()=>((typeof DEFS!=='undefined'&&DEFS.myVersions)||[]).some(v=>v&&v.foods&&Object.values(v.foods).some(f=>f&&/^Health Road /.test(f.n||'')));
 const snacksShown=()=>SNACKS.filter(x=>!x.old||(S.snackOv&&S.snackOv[x.id])||oldPlan());
 function macLine(t){return `<span class="ml"><b>${r0(t.k)}</b> kcal · P ${r1(t.p)} · C ${r1(t.c)} · F ${r1(t.f)}</span>`;}
+const pudUsed=D=>PUD_ON||D.meals.some(m=>BOXES.some(([b])=>(m[b]||[]).some(i=>i.f==='pudding')))||D.off.some(o=>o.snack==='pudding');
 function boxHtml(D,mi,box,label){
   const items=D.meals[mi][box]||(D.meals[mi][box]=[]);const t=sum(items.map(i=>macOf(i.f,i.g)));
   return `<div class="box"><div class="bh"><span class="lbl">${label}</span>${items.length?macLine(t):''}</div>
@@ -367,6 +368,8 @@ function render(){
   $('#offlist').innerHTML=D.off.map((o,oi)=>`<div class="orow"><span>${esc(o.n||'Off-plan food')}</span>${o.snack||o.lib?`<label class="qty"><input id="oq-${S.cur}-${oi}" type="number" inputmode="decimal" min="0" step="${o.lib&&o.u==='each'?'0.5':'1'}" value="${+o.qty||0}" data-act="oqty" data-i="${oi}">${o.lib?esc(libUnit(o.u)):snackVal(o.snack).u==='g'?'g':'×'}</label>`:''}<span class="ml">${r0(+o.k||0)} kcal · P ${r1(+o.p||0)} · C ${r1(+o.c||0)} · F ${r1(+o.f||0)}</span><button class="x" data-act="odel" data-i="${oi}" aria-label="Remove">×</button></div>`).join('')
     +(D.off.length>1?`<div class="orow tot"><span>Total off plan</span>${macLine(ot)}</div>`:'');
   ['k','p','c','f'].forEach(m=>{$('#t-'+m).value=r0(+tg[m]);});
+  /* the batch panel only for a plan (or a day) that has rice pudding in it */
+  {const on=pudUsed(D);$('#pudpanel').hidden=$('#ft-pud').hidden=!on;}
   {const {b,t}=pudBatch();const P=FOODS.pudding,sv=pudServe();
     Object.keys(PUD_DEFAULT).forEach(k=>{const el=$('#pd-'+k);if(document.activeElement!==el)el.value=+b[k];});
     $('#pudsum').innerHTML=`<b>Per 100g:</b> ${r0(P.k)} kcal · P ${r1(P.p)} · C ${r1(P.c)} · F ${r1(P.f)}<br>`+

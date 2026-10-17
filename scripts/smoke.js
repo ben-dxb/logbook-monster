@@ -989,11 +989,49 @@ async function recheck(browser) {
         await pg.click('#ad-tabs [data-adt=email]'); await pg.waitForSelector('[data-adtab=email]:not([hidden])');
         expect(/Not set up/.test(await pg.textContent('#ad-mailstate')), 'email should start not set up');
         expect(await pg.inputValue('#ad-m-host') === 'smtp.gmail.com', 'Gmail should be the default email server');
+        /* with .env settings, Save sends only what was changed (the rest stays from .env) and says where each value comes from */
+        const am = await pg.evaluate(() => {
+          const keep = AM;
+          AM = { configured: true, source: 'env', host: 'smtp.example.com', port: 587, secure: false, user: '', hasPassword: true, passwordSource: 'env',
+            from: 'env@example.com', fromName: 'Logbook Monster', sources: { host: 'env', port: 'env', secure: null, user: null, pass: 'env', from: 'env', fromName: null } };
+          amFill(); $('#ad-m-pass').value = 'new-pass';
+          const one = amBody(), state = $('#ad-mailstate').textContent, tls = $('#ad-m-tls').value;
+          $('#ad-m-port').value = '465'; $('#ad-m-port').dispatchEvent(new Event('input'));
+          const two = amBody();
+          AM = keep; amFill();
+          return { one, two, state, tls };
+        });
+        expect(JSON.stringify(am.one) === '{"pass":"new-pass"}', 'only the typed password should be sent: ' + JSON.stringify(am.one));
+        expect(am.tls === '0' && am.two.port === 465 && am.two.secure === true, 'the TLS choice should follow a changed port: ' + JSON.stringify(am.two));
+        expect(/From \.env: server, port, password, send-from address\./.test(am.state), 'the state should say which values come from .env: ' + am.state);
+        /* saving email settings updates the note on People without a reload */
+        await pg.click('#ad-tabs [data-adt=people]'); await pg.waitForSelector('[data-adtab=people]:not([hidden])');
+        expect(/Email isn’t set up yet/.test(await pg.textContent('#ad-ivmsg')), 'People should say email isn’t set up');
+        await pg.click('#ad-tabs [data-adt=email]'); await pg.waitForSelector('[data-adtab=email]:not([hidden])');
+        await pg.route('**/api/admin/email', r => (r.request().method() === 'PUT' ? r.fulfill({ status: 200, contentType: 'application/json',
+          body: JSON.stringify({ configured: true, source: 'admin', host: 'smtp.gmail.com', port: 465, secure: true, user: '', hasPassword: true, passwordSource: 'admin',
+            from: 'smoke@example.com', fromName: 'Logbook Monster', sources: { host: 'admin', port: 'admin', secure: 'admin', user: null, pass: 'admin', from: 'admin', fromName: null } }) }) : r.continue()));
+        await pg.fill('#ad-m-from', 'smoke@example.com'); await pg.fill('#ad-m-pass', 'smoke-app-pass'); await pg.click('#ad-mailform button[type=submit]');
+        await pg.waitForFunction(() => /Email settings saved/.test(document.querySelector('#ad-mailmsg').textContent), null, { timeout: 5000 });
+        await pg.unroute('**/api/admin/email');
+        await pg.click('#ad-tabs [data-adt=people]'); await pg.waitForSelector('[data-adtab=people]:not([hidden])');
+        expect(!/Email isn’t set up yet/.test(await pg.textContent('#ad-ivmsg')), 'People should drop the email note once email is saved');
+        await pg.evaluate(() => amLoad());
         await pg.click('#ad-tabs [data-adt=people]'); await pg.waitForSelector('[data-adtab=people]:not([hidden])');
         await pg.fill('#ad-iv-email', 'guest@example.com'); await pg.click('#ad-iv-btn');
         await pg.waitForSelector('#ad-iv-link', { timeout: 5000 });
         const link = await pg.inputValue('#ad-iv-link');
         expect(/Invite sent/.test(await pg.textContent('#ad-users')), 'invited person should be listed as invited');
+        /* Remove refused as gone (removed in another tab): the list is fetched again */
+        let reloads = 0; const onReq = r => { if (r.method() === 'GET' && /\/api\/admin\/users$/.test(r.url())) reloads++; };
+        const onDlg = dg => dg.accept();
+        pg.on('request', onReq); pg.on('dialog', onDlg); const errsAt = errs.length;
+        await pg.route('**/api/admin/users/*', r => (r.request().method() === 'DELETE' ? r.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"No such account"}' }) : r.continue()));
+        await pg.click('#ad-users .aduser:has-text("guest@example.com") [data-au=remove]');
+        for (let i = 0; i < 50 && !reloads; i++) await pg.waitForTimeout(100);
+        await pg.unroute('**/api/admin/users/*'); pg.off('request', onReq); pg.off('dialog', onDlg);
+        expect(reloads > 0, 'a refused Remove (404) should reload the accounts');
+        errs.push(...errs.splice(errsAt).filter(m => !/status of 404/.test(m)));   /* the browser logs the 404 asked for */
         /* the security log tab: newest first, filtered by event */
         await pg.click('#ad-tabs [data-adt=log]'); await pg.waitForSelector('[data-adtab=log]:not([hidden]) #ad-log .aduser', { timeout: 5000 });
         expect(/Invite made/.test(await pg.textContent('#ad-log .aduser >> nth=0')) && /AI settings changed/.test(await pg.textContent('#ad-log')), 'the security log should list the invite and the AI key change');
@@ -1013,6 +1051,8 @@ async function recheck(browser) {
         await gp.click('a[data-view=day]');
         await gp.waitForSelector('#v-day:not([hidden]) #meals .noplan', { timeout: 5000 });
         expect(await gp.locator('#meals .meal').count() === 0, 'a new account should have no meals');
+        expect(await gp.isHidden('#pudpanel') && await gp.isHidden('#ft-pud'), 'no rice pudding panel or note without pudding in the plan');
+        expect(await gp.evaluate(() => pudUsed({ meals: [], off: [{ snack: 'pudding' }] })), 'a day with rice pudding shows the batch panel');
         expect(await gp.isHidden('#adminlink'), 'super admin link should be hidden for other accounts');
         await gp.evaluate(() => { location.hash = '#admin'; });
         await gp.waitForSelector('#v-day:not([hidden])', { timeout: 5000 });

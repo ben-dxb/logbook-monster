@@ -75,7 +75,7 @@
     <ul id="warn" hidden></ul>
     <div id="opts"></div>
     <div id="meals"></div>
-    <section class="panel" aria-labelledby="ph">
+    <section class="panel" aria-labelledby="ph" id="pudpanel">
       <h2 id="ph">Rice pudding batch</h2>
       <p>Enter what went into the pan and what the finished batch weighed. Every rice pudding amount on this page is in grams and works from these numbers, so you can portion it however you like. Your biggest serving is set by the 20g casein limit.</p>
       <div class="grid6">
@@ -131,7 +131,7 @@
         <button class="btn" id="coach" type="button">Plan targets</button>
       </div>
     </section>
-    <footer>Every change saves to your account automatically. Green/red amounts show the change from the plan. Rice pudding is weighed in grams from the batch. For meat delivered in sauce, weigh the pack and the box under the meat tells you how much of it to eat.</footer>
+    <footer>Every change saves to your account automatically. Green/red amounts show the change from the plan.<span id="ft-pud"> Rice pudding is weighed in grams from the batch.</span> For meat delivered in sauce, weigh the pack and the box under the meat tells you how much of it to eat.</footer>
   </section>
 
   <!-- ===================== HISTORY ===================== -->
@@ -392,6 +392,7 @@
         <label class="f"><span class="lbl">Provider</span><select id="ad-m-prov"><option value="gmail">Gmail</option><option value="outlook">Outlook / Microsoft 365</option><option value="other">Other (SMTP)</option></select></label>
         <label class="f"><span class="lbl">SMTP server</span><input id="ad-m-host" autocomplete="off" spellcheck="false" placeholder="smtp.gmail.com"></label>
         <label class="f"><span class="lbl">Port</span><input id="ad-m-port" type="number" inputmode="numeric" min="1" max="65535" placeholder="465"></label>
+        <label class="f"><span class="lbl">Security</span><select id="ad-m-tls"><option value="1">Implicit TLS (port 465)</option><option value="0">STARTTLS (port 587)</option></select></label>
         <label class="f"><span class="lbl">Username (blank = send-from address)</span><input id="ad-m-user" autocomplete="off" spellcheck="false"></label>
         <label class="f"><span class="lbl">Password / app password</span><input id="ad-m-pass" type="password" autocomplete="new-password" spellcheck="false"></label>
         <div class="admailact"><button class="btn" type="submit">Save email settings</button>
