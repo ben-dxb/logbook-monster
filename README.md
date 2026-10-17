@@ -149,13 +149,13 @@ password is saved on the Super admin page. Nothing secret is ever sent to the br
 | `SESSION_SECRET` | **Required in production.** Random string, 32+ characters, signs the session cookie. `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` |
 | `SESSION_SECRET_OLD` | Optional, only while rotating: the previous `SESSION_SECRET`. Cookies signed with it still work and secrets sealed with it are resealed on start. |
 | `SEAL_KEY` | Optional, 32+ characters: the key the AI key, SMTP password and authenticator keys are sealed with in the database. Without it they're sealed under `SESSION_SECRET`; once set, values sealed under `SESSION_SECRET` are resealed with it on start. |
-| `BASE_URL` | The address you open in the browser, e.g. `https://meals.example.com`. Used for the Google redirect and to turn on secure cookies/HSTS for `https://`. |
+| `BASE_URL` | The address you open in the browser, e.g. `https://meals.example.com`. Used for the Google redirect, invite links and emails, and to turn on secure cookies/HSTS for `https://`. In production the server warns at start when it isn't set. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Turn on "Continue with Google". Leave empty to hide it. |
 | `ALLOWED_EMAILS` | Comma-separated. If set, **only** these emails can sign in, and they can create their own account the first time. |
 | `ALLOW_REGISTRATION` | `true` lets anyone sign up. Default `false`. |
 | `ADMIN_EMAILS` | Comma-separated. Who can open the Super admin page. **Required in production** (the server won't start without it); empty on a local setup = the first account created. |
 | `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | Optional. Powers every AI feature (plan, workout and supplement reads, food values, photo poses, exercise body parts, Timeline summary). A key saved on the Super admin page wins over this one. |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` / `MAIL_FROM_NAME` / `SMTP_SECURE` | Optional. `SMTP_SECURE` forces TLS from the start on or off (default: on for port 465). The email account invites and notifications are sent from. Easier to fill in on the Super admin page (Email); settings saved there win. The server must be on the internet (no private, loopback or link-local addresses), and on a port other than 465 it must offer STARTTLS. |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` / `MAIL_FROM_NAME` / `SMTP_SECURE` | Optional. `SMTP_SECURE` forces TLS from the start on or off (default: on for port 465). The email account invites and notifications are sent from. Easier to fill in on the Super admin page (Email); a value saved there wins over .env field by field – Save stores only the fields you changed, and the page says which values come from .env. The server must be on the internet (no private, loopback or link-local addresses), and on a port other than 465 it must offer STARTTLS. |
 | `SMTP_ALLOW_HOSTS` | Comma-separated mail servers allowed on internal addresses anyway, e.g. a relay on `127.0.0.1` (plain SMTP is allowed to a loopback one). |
 | `DB_PATH` | SQLite file. Default `./data/logbook-monster.db` (an existing `./data/mealswap.db` from before the rename is used if present). A relative path is taken from the folder the server starts in. |
 | `PHOTO_DIR` | Where progress photo files go. Default `photos/` next to the database. |
@@ -272,8 +272,9 @@ Each user can also download their own data from the account menu (photo details 
 
 - Passwords hashed with scrypt; login and Google sign-in are rate-limited per IP, and 10 wrong
   passwords for one account from one IP (one IPv6 /64) in 15 minutes lock that address out of it for the rest of that
-  time (kept in SQLite, so a restart doesn't reset it); same response for unknown email, wrong password and a locked
-  account. From other addresses the account still signs in – someone who knows the email can't lock the owner out – but
+  time (kept in SQLite, so a restart doesn't reset it); unknown email and wrong password get the same response, and a
+  locked address is told to wait 15 minutes – the lock counts tries for any email, known or not, so that says nothing
+  about the account. From other addresses the account still signs in – someone who knows the email can't lock the owner out – but
   each wrong password past 10 from all addresses in 15 minutes slows every answer for it (250 ms more each, at most 4 s).
   The password and code re-checks count the same way.
 - Sessions are server-side (SQLite, only a SHA-256 of each session ID is stored), in an `HttpOnly`, `SameSite=Lax`

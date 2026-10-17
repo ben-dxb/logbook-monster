@@ -8,6 +8,8 @@
     google_failed: 'Google sign-in didn’t work. Try again.',
     google_unverified: 'Your Google account’s email isn’t verified.',
     not_allowed: 'This account isn’t allowed to use this app.',
+    rate: 'Too many sign-in attempts. Wait a few minutes and try again.',
+    gone: 'This account can’t sign in here any more.',
   };
   let csrf = '', mode = 'login';
   const showErr = msg => { $('err').textContent = msg; $('err').hidden = !msg; };

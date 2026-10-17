@@ -133,7 +133,8 @@ function meta(b) {
 /* File names are random and never come from the request, so they can't point outside the folder. */
 const newName = ext => crypto.randomBytes(16).toString('hex') + ext;
 const fileAt = name => path.join(config.photoDir, path.basename(name));
-const unlink = name => { if (name) fs.promises.unlink(fileAt(name)).catch(() => {}); };
+/* a file that can't be deleted is logged, not an error for the person – its row is gone already */
+const unlink = name => { if (name) fs.promises.unlink(fileAt(name)).catch(e => { if (e.code !== 'ENOENT') console.error(`Couldn’t delete photo file ${path.basename(name)}:`, e.code || e.message); }); };
 
 const router = express.Router();
 const send = (res, e) => { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); };

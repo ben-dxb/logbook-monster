@@ -260,6 +260,7 @@ footer{font-size:12px;color:var(--muted)}
 .admail{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;align-items:end}
 .admail select{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 4px;font-size:13px}
 .admailact{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.adsrc{flex-basis:100%}
 .adlink{display:flex;gap:6px;align-items:center;margin-top:6px}
 .adlink input{flex:1 1 auto;min-width:0;border:1px solid var(--line);background:var(--soft);border-radius:6px;padding:5px 6px;font-size:12px}
 .adusers{display:flex;flex-direction:column}

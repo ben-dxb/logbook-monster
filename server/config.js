@@ -96,6 +96,11 @@ if (isProd && !config.adminEmails.length) {
   process.exit(1);
 }
 
+/* Invite links, emails and the Google redirect are built from BASE_URL; on a server localhost links reach nobody. */
+if (isProd && !process.env.BASE_URL) {
+  console.warn(`BASE_URL isn’t set: invite links, emails and Google sign-in will point at ${baseUrl}. Set BASE_URL to the address people open, e.g. BASE_URL=https://logbook.example.com`);
+}
+
 /* Who may hold an account. With ALLOWED_EMAILS set, only those addresses can sign in at all. */
 config.emailAllowed = email => !config.allowedEmails.length || config.allowedEmails.includes(String(email).toLowerCase());
 config.mayCreateAccount = email => config.emailAllowed(email) && (config.allowRegistration || config.allowedEmails.includes(String(email).toLowerCase()));
