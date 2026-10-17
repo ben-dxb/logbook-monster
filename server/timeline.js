@@ -263,11 +263,29 @@ function rangeOf(o) {
   return [from, to];
 }
 
+/* A coach link gets only what the day card shows (public/timeline.js tCardBody): each meal's id, name, eaten and its foods'
+   ids and amounts, the off-plan foods' names and macros, and of the day's own food copies (D.lib) the names and units of
+   the foods in it – not the rest of the saved day (coach-code-002). */
+const items = l => (Array.isArray(l) ? l : []).filter(i => isObj(i) && +i.g > 0).map(i => ({ f: String(i.f), g: +i.g }));
+const str = v => (v == null ? '' : String(v));
+function coachDay(D) {
+  const meals = (Array.isArray(D.meals) ? D.meals : []).filter(isObj)
+    .map(m => ({ id: str(m.id), name: str(m.name), ...(m.eaten ? { eaten: true } : {}), p: items(m.p), c: items(m.c), x: items(m.x) }));
+  const lib = {};
+  for (const m of meals) for (const i of [...m.p, ...m.c, ...m.x]) {
+    const x = isObj(D.lib) && Object.hasOwn(D.lib, i.f) ? D.lib[i.f] : null;
+    if (isObj(x) && !Object.hasOwn(lib, i.f)) Object.defineProperty(lib, i.f, { value: { n: str(x.n), unit: str(x.unit) }, enumerable: true });
+  }
+  const off = (Array.isArray(D.off) ? D.off : []).filter(isObj).map(o => ({ n: str(o.n), k: +o.k || 0, p: +o.p || 0, c: +o.c || 0, f: +o.f || 0 }));
+  return { meals, off, lib };
+}
+
 router.get('/day/:date', (req, res) => {
   try {
     if (!isDate(req.params.date)) throw fail('Bad date');
     const card = dayCard(req.user, req.params.date);
     if (req.share) card.photos.forEach(p => { delete p.note; });   /* a coach link: the card shows no photo notes */
+    if (req.share && card.food) card.food.data = coachDay(card.food.data || {});
     res.json(card);
   } catch (e) { send(res, e); }
 });

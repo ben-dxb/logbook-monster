@@ -44,12 +44,23 @@ app.use((req, res, next) => {
   next();
 });
 
-/* Moving to the __Host- cookie name keeps people signed in: a cookie under the old name is read as the new one, and dropped. */
-const OLD_COOKIE = 'logbookmonster.sid';
+/* Moving to the __Host- cookie name keeps people signed in: a cookie under the old name is read as the new one, and dropped –
+   only for 30 days from the first start that had this (kept in app_config), so after that a cookie tossed in under the old name
+   from a sibling subdomain does nothing (NEW-SEC-05). */
+const OLD_COOKIE = 'logbookmonster.sid', SHIM_DAYS = 30;
+const shimUntil = (() => {
+  db.prepare("INSERT OR IGNORE INTO app_config (key, data) VALUES ('cookieMigration', ?)").run(JSON.stringify({ start: Date.now() }));
+  try { return JSON.parse(db.prepare("SELECT data FROM app_config WHERE key = 'cookieMigration'").get().data).start + SHIM_DAYS * 86400000; } catch { return 0; }
+})();
 if (config.sessionCookie !== OLD_COOKIE) {
   app.use((req, res, next) => {
     const h = req.headers.cookie;
     if (h && /(?:^|;\s*)logbookmonster\.sid=/.test(h)) {
+      if (Date.now() >= shimUntil) {   /* ignored: taken out of the header so nothing reads it */
+        req.headers.cookie = h.replace(/(^|;\s*)logbookmonster\.sid=[^;]*/g, '').replace(/^;\s*/, '');
+        res.clearCookie(OLD_COOKIE, { path: '/', secure: true });
+        return next();
+      }
       if (!h.includes(config.sessionCookie + '=')) req.headers.cookie = h.replace(/(^|;\s*)logbookmonster\.sid=/, `$1${config.sessionCookie}=`);
       res.clearCookie(OLD_COOKIE, { path: '/', secure: true });
     }
@@ -58,7 +69,8 @@ if (config.sessionCookie !== OLD_COOKIE) {
 }
 app.use(session({
   name: config.sessionCookie,
-  secret: config.sessionSecret,
+  /* SESSION_SECRET_OLD: the one before a rotation, still accepted on cookies signed with it (README › Rotating secrets) */
+  secret: [config.sessionSecret, config.sessionSecretOld].filter(Boolean),
   store: new SqliteStore(db, { maxAge: config.sessionDays * 24 * 60 * 60 * 1000 }),
   resave: false,
   saveUninitialized: false,

@@ -8,7 +8,6 @@ const express = require('express');
 const db = require('./db');
 const { isDate, writeError } = require('./dates');
 const { isNum } = require('./num');
-const defaults = require('./defaults');
 const ai = require('./ai');
 const jobs = require('./jobs');
 const audit = require('./audit');
@@ -280,7 +279,7 @@ router.delete('/:id', (req, res) => {
   try {
     const row = q.get.get(idOf(req.params.id));
     if (!visible(row, req.user)) throw fail('No such supplement', 404);
-    if (row.user_id !== req.user.id && !defaults.isAdmin(req.user)) throw fail('Only the person who added this supplement can remove it', 403);
+    if (row.user_id !== req.user.id && !require('./api').superAdmin(req.user)) throw fail('Only the person who added this supplement can remove it', 403);
     q.del.run(row.id);
     if (row.user_id !== req.user.id) audit.log(req, 'supp.removed', { id: row.id, name: row.name }, row.user_id);
     res.json({ ok: true });

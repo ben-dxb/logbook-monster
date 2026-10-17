@@ -285,6 +285,10 @@ db.exec(`CREATE TABLE IF NOT EXISTS login_failures (
   at    INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS login_failures_email ON login_failures(email, at);`);
+/* Added later: ip is the address (an IPv6 /64) a failure came from – the hard lock is per (email, ip), see failures.js */
+if (!db.prepare('PRAGMA table_info(login_failures)').all().some(c => c.name === 'ip')) {
+  db.exec("ALTER TABLE login_failures ADD COLUMN ip TEXT NOT NULL DEFAULT ''");
+}
 
 /* Added later: the second sign-in step (authenticator app, twostep.js). secret is sealed with AES-256-GCM under a key from
    SESSION_SECRET; enabled = 0 while it's being set up; last_step: the newest 30-second step a code was taken for, so a code works

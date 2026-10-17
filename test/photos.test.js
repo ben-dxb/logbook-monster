@@ -79,7 +79,7 @@ test('progress photos: upload, catalog by date, edit, private to their owner, fi
   assert.deepStrictEqual(r.body.poses, ['front', 'left', 'right', 'back', 'other']);
   assert.deepStrictEqual(r.body.styles, ['relaxed', 'front_relaxed', 'back_relaxed', 'front_double_biceps', 'back_double_biceps', 'most_muscular']);
 
-  r = await ann('POST', '/api/photos?date=2026-09-01&pose=front&note=%20%20fasted%20%20', jpeg('a'));
+  r = await ann('POST', '/api/photos?date=2026-09-01&pose=front', jpeg('a'), undefined, { 'x-photo-note': encodeURIComponent('  fasted  ') });
   assert.strictEqual(r.status, 200);
   const a = r.body;
   assert.deepStrictEqual({ date: a.date, pose: a.pose, note: a.note, tv: a.tv }, { date: '2026-09-01', pose: 'front', note: 'fasted', tv: null });
@@ -87,6 +87,9 @@ test('progress photos: upload, catalog by date, edit, private to their owner, fi
   r = await ann('POST', '/api/photos?date=2026-09-02&pose=front', jpeg('h'), undefined, { 'x-photo-note': encodeURIComponent('after the cut – 80 kg') });
   assert.strictEqual(r.body.note, 'after the cut – 80 kg');
   assert.strictEqual((await ann('POST', '/api/photos?date=2026-09-02&pose=front', jpeg('h'), undefined, { 'x-photo-note': '%E0%A4%A' })).status, 400);
+  const q = await ann('POST', '/api/photos?date=2026-09-02&pose=front&note=in%20the%20url', jpeg('q'));
+  assert.strictEqual(q.body.note, '', 'a note in the query is ignored: it would sit in access logs (NEW-SEC-07)');
+  assert.strictEqual((await ann('DELETE', `/api/photos/${q.body.id}`)).status, 200);
   assert.strictEqual((await ann('DELETE', `/api/photos/${r.body.id}`)).status, 200);
   r = await ann('POST', '/api/photos?date=2026-10-01&pose=side', png, 'image/png');
   assert.strictEqual(r.status, 200);
@@ -172,7 +175,7 @@ test('progress photos: removing an account removes its pictures', async () => {
 test('progress photos: the AI tags the pose, from the thumbnail, only when asked to save', async () => {
   const ann = await signIn('ann@example.com'), other = await signIn('admin@example.com');
   assert.strictEqual((await ann('GET', '/api/photos')).body.ai, true);
-  const p = (await ann('POST', '/api/photos?date=2026-10-05&pose=other&note=gym', jpeg('pose:back'))).body;
+  const p = (await ann('POST', '/api/photos?date=2026-10-05&pose=other', jpeg('pose:back'), undefined, { 'x-photo-note': 'gym' })).body;
   assert.strictEqual(p.style, '', 'no pose type until one is set');
   aiSeen.length = 0;
 

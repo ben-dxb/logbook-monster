@@ -9,6 +9,7 @@ const users = require('./users');
 const mail = require('./mail');
 const audit = require('./audit');
 const twostep = require('./twostep');
+const fails = require('./failures');
 const { fetchJson } = require('./fetchjson');
 
 const q = {
@@ -21,10 +22,6 @@ const q = {
   setName: db.prepare('UPDATE users SET name = ? WHERE id = ?'),
   touchLogin: db.prepare("UPDATE users SET last_login_at = datetime('now') WHERE id = ?"),
   endShares: db.prepare('DELETE FROM shares WHERE user_id = ? AND expires_at > ?'),
-  failCount: db.prepare('SELECT COUNT(*) AS n FROM login_failures WHERE email = ? AND at > ?'),
-  failAdd: db.prepare('INSERT INTO login_failures (email, at) VALUES (?, ?)'),
-  failPrune: db.prepare('DELETE FROM login_failures WHERE at <= ?'),
-  failClear: db.prepare('DELETE FROM login_failures WHERE email = ?'),
 };
 
 const { EMAIL_RE } = mail;
@@ -124,16 +121,6 @@ function renew(req) {
   });
 }
 
-/* On top of the per-IP limit: ACCOUNT_FAIL_LIMIT wrong passwords for one email every 15 minutes, kept in
-   SQLite so a restart doesn't reset it. While it's reached even the right password gets the usual answer. */
-const FAIL_WINDOW = 15 * 60 * 1000;
-const lockedOut = email => q.failCount.get(email, Date.now() - FAIL_WINDOW).n >= config.accountFailLimit;
-function noteFailure(email) {
-  const now = Date.now();
-  q.failPrune.run(now - FAIL_WINDOW);
-  q.failAdd.run(email, now);
-}
-
 /* A body-less or non-JSON POST is a bad request, not a crash. */
 const needBody = (req, res, next) => (req.body && typeof req.body === 'object' && !Array.isArray(req.body)
   ? next() : res.status(400).json({ error: 'Send the form as JSON.' }));
@@ -164,15 +151,18 @@ router.post('/login', limiter, csrfProtect, needBody, async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
   const valid = EMAIL_RE.test(email);
-  const locked = valid && lockedOut(email);
+  /* On top of the per-IP limit: ACCOUNT_FAIL_LIMIT wrong passwords for one email from one address every 15 minutes lock that
+     address out (even the right password gets the usual answer); from many addresses they only slow the answers (failures.js). */
+  if (valid) await fails.wait(email);
+  const locked = valid && fails.locked(email, req.ip);
   const user = valid ? q.byEmail.get(email) : null;
   const ok = user && user.password_hash ? await verifyPassword(password, user.password_hash) : await dummyVerify(password);
   if (!ok || locked || !accountAllowed(user)) {
-    if (!ok && valid && !locked) noteFailure(email);
+    if (!ok && valid && !locked) fails.note(email, req.ip);
     audit.log(req, locked ? 'signin.locked' : 'signin.failed', { email }, user ? user.id : null);
     return res.status(401).json({ error: 'That email and password don’t match an account.' });
   }
-  q.failClear.run(email);
+  fails.clear(email, req.ip);
   if (twostep.isOn(user.id)) {
     await halfIn(req, user);
     audit.log(req, 'second.asked', { via: 'password' }, user.id);
@@ -188,7 +178,7 @@ router.post('/second', limiter, csrfProtect, needBody, async (req, res) => {
   const h = halfOf(req);
   const user = h ? q.byId.get(h.uid) : null;
   if (!user || !accountAllowed(user)) return res.status(401).json({ error: 'That sign-in took too long. Start again.', restart: true });
-  const r = twostep.attempt(user.id, req.body.code);
+  const r = await twostep.attempt(user.id, req.body.code, { ip: req.ip });
   if (!r.ok) audit.log(req, r.locked ? 'second.locked' : 'second.failed', {}, user.id);
   if (r.locked) return res.status(429).json({ error: twostep.LOCKED });
   if (!r.ok) return res.status(401).json({ error: 'That code didn’t work. Use the newest code from your app, or a recovery code.' });
@@ -237,6 +227,9 @@ router.post('/invite/accept', inviteLimiter, csrfProtect, needBody, async (req, 
   const problem = passwordProblem(password);
   if (problem) return res.status(400).json({ error: problem });
   const name = String(req.body.name || '').replace(/\s+/g, ' ').trim().slice(0, 100);
+  if (!users.claimInvite(String(req.body.token || ''), inv.user_id)) {
+    return res.status(404).json({ error: 'This invite link has expired or was already used. Ask for a new one.' });
+  }
   q.setPassword.run(await hashPassword(password), inv.user_id);
   if (name) q.setName.run(name, inv.user_id);
   await logIn(req, q.byId.get(inv.user_id));

@@ -55,7 +55,7 @@ function allow(take) {
     audit.once(null, 'ai.cap', { cap: 'app' }, user ? user.id : null);
     throw capped('The app has used all of today’s AI – try again tomorrow');
   }
-  if (user && !defaults.isAdmin(user) && o.aiDailyUser && ((q.used.get(user.id, day) || {}).calls || 0) >= o.aiDailyUser) {
+  if (user && !require('./api').superAdmin(user) && o.aiDailyUser && ((q.used.get(user.id, day) || {}).calls || 0) >= o.aiDailyUser) {
     audit.once(null, 'ai.cap', { cap: 'account' }, user.id);
     throw capped('You’ve used today’s AI allowance – try again tomorrow');
   }
@@ -81,7 +81,7 @@ function stored() {
   return s;
 }
 const sealed = ({ key, ...s }) => JSON.stringify(key ? { ...s, keySealed: box.sealText(key) } : s);
-{ const r = q.get.get(), s = r && JSON.parse(r.data); if (s && s.key) q.reseal.run(sealed(s)); }
+{ const r = q.get.get(), s = r && JSON.parse(r.data); if (s && (s.key || box.stale(s.keySealed))) q.reseal.run(sealed(stored())); }   /* plain, or sealed under an older key */
 /* A key saved on the Admin page wins over OPENROUTER_API_KEY in .env. */
 function current(task) {
   const s = stored();

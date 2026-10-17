@@ -26,6 +26,10 @@ const config = {
   /* progress photos are files, kept next to the database unless PHOTO_DIR says otherwise */
   photoDir: process.env.PHOTO_DIR || '',
   sessionSecret: process.env.SESSION_SECRET || '',
+  /* after rotating SESSION_SECRET: the old one, so cookies signed with it keep working and secrets sealed with it are resealed */
+  sessionSecretOld: process.env.SESSION_SECRET_OLD || '',
+  /* optional key for the secrets sealed in the database (seal.js); without it they're sealed under SESSION_SECRET */
+  sealKey: process.env.SEAL_KEY || '',
   sessionDays: +process.env.SESSION_DAYS || 30,
   cookieSecure: bool(process.env.COOKIE_SECURE, baseUrl.startsWith('https://')),
   /* off unless set: only behind a proxy that overwrites X-Forwarded-For (docker-compose.yml sets 1 for Caddy/nginx) */
@@ -75,6 +79,14 @@ if (!config.sessionSecret || config.sessionSecret.length < 32) {
   if (config.sessionSecret.length < 32) {
     config.sessionSecret = require('crypto').randomBytes(32).toString('hex');
     try { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, config.sessionSecret, { mode: 0o600 }); } catch {}
+  }
+}
+
+for (const [k, name] of [['sessionSecretOld', 'SESSION_SECRET_OLD'], ['sealKey', 'SEAL_KEY']]) {
+  if (config[k] && config[k].length < 32) {
+    console.error(`${name} must be a random string of at least 32 characters (or not set).`);
+    if (isProd) process.exit(1);
+    config[k] = '';
   }
 }
 

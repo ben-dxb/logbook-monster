@@ -159,9 +159,13 @@ router.delete('/my/defaults/:from', (req, res) => {
 });
 
 /* AI: the OpenRouter key and models (super admin), and reading a plan PDF into an account's plan format. */
+/* A super admin's powers, here and in the other modules (removing others' shared foods and supplements, no AI allowance):
+   only while "Super admins must use a second step" is off or they have it on. */
+const needsStep = user => options().adminTotp && !twostep.isOn(user.id);
+const superAdmin = user => defaults.isAdmin(user) && !needsStep(user);
 const adminOnly = (req, res, next) => {
   if (!defaults.isAdmin(req.user)) return res.status(403).json({ error: 'Only the super admin can do this' });
-  if (options().adminTotp && !twostep.isOn(req.user.id)) {
+  if (needsStep(req.user)) {
     return res.status(403).json({ setup2fa: true, error: 'Super admins must use a second sign-in step. Set it up under Two-step sign-in on the account menu first.' });
   }
   next();
@@ -184,7 +188,7 @@ router.put('/admin/ai', adminOnly, (req, res, next) => (isObj(req.body) && Objec
   } catch (e) { bad(res, e.message); }
 });
 /* The OpenRouter key is the super admin's, so each account gets a handful of reads an hour. */
-const aiLimit = ai.limiter(12, 'That’s a lot of AI reads – wait a while and try again.', { skip: req => defaults.isAdmin(req.user) });
+const aiLimit = ai.limiter(12, 'That’s a lot of AI reads – wait a while and try again.', { skip: req => superAdmin(req.user) });
 router.post('/my/ai-import', aiLimit, express.raw({ type: ai.TYPES_IN, limit: '10mb' }), ai.scope, readPlan);
 
 /* Accounts: the list, inviting someone (emailed if email is set up) and removing an account. */
@@ -213,7 +217,10 @@ router.get('/admin/log', adminOnly, (req, res) => res.json(audit.list(req.query)
 router.get('/my/log', (req, res) => res.json(audit.mine(req.user, req.query)));
 
 router.get('/admin/options', adminOnly, (req, res) => res.json(options()));
-router.put('/admin/options', adminOnly, (req, res) => {
+/* Loosening a guard – a higher AI cap or none (0), aiPrivate or adminTotp off – needs the re-check too (NEW-SEC-09). */
+const loosens = (o, b) => Object.entries(isObj(b) ? b : {}).some(([k, v]) => (typeof OPTIONS[k] === 'number'
+  ? Number.isInteger(v) && o[k] !== 0 && (v === 0 || v > o[k]) : (k === 'aiPrivate' || k === 'adminTotp') && v === false && o[k] === true));
+router.put('/admin/options', adminOnly, (req, res, next) => (loosens(options(), req.body) ? fresh(req, res, next) : next()), (req, res) => {
   if (!isObj(req.body)) return bad(res, 'Options must be an object');
   const o = options();
   for (const [k, v] of Object.entries(req.body)) {
@@ -382,4 +389,5 @@ router.get('/export', exportLimit, async (req, res) => {
 router.use((req, res) => res.status(404).json({ error: 'Not found' }));
 
 router.appOptions = options;   /* for server/ai.js (daily caps, aiPrivate) */
+router.superAdmin = superAdmin;   /* for foods.js, supps.js and ai.js */
 module.exports = router;

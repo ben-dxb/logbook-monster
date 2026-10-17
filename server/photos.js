@@ -147,21 +147,38 @@ router.get('/', (req, res) => {
 
 /* POST /api/photos?date=…&pose=…&style=… with the image itself as the body; ai=1 when the AI is to pick the pose
    (the pose sent is a stand-in until it does, and counts as not set by hand). The note comes URI-encoded in x-photo-note,
-   so it never lands in an access log (?note= still works for older pages). */
-const noteOf = req => { const h = req.get('x-photo-note'); if (h == null) return req.query.note; try { return decodeURIComponent(h); } catch { throw fail('Bad note'); } };
+   never in the query, so it doesn't land in an access log (README's Caddy filter drops the header too). */
+const noteOf = req => { const h = req.get('x-photo-note'); if (h == null) return ''; try { return decodeURIComponent(h); } catch { throw fail('Bad note'); } };
+/* Uploads still being written, per account ({ n, bytes }): counted against the caps at check time, in the same synchronous
+   step as the check, so parallel uploads can't all pass it (NEW-SEC-08). release() when the row is in (or the upload failed). */
+const busy = new Map();
+function reserve(uid, n, bytes) {
+  const b = busy.get(uid) || { n: 0, bytes: 0 };
+  if (n && q.count.get(uid).n + b.n + n > MAX_PHOTOS) throw fail(`You have the most photos an account can keep (${MAX_PHOTOS})`);
+  if (q.bytes.get(uid).n + b.bytes + bytes > MAX_TOTAL) throw full();
+  b.n += n; b.bytes += bytes; busy.set(uid, b);
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true; b.n -= n; b.bytes -= bytes;
+    if (!b.n && !b.bytes) busy.delete(uid);
+  };
+}
 router.post('/', uploadLimit, rawImage(MAX_BYTES), async (req, res) => {
   try {
     const m = meta({ ...req.query, note: noteOf(req) });
     const type = sniff(req.body);
     if (!type) throw fail('That isn’t a JPEG, PNG or WebP picture');
-    if (q.count.get(req.user.id).n >= MAX_PHOTOS) throw fail(`You have the most photos an account can keep (${MAX_PHOTOS})`);
     const file = newName(EXT[type]), bytes = clean(req.body, type);
-    if (q.bytes.get(req.user.id).n + bytes.length > MAX_TOTAL) throw full();
-    await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 });
+    const release = reserve(req.user.id, 1, bytes.length);
     try {
-      const { lastInsertRowid } = q.add.run(req.user.id, m.date, m.pose, m.style, req.query.ai === '1' ? 1 : 0, m.note, file, type, bytes.length);
-      res.json(view(q.get.get(req.user.id, Number(lastInsertRowid))));
-    } catch (e) { unlink(file); throw e; }
+      await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 });
+      try {
+        const { lastInsertRowid } = q.add.run(req.user.id, m.date, m.pose, m.style, req.query.ai === '1' ? 1 : 0, m.note, file, type, bytes.length);
+        release();
+        res.json(view(q.get.get(req.user.id, Number(lastInsertRowid))));
+      } catch (e) { unlink(file); throw e; }
+    } finally { release(); }
   } catch (e) { send(res, e); }
 });
 
@@ -172,9 +189,11 @@ router.put('/:id/thumb', uploadLimit, rawImage(MAX_THUMB), async (req, res) => {
     if (!row) throw fail('No such photo', 404);
     if (sniff(req.body) !== 'image/jpeg') throw fail('The thumbnail must be a JPEG');
     const file = newName('.jpg'), bytes = cleanJpeg(req.body);
-    if (q.bytes.get(req.user.id).n - row.thumb_size + bytes.length > MAX_TOTAL) throw full();
-    await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 });
-    if (!q.thumb.run(file, bytes.length, req.user.id, id).changes) { unlink(file); throw fail('No such photo', 404); }   /* deleted meanwhile */
+    const release = reserve(req.user.id, 0, bytes.length - row.thumb_size);
+    try {
+      await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx', mode: 0o600 });
+      if (!q.thumb.run(file, bytes.length, req.user.id, id).changes) { unlink(file); throw fail('No such photo', 404); }   /* deleted meanwhile */
+    } finally { release(); }
     unlink(row.thumb);
     res.json(view(q.get.get(req.user.id, id)));
   } catch (e) { send(res, e); }

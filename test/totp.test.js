@@ -11,7 +11,7 @@ const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const totp = require('../server/totp');
 
-const [PORT] = require('./_ports').freePorts(1);
+const [PORT, SMTP_PORT] = require('./_ports').freePorts(2);
 const BASE = `http://127.0.0.1:${PORT}`;
 const root = path.join(__dirname, '..');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'logbook-monster-totp-'));
@@ -19,13 +19,39 @@ const DB = path.join(dir, 't.db');
 const PASSWORD = 'long-password-1';
 const env = { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', BASE_URL: BASE, DB_PATH: DB, PHOTO_DIR: path.join(dir, 'photos'),
   SESSION_SECRET: 'y'.repeat(40), AUTH_RATE_LIMIT: '1000', ACCOUNT_FAIL_LIMIT: '10', ALLOWED_EMAILS: '', ADMIN_EMAILS: '', ALLOW_REGISTRATION: 'false',
-  GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', SMTP_HOST: '', SMTP_PASS: '', MAIL_FROM: '', OPENROUTER_API_KEY: '' };
+  GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', SMTP_HOST: '127.0.0.1', SMTP_PORT: String(SMTP_PORT), SMTP_USER: '', SMTP_PASS: '', SMTP_SECURE: 'false', MAIL_FROM: 'app@example.com',
+  SMTP_ALLOW_HOSTS: '127.0.0.1', OPENROUTER_API_KEY: '' };
+/* a mail server that keeps what it's sent: { to, data } */
+const mails = [];
+const fakeSmtp = require('node:net').createServer(sock => {
+  let data = null, msg = {}, buf = '';
+  sock.write('220 fake ESMTP\r\n');
+  sock.on('data', chunk => {
+    buf += chunk;
+    for (let i; (i = buf.indexOf('\r\n')) >= 0;) {
+      const line = buf.slice(0, i); buf = buf.slice(i + 2);
+      if (data !== null) { if (line === '.') { msg.data = data.join('\n'); mails.push(msg); msg = {}; data = null; sock.write('250 queued\r\n'); } else data.push(line); continue; }
+      const cmd = line.slice(0, 4).toUpperCase();
+      if (cmd === 'EHLO') sock.write('250 fake\r\n');
+      else if (cmd === 'RCPT') { msg.to = line; sock.write('250 ok\r\n'); }
+      else if (cmd === 'DATA') { data = []; sock.write('354 go\r\n'); }
+      else if (cmd === 'QUIT') sock.end('221 bye\r\n');
+      else sock.write('250 ok\r\n');
+    }
+  });
+  sock.on('error', () => {});
+});
+async function mailTo(email, re) {
+  for (let i = 0; i < 60; i++) { const m = mails.find(x => x.to.includes(email) && re.test(x.data)); if (m) return m; await new Promise(r => setTimeout(r, 50)); }
+  return null;
+}
 const createUser = (email, pw = PASSWORD) => execFileSync(process.execPath,
   ['--disable-warning=ExperimentalWarning', 'scripts/create-user.js', email], { cwd: root, env: { ...env, NEW_PASSWORD: pw }, stdio: 'ignore' });
 
 let srv;
 before(async () => {
-  for (const who of ['adm', 'ann', 'bob', 'cat']) createUser(`${who}@example.com`);
+  await new Promise(r => fakeSmtp.listen(SMTP_PORT, '127.0.0.1', r));
+  for (const who of ['adm', 'ann', 'bob', 'cat', 'dan']) createUser(`${who}@example.com`);
   srv = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server/index.js'], { cwd: root, env, stdio: 'ignore' });
   for (let i = 0; i < 50; i++) {
     try { if ((await fetch(BASE + '/healthz')).ok) return; } catch {}
@@ -33,7 +59,7 @@ before(async () => {
   }
   throw new Error('server did not start');
 });
-after(() => { if (srv) srv.kill(); fs.rmSync(dir, { recursive: true, force: true }); });
+after(() => { if (srv) srv.kill(); fakeSmtp.close(); fs.rmSync(dir, { recursive: true, force: true }); });
 
 const sql = (q, ...args) => { const db = new DatabaseSync(DB); try { return db.prepare(q)[/^\s*select/i.test(q) ? 'all' : 'run'](...args); } finally { db.close(); } };
 const userId = email => sql('SELECT id FROM users WHERE email = ?', email)[0].id;
@@ -124,8 +150,9 @@ test('setting it up: a key and otpauth URI, confirmed with one code, 10 recovery
   assert.strictEqual(JSON.parse(rec).length, 10);
   annKeys = { secret: s.body.secret, codes: r.body.codes };
 
-  assert.strictEqual(r.body.signedOut, 1, 'the other session (signed in with the password alone) ends');
-  assert.strictEqual((await other('GET', '/api/me')).status, 401);
+  assert.strictEqual(r.body.signedOut, 0, 'other sessions stay unless asked to end');
+  assert.strictEqual((await other('GET', '/api/me')).status, 200);
+  assert.ok(await mailTo('ann@example.com', /switched on/), 'the account is told by email');
   assert.deepStrictEqual((await ann('GET', '/api/totp')).body, { on: true, recoveryLeft: 10, readable: true });
   assert.strictEqual((await ann('GET', '/api/me')).body.totp, true);
   assert.strictEqual((await ann('POST', '/api/totp/setup', {})).status, 409, 'no new key while it is on');
@@ -219,6 +246,34 @@ test('switching it off needs the password or a code', async () => {
   assert.strictEqual((await signIn('cat@example.com')).second, false);
 });
 
+test('setting up and switching on need a recent sign-in or re-check, end other sessions only when asked, and are no re-check (NEW-SEC-01/02)', async () => {
+  const d = await signIn('dan@example.com'), other = await signIn('dan@example.com'), old = Date.now() - 16 * 60 * 1000;
+  setSess(d, '$.at', old);
+  let r = await d('POST', '/api/totp/setup', {});
+  assert.strictEqual(r.status, 403);
+  assert.strictEqual(r.body.recheck, true);
+  assert.strictEqual(sql('SELECT COUNT(*) AS n FROM totp WHERE user_id = ?', userId('dan@example.com'))[0].n, 0, 'no key made');
+  assert.strictEqual((await d('POST', '/api/recheck', { password: PASSWORD })).status, 200);
+  const s = await d('POST', '/api/totp/setup', {});
+  assert.strictEqual(s.status, 200);
+  setSess(d, '$.checked', old);
+  r = await d('POST', '/api/totp/enable', { code: codeOf(s.body.secret) });
+  assert.strictEqual(r.status, 403, 'switching on needs it too');
+  assert.strictEqual(r.body.recheck, true);
+  assert.strictEqual((await d('GET', '/api/totp')).body.on, false);
+  assert.strictEqual((await d('POST', '/api/recheck', { password: PASSWORD })).status, 200);
+  const checked = () => JSON.parse(sql('SELECT sess FROM sessions WHERE sid = ?', d.sid())[0].sess).checked;
+  const before = checked();
+  r = await d('POST', '/api/totp/enable', { code: codeOf(s.body.secret), signOutOthers: true });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.signedOut, 1, 'asked: the other session ends');
+  assert.strictEqual((await other('GET', '/api/me')).status, 401);
+  assert.strictEqual(checked(), before, 'switching it on doesn’t count as a re-check');
+  assert.ok(await mailTo('dan@example.com', /switched on/));
+  assert.strictEqual((await d('POST', '/api/totp/disable', { code: r.body.codes[0] })).status, 200);
+  assert.ok(await mailTo('dan@example.com', /switched off/), 'and when it is switched off');
+});
+
 let adm, admKeys;
 test('option: "Super admins must use a second step" keeps a super admin without it out of /api/admin', async () => {
   adm = await signIn('adm@example.com');
@@ -242,8 +297,15 @@ test('option: "Super admins must use a second step" keeps a super admin without 
   }
   assert.strictEqual((await adm('GET', '/api/me')).status, 200);
   assert.strictEqual(sql('SELECT COUNT(*) AS n FROM users WHERE email = ?', 'z@example.com')[0].n, 0);
+  /* nor the super admin powers outside /api/admin: removing someone else's shared food or supplement (NEW-SEC-09) */
+  const food = (await ann('POST', '/api/foods', { name: 'ann shared oats', unit: 'g', k: 380, p: 13, c: 60, f: 7, public: true })).body;
+  const supp = (await ann('POST', '/api/supps', { name: 'ann shared creatine', amount: 5, unit: 'g', public: true })).body;
+  assert.strictEqual((await adm('DELETE', `/api/foods/${food.id}`)).status, 403);
+  assert.strictEqual((await adm('DELETE', `/api/supps/${supp.id}`)).status, 403);
   admKeys = await enable(adm);
   assert.strictEqual((await adm('GET', '/api/admin/users')).status, 200, 'set up again: back in');
+  assert.strictEqual((await adm('DELETE', `/api/foods/${food.id}`)).status, 200);
+  assert.strictEqual((await adm('DELETE', `/api/supps/${supp.id}`)).status, 200);
   /* a normal account is still just refused */
   const bob = await signIn('bob@example.com');
   assert.strictEqual(bob.second, true);
@@ -255,7 +317,7 @@ test('re-check: the AI key, the email settings and removing an account need the 
   createUser('gone@example.com');
   const gone = userId('gone@example.com');
   setSess(adm, '$.at', Date.now() - 16 * 60 * 1000);
-  setSess(adm, '$.checked', Date.now() - 16 * 60 * 1000);   /* switching the step on counted as a check */
+  setSess(adm, '$.checked', Date.now() - 16 * 60 * 1000);
   const sensitive = [['PUT', '/api/admin/ai', { key: 'sk-or-new-key-1234' }], ['PUT', '/api/admin/email', { from: '', fromName: '', host: '', port: '', secure: null, user: '', pass: '' }],
     ['DELETE', `/api/admin/users/${gone}`]];
   for (const [m, u, b] of sensitive) {
@@ -266,6 +328,16 @@ test('re-check: the AI key, the email settings and removing an account need the 
   assert.strictEqual(sql('SELECT COUNT(*) AS n FROM users WHERE id = ?', gone)[0].n, 1, 'nobody was removed');
   assert.strictEqual(sql("SELECT COUNT(*) AS n FROM app_config WHERE key = 'openrouter'")[0].n, 0, 'no key was saved');
   assert.notStrictEqual((await adm('PUT', '/api/admin/ai', { model: 'x/y' })).status, 403, 'changing only the models needs no re-check');
+  /* Options: tightening needs no re-check, loosening does (NEW-SEC-09) */
+  for (const b of [{ aiDailyUser: 50 }, { aiDailyAll: 500 }, { planFiles: false }, { planFiles: true }, { aiPrivate: true }]) {
+    assert.strictEqual((await adm('PUT', '/api/admin/options', b)).status, 200, JSON.stringify(b));
+  }
+  for (const b of [{ aiDailyUser: 0 }, { aiDailyUser: 60 }, { aiDailyAll: 0 }, { aiPrivate: false }, { planFiles: true, aiDailyAll: 501 }]) {
+    const r = await adm('PUT', '/api/admin/options', b);
+    assert.strictEqual(r.status, 403, JSON.stringify(b));
+    assert.strictEqual(r.body.recheck, true);
+  }
+  assert.deepStrictEqual((await adm('GET', '/api/admin/options')).body, { planFiles: true, aiPrivate: true, aiDailyUser: 50, aiDailyAll: 500, adminTotp: false });
   assert.strictEqual((await adm('GET', '/api/admin/users')).status, 200, 'reading needs no re-check');
 
   assert.strictEqual((await adm('POST', '/api/recheck', { password: 'wrong-password-9' })).status, 400);
@@ -273,6 +345,12 @@ test('re-check: the AI key, the email settings and removing an account need the 
   assert.strictEqual((await adm('POST', '/api/recheck', {})).status, 400);
   assert.strictEqual((await adm('POST', '/api/recheck', { password: PASSWORD })).status, 200);
   for (const [m, u, b] of sensitive) assert.strictEqual((await adm(m, u, b)).status, 200, `${m} ${u} after the re-check`);
+  assert.strictEqual((await adm('PUT', '/api/admin/options', { adminTotp: true })).status, 200);
+  assert.strictEqual((await adm('PUT', '/api/admin/options', { aiDailyUser: 100, aiDailyAll: 1000, aiPrivate: false })).status, 200, 'after the re-check');
+  setSess(adm, '$.checked', Date.now() - 16 * 60 * 1000);
+  assert.strictEqual((await adm('PUT', '/api/admin/options', { adminTotp: false })).body.recheck, true, 'switching the second-step rule off needs it');
+  assert.strictEqual((await adm('POST', '/api/recheck', { password: PASSWORD })).status, 200);
+  assert.strictEqual((await adm('PUT', '/api/admin/options', { adminTotp: false, aiPrivate: true })).status, 200);
   assert.strictEqual(sql('SELECT COUNT(*) AS n FROM users WHERE id = ?', gone)[0].n, 0);
 
   /* 15 minutes after the re-check it's asked again; a code does too */

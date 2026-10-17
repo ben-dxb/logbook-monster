@@ -54,7 +54,7 @@ function stored() {
   return s;
 }
 const sealed = ({ pass, ...s }) => JSON.stringify(pass ? { ...s, passSealed: box.sealText(pass) } : s);
-{ const r = q.get.get(), s = r && JSON.parse(r.data); if (s && s.pass) q.reseal.run(sealed(s)); }
+{ const r = q.get.get(), s = r && JSON.parse(r.data); if (s && (s.pass || box.stale(s.passSealed))) q.reseal.run(sealed(stored())); }   /* plain, or sealed under an older key */
 function fromEnv() {
   const e = process.env;
   return { host: e.SMTP_HOST || '', port: +e.SMTP_PORT || 0, secure: e.SMTP_SECURE == null ? null : bool(e.SMTP_SECURE),

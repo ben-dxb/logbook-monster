@@ -146,6 +146,19 @@ test('per-account caps: saved days, plan history and photo bytes', async () => {
   assert.strictEqual((await cat('POST', `/api/photos?date=${TODAY}&pose=back`, jpeg(300))).status, 200, 'the cap is per account');
 });
 
+test('parallel photo uploads can’t overshoot the byte cap: each is counted when it is checked (NEW-SEC-08)', async () => {
+  const eve = await signIn('eve@example.com');
+  const all = await Promise.all(Array.from({ length: 12 }, (_, i) => eve('POST', `/api/photos?date=${TODAY}&pose=front`, jpeg(100 + i % 2))));
+  const ok = all.filter(r => r.status === 200);
+  assert.ok(all.every(r => r.status === 200 || r.status === 413), all.map(r => r.status).join());
+  const bytes = ok.reduce((a, r) => a + r.body.size, 0);
+  assert.ok(bytes <= 600, `${bytes} bytes stored`);
+  assert.strictEqual(ok.length, 5, 'as many as fit, no more');
+  /* a failed upload gives its reservation back */
+  assert.strictEqual((await eve('DELETE', `/api/photos/${ok[0].body.id}`)).status, 200);
+  assert.strictEqual((await eve('POST', `/api/photos?date=${TODAY}&pose=back`, jpeg(100))).status, 200);
+});
+
 test('saves are rate limited per account; reads are not', async () => {
   const dan = await signIn('dan@example.com'), cat = await signIn('cat@example.com');
   let r, i = 0;

@@ -1,7 +1,8 @@
 'use strict';
 /* The optional second sign-in step: codes from an authenticator app (totp.js) plus 10 one-time recovery codes.
-   The secret is kept sealed (AES-256-GCM, key derived from SESSION_SECRET), recovery codes only as SHA-256 hashes.
-   Wrong codes count per account in login_failures (key '2fa:<id>', ACCOUNT_FAIL_LIMIT every 15 minutes, like passwords),
+   The secret is kept sealed (AES-256-GCM, key from SEAL_KEY or SESSION_SECRET, seal.js), recovery codes only as SHA-256 hashes.
+   Wrong codes count per account in login_failures (key '2fa:<id>', locked per address and slowed across addresses like
+   passwords, failures.js),
    and a code is taken once: only a step newer than the last one used is accepted.
    Routes here are under /api/totp (signed in); the sign-in step itself is in auth.js. */
 const crypto = require('crypto');
@@ -12,6 +13,8 @@ const totp = require('./totp');
 const users = require('./users');
 const { verifyPassword } = require('./passwords');
 const audit = require('./audit');
+const mail = require('./mail');
+const fails = require('./failures');
 
 const q = {
   get: db.prepare('SELECT secret, enabled, last_step, recovery FROM totp WHERE user_id = ?'),
@@ -21,13 +24,14 @@ const q = {
   step: db.prepare('UPDATE totp SET last_step = ? WHERE user_id = ? AND last_step < ?'),
   recovery: db.prepare('UPDATE totp SET recovery = ? WHERE user_id = ? AND recovery = ?'),
   remove: db.prepare('DELETE FROM totp WHERE user_id = ?'),
-  failCount: db.prepare('SELECT COUNT(*) AS n FROM login_failures WHERE email = ? AND at > ?'),
-  failAdd: db.prepare('INSERT INTO login_failures (email, at) VALUES (?, ?)'),
-  failClear: db.prepare('DELETE FROM login_failures WHERE email = ?'),
 };
 
 /* ---------- the secret, sealed at rest ---------- */
-const { seal, unseal } = require('./seal')('totp-secret-v1');   /* null from unseal when SESSION_SECRET changed: only recovery codes work then */
+const { seal, unseal, stale } = require('./seal')('totp-secret-v1');   /* null from unseal when the key is lost (seal.js): only recovery codes work then */
+{
+  const put = db.prepare('UPDATE totp SET secret = ? WHERE user_id = ? AND secret = ?');
+  for (const r of db.prepare('SELECT user_id, secret FROM totp').all()) if (stale(r.secret)) put.run(seal(unseal(r.secret)), r.user_id, r.secret);
+}
 
 const row = id => q.get.get(id);
 const isOn = id => { const r = row(id); return !!(r && r.enabled); };
@@ -38,11 +42,8 @@ function newRecovery() {
   return Array.from({ length: 10 }, () => totp.base32(crypto.randomBytes(7)).slice(0, 10).replace(/^(.{5})/, '$1-'));
 }
 
-/* ---------- wrong codes per account ---------- */
-const WINDOW = 15 * 60 * 1000;
+/* ---------- wrong codes per account (failures.js) ---------- */
 const failKey = id => '2fa:' + id;
-const locked = key => q.failCount.get(key, Date.now() - WINDOW).n >= config.accountFailLimit;
-const noteFail = key => q.failAdd.run(key, Date.now());
 
 /* A code for an account that has the step on: 'totp', 'recovery', or null. Each is taken once. */
 function take(id, code, { recovery = true } = {}) {
@@ -56,25 +57,28 @@ function take(id, code, { recovery = true } = {}) {
   if (cleanRecovery(code).length !== 10 || !list.includes(h)) return null;
   return q.recovery.run(JSON.stringify(list.filter(x => x !== h)), id, r.recovery).changes ? 'recovery' : null;
 }
-/* take() behind the per-account limit: { ok, kind } or { locked } */
-function attempt(id, code, opts) {
-  if (locked(failKey(id))) return { locked: true };
+/* take() behind the per-account limit: { ok, kind } or { locked }. opts.ip: the address asking. */
+async function attempt(id, code, opts = {}) {
+  await fails.wait(failKey(id));
+  if (fails.locked(failKey(id), opts.ip)) return { locked: true };
   const kind = take(id, code, opts);
-  if (!kind) { noteFail(failKey(id)); return { ok: false }; }
-  q.failClear.run(failKey(id));
+  if (!kind) { fails.note(failKey(id), opts.ip); return { ok: false }; }
+  fails.clear(failKey(id), opts.ip);
   return { ok: true, kind };
 }
 
 /* Password or code, for turning the step off and for re-checking before a sensitive change. Wrong passwords count
    against the account's email like a wrong sign-in; wrong codes against its code limit. */
-async function confirm(user, { password, code } = {}) {
+async function confirm(user, { password, code } = {}, ip) {
   if (password != null && password !== '') {
-    if (!user.password_hash || locked(user.email)) return { ok: false, locked: !!user.password_hash };
-    if (await verifyPassword(String(password), user.password_hash)) return { ok: true };
-    noteFail(user.email);
+    if (!user.password_hash) return { ok: false };
+    await fails.wait(user.email);
+    if (fails.locked(user.email, ip)) return { ok: false, locked: true };
+    if (await verifyPassword(String(password), user.password_hash)) { fails.clear(user.email, ip); return { ok: true }; }
+    fails.note(user.email, ip);
     return { ok: false };
   }
-  if (code != null && code !== '') return attempt(user.id, code);
+  if (code != null && code !== '') return attempt(user.id, code, { ip });
   return { ok: false };
 }
 const LOCKED = 'Too many wrong tries. Wait 15 minutes and try again.';
@@ -94,7 +98,7 @@ function note(req, r, event) {
   audit.log(req, r.ok ? event + '.ok' : event + '.failed', r.ok ? { by: r.kind ? 'code' : 'password' } : { locked: !!r.locked });
 }
 async function recheck(req, res) {
-  const r = await confirm(req.user, req.body || {});
+  const r = await confirm(req.user, req.body || {}, req.ip);
   note(req, r, 'recheck');
   if (r.locked) return res.status(429).json({ error: LOCKED });
   if (!r.ok) return res.status(400).json({ error: 'That password or code didn’t work.' });
@@ -108,38 +112,48 @@ router.get('/', (req, res) => {
   const r = row(req.user.id);
   res.json({ on: !!(r && r.enabled), recoveryLeft: r && r.enabled ? recoveryLeft(r) : 0, readable: !r || !!unseal(r.secret) });
 });
-/* a new secret, not in use until a code from it is confirmed */
-router.post('/setup', (req, res) => {
+/* Switching it on or off is emailed to the account (mail.notify does nothing while email isn't set up), so a stolen session
+   that does it can't do it quietly. */
+function tell(user, on) {
+  mail.notify({ to: user.email, subject: `Logbook Monster: two-step sign-in switched ${on ? 'on' : 'off'}`,
+    text: `Two-step sign-in was just switched ${on ? 'on' : 'off'} for your Logbook Monster account.\n\n`
+      + `If that wasn’t you, change your password straight away and check Account admin › Security log:\n${config.baseUrl}/#account\n` });
+}
+/* a new secret, not in use until a code from it is confirmed. Setting up and switching on need a recent sign-in or re-check
+   (NEW-SEC-01): a stolen session can't tie the account to someone else's app. */
+router.post('/setup', fresh, (req, res) => {
   if (isOn(req.user.id)) return res.status(409).json({ error: 'The second step is already on. Switch it off first to set up a new app.' });
   const key = totp.newKey();
   q.start.run(req.user.id, seal(key));
   res.json({ secret: totp.base32(key), uri: totp.uri(key, req.user.email) });
 });
-router.post('/enable', (req, res) => {
-  const r = row(req.user.id);
+router.post('/enable', fresh, async (req, res) => {
+  const r = row(req.user.id), ip = req.ip, k = failKey(req.user.id);
   if (!r || r.enabled) return res.status(409).json({ error: r ? 'The second step is already on.' : 'Start the set-up first.' });
-  if (locked(failKey(req.user.id))) return res.status(429).json({ error: LOCKED });
+  await fails.wait(k);
+  if (fails.locked(k, ip)) return res.status(429).json({ error: LOCKED });
   const key = unseal(r.secret), step = key ? totp.match(key, (req.body || {}).code) : -1;
-  if (step < 0) { noteFail(failKey(req.user.id)); return res.status(400).json({ error: 'That code didn’t match. Check the time on your phone and try the newest code.' }); }
+  if (step < 0) { fails.note(k, ip); return res.status(400).json({ error: 'That code didn’t match. Check the time on your phone and try the newest code.' }); }
   const codes = newRecovery();
   if (!q.enable.run(step, JSON.stringify(codes.map(c => hashCode(req.user.id, cleanRecovery(c)))), req.user.id).changes) {
     return res.status(409).json({ error: 'The second step is already on.' });
   }
-  q.failClear.run(failKey(req.user.id));
-  audit.log(req, 'twostep.on');
-  /* other sessions signed in with the password alone end; this one counts as just checked */
-  const signedOut = users.endSessions(req.user.id, req.sessionID);
-  req.session.checked = Date.now();
+  fails.clear(k, ip);
+  /* other sessions end only when asked; switching it on is not a re-check (NEW-SEC-02) */
+  const signedOut = (req.body || {}).signOutOthers === true ? users.endSessions(req.user.id, req.sessionID) : 0;
+  audit.log(req, 'twostep.on', { signedOut });
+  tell(req.user, true);
   res.json({ ok: true, codes, signedOut });
 });
 router.post('/disable', async (req, res) => {
   if (!row(req.user.id)) return res.json({ ok: true });
   if (isOn(req.user.id)) {
-    const r = await confirm(req.user, req.body || {});
+    const r = await confirm(req.user, req.body || {}, req.ip);
     note(req, r, 'recheck');
     if (r.locked) return res.status(429).json({ error: LOCKED });
     if (!r.ok) return res.status(400).json({ error: 'Enter your password or a code to switch the second step off.' });
     audit.log(req, 'twostep.off');
+    tell(req.user, false);
   }
   q.remove.run(req.user.id);
   res.json({ ok: true });

@@ -2,7 +2,8 @@
 /* The security log: one row per security event (sign-ins, password changes, invites, account removal, admin settings,
    exports, bulk deletes, coach links, AI caps). A row says when, whose account (user_id), who did it (actor_id), from
    where (ip) and a small JSON detail – never a password, key, token, cookie or any health data; emails are masked.
-   Rows older than DAYS are pruned on start and daily, and each account keeps at most PER_ACCOUNT. */
+   Rows older than DAYS are pruned on start and daily. The noisy events anyone can cause (NOISY: failed sign-ins, codes and
+   re-checks) are also capped at PER_ACCOUNT per account, so they can't flood the log; the others go only by age (NEW-SEC-04). */
 const crypto = require('crypto');
 const config = require('./config');
 const db = require('./db');
@@ -14,6 +15,8 @@ const PER_ACCOUNT = Math.max(10, +process.env.AUDIT_PER_ACCOUNT || 5000);
 const ALERT_FAILS = Math.max(1, +process.env.AUDIT_ALERT_FAILS || 5);
 const ALERT_WINDOW = 15 * 60 * 1000;
 const FAILS = ['signin.failed', 'signin.locked', 'second.failed', 'second.locked'];
+const NOISY = [...FAILS, 'recheck.failed', 'signin.alert'];
+const inList = l => l.map(e => `'${e}'`).join(', ');
 /* the events a person sees for their own account on Account admin */
 const OWN = ['signin.ok', 'signin.failed', 'signin.locked', 'second.asked', 'second.failed', 'second.locked', 'recovery.used',
   'twostep.on', 'twostep.off', 'recheck.failed', 'signout', 'password.changed', 'google.linked', 'invite.accepted',
@@ -25,7 +28,8 @@ const EVENTS = ['signin.ok', 'signin.failed', 'signin.locked', 'signin.alert', '
 
 const q = {
   add: db.prepare('INSERT INTO audit (at, user_id, actor_id, event, ip, detail) VALUES (?, ?, ?, ?, ?, ?)'),
-  cap: db.prepare('DELETE FROM audit WHERE user_id IS ? AND id <= (SELECT id FROM audit WHERE user_id IS ? ORDER BY id DESC LIMIT 1 OFFSET ?)'),
+  cap: db.prepare(`DELETE FROM audit WHERE user_id IS ? AND event IN (${inList(NOISY)})
+    AND id <= (SELECT id FROM audit WHERE user_id IS ? AND event IN (${inList(NOISY)}) ORDER BY id DESC LIMIT 1 OFFSET ?)`),
   prune: db.prepare('DELETE FROM audit WHERE at < ?'),
   seen: db.prepare("SELECT 1 FROM audit WHERE event = ? AND user_id IS ? AND at >= ? AND json_extract(detail, '$.id') IS ? LIMIT 1"),
   fails: db.prepare("SELECT COUNT(*) AS n FROM audit WHERE user_id = ? AND event IN ('signin.failed', 'signin.locked', 'second.failed', 'second.locked') AND at >= ?"),
@@ -69,7 +73,7 @@ function log(req, event, detail, userId) {
     const ip = req ? String(req.ip || '').slice(0, 64) || null : null;
     const d = clean(detail);
     q.add.run(new Date().toISOString(), uid, actor, String(event), ip, JSON.stringify(d));
-    q.cap.run(uid, uid, PER_ACCOUNT);
+    if (NOISY.includes(event)) q.cap.run(uid, uid, PER_ACCOUNT);
     if (FAILS.includes(event)) {
       console.warn(`Sign-in ${event.endsWith('locked') ? 'refused (account locked)' : 'failed'}${event.startsWith('second') ? ' at the second step' : ''} for ${d.email || (uid ? 'account #' + uid : 'an unknown address')} from ${ip || '?'}`);
       if (uid) alertCheck(uid);
@@ -132,4 +136,4 @@ function mine(user, query) {
   return { next: rows.length === PAGE ? rows[rows.length - 1].id : null, rows: rows.map(r => ({ id: r.id, at: r.at, event: r.event, ip: r.ip, detail: parse(r) })) };
 }
 
-module.exports = { log, once, list, mine, redact, mask, prune, EVENTS, OWN, DAYS, PER_ACCOUNT };
+module.exports = { log, once, list, mine, redact, mask, prune, EVENTS, OWN, NOISY, DAYS, PER_ACCOUNT };
