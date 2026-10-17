@@ -419,6 +419,16 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await pg.waitForFunction(() => /The AI looked at \d+ photo/.test(document.querySelector('#p-list').textContent), null, { timeout: 5000 });
         pg.off('dialog', answer);
         expect(/1 of the \d+ photos shown has a pose you set yourself/.test(asked[0]), `"Tag poses with AI" should ask about the one pose set by hand, asked: ${asked[0]}`);
+        /* "Tag only untagged" leaves out every photo that has a pose already – here the one set by hand – and doesn't ask about it */
+        const untagged = await pg.evaluate(() => PHOTOS.filter(p => pShown().includes(p) && p.poseAi && p.pose === 'other' && !p.style).map(p => p.id));
+        const sent = [], seen = r => { const m = r.url().match(/photos\/(\d+)\/ai-pose/); if (m) sent.push(+m[1]); };
+        const asked2 = [], ok = d => { asked2.push(d.message()); return d.accept(); };
+        await pg.evaluate(() => { document.querySelector('#p-list .fmsg')?.remove(); });
+        pg.on('request', seen); pg.on('dialog', ok); await pg.click('#p-aiuntag');
+        await pg.waitForFunction(() => /The AI looked at \d+ photo/.test(document.querySelector('#p-list').textContent), null, { timeout: 5000 });
+        pg.off('dialog', ok); pg.off('request', seen);
+        expect(untagged.length > 0 && asked2.length === 1 && new RegExp(`these ${untagged.length} photos|this photo`).test(asked2[0]), `"Tag only untagged" should ask once about the ${untagged.length} untagged photos, asked: ${asked2.join(' | ')}`);
+        expect(sent.sort().join() === untagged.sort().join(), `"Tag only untagged" should send only the untagged photos: sent ${sent}, untagged ${untagged}`);
       }
       await pg.fill('#p-jump', '2026-09-04'); await pg.waitForSelector('#p-d-2026-09-01.hit');
       /* pick two photos in the catalog and compare them, older on the left */

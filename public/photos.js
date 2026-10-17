@@ -121,7 +121,8 @@ function pCatalogPage(){
       <div class="prow">
         <label class="f pjump"><span class="lbl">Jump to date</span><input id="p-jump" type="date"${days.length?` min="${days[days.length-1]}" max="${days[0]}"`:' disabled'}></label>
         <button class="ghost" type="button" data-pa="select" id="p-selbtn" aria-pressed="${pSel}"${PHOTOS.length<2?' disabled':''}>Compare two photos</button>
-        ${pAi?`<button class="ghost" type="button" data-pa="aitag" id="p-aibtn"${PHOTOS.length&&!pAiBusy?'':' disabled'} title="Let the AI set the pose of the photos shown">${pAiBusy?'Tagging…':'Tag poses with AI'}</button>`:''}
+        ${pAi?`<button class="ghost" type="button" data-pa="aitag" id="p-aibtn"${PHOTOS.length&&!pAiBusy?'':' disabled'} title="Let the AI set the pose of the photos shown">${pAiBusy?'Tagging…':'Tag poses with AI'}</button>
+        <button class="ghost" type="button" data-pa="aiuntag" id="p-aiuntag"${PHOTOS.some(pUntagged)&&!pAiBusy?'':' disabled'} title="Let the AI set the pose of the photos shown that have none yet, leaving tagged ones as they are">Tag only untagged</button>`:''}
       </div>
       <div class="prow pweight">
         <label class="tog"><input type="checkbox" id="p-near"${pNear?' checked':''}${latest?'':' disabled'}> Same weight as</label>
@@ -339,11 +340,18 @@ async function pDelete(id){
 }
 
 
+/* untagged: still under Other with no pose type, and not put there by hand (uploads with no pose picked go in like this) */
+const pUntagged=p=>p.poseAi&&p.pose==='other'&&!p.style;
 /* "Tag poses with AI": the AI sets the pose of the photos the catalog shows (so pick Other first to sort only those).
-   Poses the person set themselves (poseAi false) are redone only if they say so. */
-async function pAiTagAll(){
+   Poses the person set themselves (poseAi false) are redone only if they say so. "Tag only untagged" (onlyNew) skips
+   every photo that already has a pose or pose type, whoever set it. */
+async function pAiTagAll(onlyNew){
   if(pAiBusy)return;
   let list=pShown();if(!list.length)return;
+  if(onlyNew){
+    list=list.filter(pUntagged);
+    if(!list.length){pMsg='Every photo shown already has a pose, so there’s nothing for the AI to tag.';renderPhotoList();return;}
+  }
   const mine=list.filter(p=>!p.poseAi).length;
   if(mine&&!confirm(`${mine===list.length?(mine===1?'The photo':`All ${mine} photos`):`${mine} of the ${list.length} photos`} shown ${mine===1?'has a pose':'have poses'} you set yourself. Let the AI redo ${mine===1?'that':'those'} too?\n\nOK – redo ${mine===1?'it':'them'} too\nCancel – leave ${mine===1?'it':'them'} as ${mine===1?'it is':'they are'}`)){
     list=list.filter(p=>p.poseAi);
@@ -351,7 +359,7 @@ async function pAiTagAll(){
   }
   if(!confirm(`Let the AI look at ${list.length===1?'this photo':`these ${list.length} photos`} and set ${list.length===1?'its':'their'} pose (front, left or right side, back or other) and pose type (relaxed, double biceps, most muscular…)?\n\n${P_AI_NOTE}`))return;
   pAiBusy=true;pMsg='';
-  const btn=()=>$('#p-aibtn');
+  const btn=()=>$(onlyNew?'#p-aiuntag':'#p-aibtn'), other=$(onlyNew?'#p-aibtn':'#p-aiuntag');if(other)other.disabled=true;
   let done=0, changed=0, miss=0, why='';
   try{
     for(const p of list){
@@ -365,7 +373,12 @@ async function pAiTagAll(){
     }
     pMsg=`The AI looked at ${done-miss} photo${done-miss===1?'':'s'} and changed the pose of ${changed}.`+(miss?` ${miss} couldn’t be tagged: ${why}`:'')+(done<list.length?` Stopped before the last ${list.length-done}.`:'');
   }finally{pAiBusy=false;}
-  if(view==='photos'&&!location.hash.replace(/^#/,'').split('/')[1]){const b=btn();if(b){b.disabled=false;b.textContent='Tag poses with AI';}renderPhotoList();}
+  if(view==='photos'&&!location.hash.replace(/^#/,'').split('/')[1]){
+    const a=$('#p-aibtn'), u=$('#p-aiuntag');
+    if(a){a.disabled=!PHOTOS.length;a.textContent='Tag poses with AI';}
+    if(u){u.disabled=!PHOTOS.some(pUntagged);u.textContent='Tag only untagged';}
+    renderPhotoList();
+  }
 }
 async function pAiOne(b){
   const say=$('#p-aisay');b.disabled=true;say.textContent='Asking the AI…';
@@ -489,7 +502,8 @@ document.addEventListener('click',e=>{
   else if(a==='repick'){const s=[...document.querySelectorAll('#p-cmp select')].map(x=>+x.value);pSel=true;pPick=s;pMsg='';go('photos');}
   else if(a==='withthis'){pSel=true;pPick=[+b.dataset.id];pMsg='';go('photos');}
   else if(a==='match')pMatch(+b.dataset.keep,+b.dataset.drop);
-  else if(a==='aitag')pAiTagAll();
+  else if(a==='aitag')pAiTagAll(false);
+  else if(a==='aiuntag')pAiTagAll(true);
   else if(a==='aione')pAiOne(b);
 });
 document.addEventListener('change',e=>{
