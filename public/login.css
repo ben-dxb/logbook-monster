@@ -14,4 +14,12 @@ form{display:flex;flex-direction:column;gap:10px}
 .switch{margin:0;text-align:center;font-size:14px}
 .link{border:0;background:none;color:var(--info);padding:0;text-decoration:underline}
 .hint{margin:0;color:var(--muted);font-size:13px}
+/* the privacy page: a longer read, same card */
+.card.doc{max-width:680px;gap:10px}
+.doc h2{font-size:17px;font-weight:800;font-stretch:85%;margin:8px 0 0}
+.doc p,.doc ul{margin:0;font-size:14px;line-height:1.5}
+.doc ul{padding-left:20px;display:flex;flex-direction:column;gap:6px}
+.doc a{color:var(--info);overflow-wrap:anywhere}
+.foot{margin:0;text-align:center;font-size:13px;color:var(--muted);display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.foot a{color:var(--muted)}
 .errhome{text-align:center;text-decoration:none}

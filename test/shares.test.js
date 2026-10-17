@@ -90,7 +90,7 @@ test('a coach link shows the account’s data read only, with no sign-in', async
   assert.match(await page.text(), /coach\.js/);
   const info = await open(api + '/info');
   assert.strictEqual(info.status, 200);
-  assert.strictEqual(info.body.name, 'ann');
+  assert.strictEqual(info.body.name, '', 'no name set: the page says "Logbook", not a piece of the email');
   assert.strictEqual(info.body.label, 'Coach Sam');
   assert.strictEqual(info.headers.get('cache-control'), 'no-store');
   assert.ok((await ann('GET', '/api/shares')).body.shares[0].used, 'opening it is shown to the owner');
@@ -134,9 +134,14 @@ test('a coach link shows the account’s data read only, with no sign-in', async
 
 test('a link runs out at the time picked, and the owner picks it within limits', async () => {
   const ann = await signIn('ann@example.com'), bob = await signIn('bob@example.com');
-  for (const [expires, why] of [[undefined, 'missing'], ['soon', 'not a time'], [inDays(-1), 'in the past'], [inDays(400), 'over a year']]) {
+  for (const [expires, why] of [['soon', 'not a time'], [inDays(-1), 'in the past'], [inDays(400), 'over a year']]) {
     assert.strictEqual((await ann('POST', '/api/shares', { expires })).status, 400, why);
   }
+  /* none picked: 90 days (Phase 4 – a link is a key held by someone else, so it shouldn't live longer than it needs to) */
+  const dflt = await ann('POST', '/api/shares', {});
+  assert.strictEqual(dflt.status, 200);
+  assert.ok(Math.abs(Date.parse(dflt.body.expires) - Date.now() - 90 * 86400000) < 60000);
+  assert.strictEqual((await ann('DELETE', '/api/shares/' + dflt.body.id)).status, 200);
   assert.strictEqual((await ann('POST', '/api/shares', { label: 'x'.repeat(61), expires: inDays(1) })).status, 400);
   const hour = await ann('POST', '/api/shares', { expires: new Date(Date.now() + 3600000).toISOString() });
   assert.strictEqual(hour.status, 200);

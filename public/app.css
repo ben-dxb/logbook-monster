@@ -517,6 +517,16 @@ html.hasjobs{scroll-padding-bottom:calc(var(--jobs-h,56px) + 24px)}
 .pside select{width:100%;min-width:0;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px}
 .pside .ghost{align-self:center}
 .pside .pzoom{align-self:stretch;border-radius:10px}
+/* a photo whose size is known keeps its room before it loads (pSize in photos.js sets --ar and --nw on the frame) */
+.pbig .pzoom.sized{width:min(100%,calc(75vh * var(--ar)),calc(var(--nw) * 1px))}
+.pbig .pzoom.sized img,.pside .pzoom.sized img{width:100%;height:auto;aspect-ratio:var(--ar)}
+.pbig .pzoom.sized img{max-height:none}
+.pzbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px;font-size:13px}
+.pzbar button{min-width:40px;min-height:36px}
+.pzbar .sub,.pzhint{flex:1 1 100%;text-align:center}
+.pcpick{display:flex;gap:6px;align-items:end;min-width:0}
+.pcpick .f{flex:1 1 auto;min-width:0}
+.gbar a.pback{flex:none;white-space:nowrap}
 .ptools{display:flex;flex-direction:column;gap:8px}
 .prow{display:flex;flex-wrap:wrap;gap:8px;align-items:end}
 .prow .f{flex:0 1 auto;min-width:0}
@@ -546,7 +556,7 @@ html.hasjobs{scroll-padding-bottom:calc(var(--jobs-h,56px) + 24px)}
 .tchips .sub a{color:var(--info)}
 .tm{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:4px 11px;font-size:13px;color:var(--muted);max-width:100%;overflow-wrap:anywhere;text-align:left}
 .tm[aria-pressed="true"]{color:var(--ink);border-color:var(--tc,var(--ink));font-weight:700;box-shadow:inset 0 0 0 1px var(--tc,var(--ink))}
-.tm.none{opacity:.55}
+.tm.none{border-style:dashed}   /* no data in the range: dashed, but its text keeps full contrast (p5-photos-10) */
 .tsw{display:inline-block;flex:none;width:10px;height:10px;border-radius:99px;background:var(--tc,var(--muted))}
 .tm[aria-pressed="false"] .tsw{background:transparent;border:2px solid var(--tc,var(--muted))}
 .ttools{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
@@ -653,6 +663,12 @@ html.hasjobs{scroll-padding-bottom:calc(var(--jobs-h,56px) + 24px)}
 /* a number box that refused a typo (app.js numNote) */
 .numnote{position:fixed;left:16px;bottom:16px;z-index:60;margin:0;width:min(380px,calc(100vw - 32px));background:var(--surface);color:var(--ink);
   border:1px solid var(--line);border-left:4px solid var(--bad);border-radius:10px;padding:10px 12px;box-shadow:0 6px 20px rgba(0,0,0,.14);overflow-wrap:anywhere}
+/* an optimistic change that didn't save, by its control (app.js noteBy); one off the page sits like the number note */
+.optnote{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 0;font-size:13px;color:var(--bad);overflow-wrap:anywhere}
+.optnote.optfloat{position:fixed;left:16px;bottom:16px;z-index:60;margin:0;width:min(380px,calc(100vw - 32px));background:var(--surface);color:var(--ink);
+  border:1px solid var(--line);border-left:4px solid var(--bad);border-radius:10px;padding:10px 12px;box-shadow:0 6px 20px rgba(0,0,0,.14)}
+.optnote.ok{color:inherit}
+[aria-busy=true]{cursor:progress;opacity:.7}
 
 /* ---------- two-step sign-in (account menu) and the re-check dialog ---------- */
 .tfsecret{font-family:ui-monospace,monospace;font-size:13px;word-break:break-all;user-select:all;background:var(--soft);border-radius:6px;padding:6px 8px;margin:0}
@@ -660,6 +676,9 @@ html.hasjobs{scroll-padding-bottom:calc(var(--jobs-h,56px) + 24px)}
 .recheck{border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);padding:16px;width:min(360px,calc(100vw - 32px))}
 .recheck h2{margin:0;font-size:18px}
 .rcbtns{display:flex;gap:8px}
+.btn.danger{background:var(--bad);color:var(--accent-ink)}
+.acctfoot{margin:0;display:flex;gap:12px;justify-content:center;font-size:13px}
+.acctfoot a{color:var(--muted)}
 
 /* Zoomed in far (400 %) or a short landscape phone: a bar that sticks would cover most of the screen, so nothing sticks. */
 @media (max-height:500px){

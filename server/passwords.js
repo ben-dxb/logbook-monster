@@ -30,9 +30,20 @@ async function dummyVerify(pw) {
   return false;
 }
 
-function passwordProblem(pw) {
+/* NIST 800-63B: a length rule and a check against passwords known to be in use, no composition rules. The list holds only
+   ones of 10+ characters, lowercased; it is read the first time a password is checked. */
+let COMMON = null;
+const common = () => COMMON || (COMMON = new Set(require('fs').readFileSync(require('path').join(__dirname, 'common-passwords.txt'), 'utf8')
+  .split(/\r?\n/).filter(l => l && !l.startsWith('#'))));
+/* email: the account's, so a password built on its name ("annsmith123" for annsmith@…) is refused – for a name of 4+ letters */
+function passwordProblem(pw, email) {
   if (typeof pw !== 'string' || pw.length < 10) return 'Password must be at least 10 characters.';
   if (pw.length > 200) return 'Password is too long.';
+  const low = pw.normalize('NFKC').toLowerCase();
+  if (/^(.)\1*$/su.test(low)) return 'That password is one character over and over – pick something harder to guess.';
+  if (common().has(low)) return 'That password is one of the most used ones, so it’s easy to guess – pick another.';
+  const name = String(email || '').toLowerCase().split('@')[0].split('+')[0];
+  if (name.length >= 4 && low.includes(name)) return 'Your password can’t contain your email address – pick something else.';
   return null;
 }
 

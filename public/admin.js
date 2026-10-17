@@ -4,7 +4,8 @@
      which template each weekday uses and free foods – kept as dated changes. There are no app-wide defaults:
      a new account starts with no plan and builds or uploads its own here;
    - super admin (#admin, ADMIN_EMAILS): app-wide settings in tabs – AI (#admin/ai: OpenRouter key and a model per
-     task), People (#admin/people), Email (#admin/email), Options (#admin/options) and the Security log (#admin/log).
+     task), People (#admin/people), Email (#admin/email), Options (#admin/options), the Security log (#admin/log) and Keys
+     (#admin/keys, keys.js – credential ages and rotation).
    Uses helpers from app.js. */
 
 const AD_BOXES=[['p','Protein'],['c','Carbs'],['x','Additional fats']];
@@ -13,13 +14,13 @@ const AD_FREE_OPTS=[['','No'],['sauce','Sauce'],['veg','Green veg']];
 const AD_LEGACY={T:'Training',R:'Rest',S:'Saturday training'};   /* day types before templates had names */
 const AD_MAX_TPL=12;
 let AD=null, AD_BASE=null, adSaved='', adType=null, adMsg='', adErrs=[], adBusy=false;
-let DEFS={mine:null,myVersions:[]};          /* your plan from the server: the change in effect today and every dated change */
+let DEFS={myVersions:[]};          /* your plan from the server: every dated change (mineOn picks the one in effect on a date) */
 let DEFS_ON, adVer=null, adFrom='', adFromToday=false, adFromBad=false;   /* adFromBad: the box holds a date that can't be used – refused, never read as blank */          /* plan change applied now; the one being edited; the date a save takes effect from ('' = from the start) */
 let adAi=null, adNotes=[], adSuper=false;
 const LOADERR={};   /* a part of the page whose data didn't load: its message, shown in its place */
 const loadErr=(what,k)=>`<p class="aderr" role="alert">Couldn’t load ${what}: ${esc(endStop(LOADERR[k]))} Open this tab again or reload the page to try again.</p>`;
 const loadTry=async(k,fn)=>{try{const v=await fn();delete LOADERR[k];return v;}catch(e){if(e.signedOut)throw e;LOADERR[k]=e.message||'Something went wrong';return null;}};
-const AD_TABS=['ai','people','email','options','log'];
+const AD_TABS=['ai','people','email','options','log','keys'];
 let adTab='ai';                              /* the super admin tab shown */
 const adOpen=new Set();                      /* food editors left open */
 
@@ -34,7 +35,7 @@ function typeOn(date){const v=mineOn(date),ids=((v&&v.templates)||[]).map(t=>t.i
 function tnameOn(date,id){const v=mineOn(date),t=((v&&v.templates)||[]).find(x=>x.id===id);return t?t.name:AD_LEGACY[id]||'';}
 function freshOn(date,t){useDefs(date);const D=freshDay(wdOf(date),t);libSync(D,date);return D;}   /* with its copy of the plan foods, as persist() keeps it */
 function adApplyInUse(){useDefs(S.cur,true);}
-function setDefaults(d){DEFS=d||{mine:null,myVersions:[]};adApplyInUse();}
+function setDefaults(d){DEFS=d||{myVersions:[]};adApplyInUse();}
 const adEmpty=v=>!v||(!(v.templates||[]).length&&!Object.keys(v.foods||{}).length);   /* as the server sees it: no templates, no foods */
 /* choose which of your plan changes to edit (the one in effect today unless one is named) */
 function adPick(v){
@@ -109,7 +110,9 @@ function renderAdmin(){
   if(!mine){if(!adSuper){adSuper=true;auLoad();amLoad();aoLoad();}
     else{if(LOADERR.au)auLoad();if(LOADERR.am)amLoad();if(LOADERR.ao)aoLoad();}   /* a part that failed to load tries again when you come back */
     if(LOADERR.ai)adAiLoad();
-    if(adTab==='log'&&!LG)lgLoad();adTabs();return;}
+    if(adTab==='log'&&!LG)lgLoad();
+    if(typeof kyLoad==='function'&&(!KY||adTab==='keys'||adTab==='ai'||adTab==='email'))kyLoad();   /* the Keys tab, its banner and the rotation controls (keys.js) */
+    adTabs();return;}
   if(!AD){adPick();adLoad();}
   if(!SH)shLoad();
   if(!ML)mlLoad();
@@ -662,6 +665,9 @@ let pdTok=0, pdN=0;
 async function pdCount(){
   const from=$('#ad-pd-from').value, to=$('#ad-pd-to').value, msg=$('#ad-pdmsg'), btn=$('#ad-pd-btn'), tok=++pdTok;
   pdN=0;btn.disabled=true;
+  /* "Download" takes the range picked (a ZIP of those photos), or every photo while no range is */
+  const dl=$('#ad-pd-dl'), range=isDate(from)&&isDate(to)&&from<=to;
+  dl.href=range?`/api/photos/zip?from=${from}&to=${to}`:'/api/photos/zip';dl.textContent=range?'Download the photos in this range':'Download all my photos';
   if(!isDate(from)||!isDate(to)){msg.textContent='';return;}
   if(from>to){msg.textContent='The From date is after the To date.';return;}
   msg.textContent='Counting…';
@@ -677,9 +683,22 @@ $('#ad-pdel').addEventListener('submit',async e=>{
   btn.disabled=true;$('#ad-pdmsg').textContent='Deleting…';
   try{const r=await api('DELETE',`/api/photos?from=${from}&to=${to}`);
     PHOTOS=null;pPick=[];                      /* the Photos page loads again next time */
-    $('#ad-pd-from').value=$('#ad-pd-to').value='';pdN=0;++pdTok;
+    $('#ad-pd-from').value=$('#ad-pd-to').value='';pdN=0;++pdTok;$('#ad-pd-dl').href='/api/photos/zip';$('#ad-pd-dl').textContent='Download all my photos';
     $('#ad-pdmsg').textContent=`Deleted ${r.deleted} photo${r.deleted===1?'':'s'}.`;}
   catch(err){if(!err.signedOut)$('#ad-pdmsg').textContent=err.message;btn.disabled=!pdN;}
+});
+
+/* ---------- Delete my account: the email typed to confirm, password or code again (the recheck dialog), then signed out ---------- */
+$('#ad-del').addEventListener('submit',e=>{
+  e.preventDefault();const email=$('#ad-del-email').value.trim(),msg=$('#ad-delmsg');
+  if(email.toLowerCase()!==String(ME).toLowerCase()){msg.textContent=`Type your email (${ME}) exactly to confirm.`;return;}
+  once(e.target,async()=>{
+    msg.textContent='Deleting…';
+    try{await api('DELETE','/api/my/account',{email});}
+    catch(err){if(!err.signedOut)msg.textContent=err.message;return;}
+    pending.clear();try{localStorage.removeItem(stashKey());}catch{}
+    location.href='/login?bye=1';
+  });
 });
 
 /* ---------- Daily checklist: the Dashboard's list (server/checklist.js) ---------- */
@@ -737,8 +756,8 @@ function shRender(){
   if(!SH){$('#ad-shares').innerHTML=LOADERR.sh?loadErr('your coach links','sh'):'';return;}
   $('#ad-shares').innerHTML=SH.length?SH.map(x=>`<div class="aduser"><span class="who"><b>${esc(x.label||'Coach link')}</b>
       <span class="sub">${x.live?`Live until ${esc(shWhen(x.expires))}`:`Ran out ${esc(shWhen(x.expires))}`} · made ${esc(shWhen(x.created))}${x.used?` · last opened ${esc(shWhen(x.used))}`:' · not opened yet'}</span></span>
-    <span class="chip ${x.live?'ok':'bad'}">${x.live?'Live':'Ran out'}</span>
-    <span class="acts"><button type="button" class="ghost" data-sh="${x.live?'off':'del'}" data-id="${x.id}">${x.live?'Switch off':'Remove'}</button></span></div>`).join('')
+    <span class="chip ${x.live?'ok':'bad'}">${x.live?'Live':'Ran out'}</span>${x.idle?'<span class="chip info" title="Nobody has opened it for 30 days or more – switch it off if your coach no longer uses it">Unused 30+ days</span>':''}
+    <span class="acts">${x.live?`<button type="button" class="ghost" data-sh="renew" data-id="${x.id}">Renew</button>`:''}<button type="button" class="ghost" data-sh="${x.live?'off':'del'}" data-id="${x.id}">${x.live?'Switch off':'Remove'}</button></span></div>`).join('')
     :'<p class="sub">No coach links yet.</p>';
 }
 /* when the link runs out: a length of time from now, or the end of a picked day (this browser's time) */
@@ -764,6 +783,12 @@ document.addEventListener('click',async e=>{
   if(a==='send'){try{await navigator.share({title:'My Logbook Monster',url:$('#ad-sh-link').value});}catch{}return;}
   const x=SH&&SH.find(s=>String(s.id)===b.dataset.id);if(!x)return;
   if(a==='off'&&!confirm(`Switch off ${x.label?`“${x.label}”`:'this link'}? It stops working straight away.`))return;
+  /* a new link (new secret) for 3 months in its place; the old one stops working, and the person sends the new one themselves */
+  if(a==='renew'){
+    if(!confirm(`Renew ${x.label?`“${x.label}”`:'this link'}? You get a new link, live for 3 months, to send your coach – the current one stops working straight away.`))return;
+    once(b,async()=>{try{shNew=await api('POST',`/api/shares/${x.id}/renew`,{key:x.key});await shLoad();}catch(err){if(!err.signedOut){alert(err.message);await shLoad();}}});
+    return;
+  }
   b.disabled=true;
   try{await api('DELETE',`/api/shares/${x.id}?key=${encodeURIComponent(x.key)}`);shNew=null;await shLoad();}catch(err){b.disabled=false;if(!err.signedOut){alert(err.message);await shLoad();}}
 });
@@ -882,9 +907,10 @@ const LG_EV={'signin.ok':'Signed in','signin.failed':'Failed sign-in','signin.lo
   'second.asked':'Password right, code asked for','second.failed':'Wrong sign-in code','second.locked':'Sign-in code refused (locked)',
   'recovery.used':'Recovery code used','twostep.on':'Two-step sign-in on','twostep.off':'Two-step sign-in off','recheck.ok':'Confirmed it’s you',
   'recheck.failed':'Failed to confirm it’s you',signout:'Signed out','password.changed':'Password changed','google.linked':'Google linked','invite.created':'Invite made','invite.accepted':'Invite accepted',
-  'account.removed':'Account removed','ai.settings':'AI settings changed','email.settings':'Email settings changed','options.changed':'Options changed',
-  export:'Data downloaded','day.deleted':'Day deleted','checklist.reset':'Checklist reset','photos.deleted':'Photos deleted','food.removed':'Shared food removed',
-  'supp.removed':'Shared supplement removed','coach.created':'Coach link made','coach.off':'Coach link switched off','coach.used':'Coach link opened','ai.cap':'AI daily limit reached'};
+  'account.removed':'Account removed','account.deleted':'Deleted their own account','ai.settings':'AI settings changed','email.settings':'Email settings changed','options.changed':'Options changed',
+  export:'Data downloaded','day.deleted':'Day deleted','checklist.reset':'Checklist reset','photos.deleted':'Photos deleted','photo.deleted':'Photo deleted','photos.downloaded':'Photos downloaded','food.removed':'Shared food removed',
+  'supp.removed':'Shared supplement removed','coach.created':'Coach link made','coach.off':'Coach link switched off','coach.used':'Coach link opened','ai.cap':'AI daily limit reached',
+  'secret.next':'Next key saved','secret.tested':'Key tested','secret.promoted':'Next key promoted','secret.stale':'Key due for rotation','coach.renewed':'Coach link renewed','coach.reminded':'Coach link reminder sent'};
 let LG=null, ML=null;
 const lgDetail=d=>Object.entries(d||{}).filter(([k])=>k!=='eh').map(([k,v])=>`${k}: ${Array.isArray(v)?v.join(', ')||'–':v}`).join(' · ');
 const lgAcct=a=>a.email||`account #${a.id} (removed)`;

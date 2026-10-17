@@ -1,6 +1,6 @@
 'use strict';
 /* The optional second sign-in step: codes from an authenticator app (totp.js) plus 10 one-time recovery codes.
-   The secret is kept sealed (AES-256-GCM, key from SEAL_KEY or SESSION_SECRET, seal.js), recovery codes only as SHA-256 hashes.
+   The secret is kept sealed (AES-256-GCM under a data key wrapped by SEAL_KEY or the session secret, seal.js), recovery codes only as SHA-256 hashes.
    Wrong codes count per account in login_failures (key '2fa:<id>', locked per address and slowed across addresses like
    passwords, failures.js),
    and a code is taken once: only a step newer than the last one used is accepted.
@@ -27,18 +27,8 @@ const q = {
 };
 
 /* ---------- the secret, sealed at rest ---------- */
-const { seal, unseal, stale } = require('./seal')('totp-secret-v1');   /* null from unseal when the key is lost (seal.js): only recovery codes work then */
-{
-  const put = db.prepare('UPDATE totp SET secret = ? WHERE user_id = ? AND secret = ?');
-  /* one transaction for them all, not a commit per account; each still only replaces the secret it read */
-  const old = db.prepare('SELECT user_id, secret FROM totp').all().filter(r => stale(r.secret));
-  if (old.length) {
-    db.exec('BEGIN IMMEDIATE');
-    try { for (const r of old) put.run(seal(unseal(r.secret)), r.user_id, r.secret); db.exec('COMMIT'); }
-    catch (e) { db.exec('ROLLBACK'); throw e; }
-  }
-}
-
+/* null from unseal when the key is lost (seal.js): only recovery codes work then. Values from before are resealed by seal.js on start. */
+const { seal, unseal } = require('./seal')('totp-secret-v1');
 const row = id => q.get.get(id);
 const isOn = id => { const r = row(id); return !!(r && r.enabled); };
 const recoveryLeft = r => { try { return JSON.parse(r.recovery).length; } catch { return 0; } };

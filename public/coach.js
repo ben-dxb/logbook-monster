@@ -28,7 +28,8 @@ const r0=x=>Math.round(x), r1=x=>(Math.round(x*10)/10).toFixed(1);
 const gEmpty=t=>`<p class="empty">${esc(t)}</p>`;   /* plain text, as in gym.js */
 const P_NAME={front:'Front',left:'Side – Left',right:'Side – Right',side:'Side',back:'Back',other:'Other'};
 const pSrc=p=>`${SHARED.base}/api/photos/${p.id}/file?v=${encodeURIComponent(p.v)}`;
-const pThumb=p=>p.tv?`${SHARED.base}/api/photos/${p.id}/thumb?v=${encodeURIComponent(p.tv)}`:pSrc(p);
+const pMid=p=>p.mv?`${SHARED.base}/api/photos/${p.id}/mid?v=${encodeURIComponent(p.mv)}`:pSrc(p);
+const pThumb=p=>p.tv?`${SHARED.base}/api/photos/${p.id}/thumb?v=${encodeURIComponent(p.tv)}`:pMid(p);
 const P_STYLE={relaxed:'Relaxed',front_relaxed:'Front relaxed',back_relaxed:'Back relaxed',front_double_biceps:'Front double biceps',
   back_double_biceps:'Back double biceps',most_muscular:'Most muscular'};
 const pPoseName=p=>P_NAME[p]||p;
@@ -38,7 +39,7 @@ const pLabel=p=>pPoseName(p.pose)+(p.style?' · '+pStyleIn(p.pose,p.style):'');
 const sNum=n=>String(Math.round(n*1000)/1000);
 const sUnitTxt=(u,n)=>/s$/.test(u)&&+n===1?u.slice(0,-1):u;
 const sDose=(n,u)=>`${sNum(n)} ${sUnitTxt(u,n)}`;
-let view='timeline', DEFS={mine:null,myVersions:[]};
+let view='timeline', DEFS={myVersions:[]};
 /* the person's own plan changes each apply from a date (as in admin.js) */
 function mineOn(date){let v=null;for(const x of DEFS.myVersions||[])if(!x.from||x.from<=date)v=x;return v;}
 /* the day template a date's weekday uses, and a template's name, from the plan in effect on that date */
@@ -81,6 +82,8 @@ async function cLoadDays(){
 }
 function cRenderDays(){
   const to=todayStr();let html='';
+  /* nothing logged at all in the days shown: one line, not a row of "Not logged" for each day */
+  if(!Object.keys(SUMS).length&&!Object.keys(WTS).length){$('#c-days').innerHTML=gEmpty(`Nothing logged in the last ${cDays} days.`);return;}
   for(let i=0;i<cDays;i++){
     const d=addDays(to,-i), s=SUMS[d], t=(s&&s.targets)||{}, kg=WTS[d];
     const kcal=s?`<b>${r0(s.k)}</b>${t.k?` / ${r0(t.k)}`:''} kcal`:'<span class="sub">Not logged</span>';
@@ -97,8 +100,9 @@ async function start(){
   try{info=await api('GET','/api/info');}catch(e){if(!e.signedOut){$('#c-loading').textContent='Couldn’t load this logbook: '+e.message;}return;}
   try{DEFS=(await api('GET','/api/defaults'))||DEFS;}catch{}
   applyDefaults(mineOn(todayStr()));   /* food names and the week as the person has them now */
-  document.title=`${info.name} – Logbook Monster`;
-  $('#c-who').textContent=`${info.name}’s logbook`;
+  /* the account's name when it has one (never its email) */
+  document.title=`${info.name?info.name+'’s logbook':'Logbook'} – Logbook Monster`;
+  $('#c-who').textContent=info.name?`${info.name}’s logbook`:'Logbook';
   $('#c-until').textContent=`${info.label?info.label+' · ':''}Shared with you read only. This link works until ${cUntil(info.expires)}.`;
   $('#c-loading').hidden=true;$('#c-main').hidden=false;
   try{await cLoadDays();}catch(e){if(!e.signedOut)$('#c-days').innerHTML=gEmpty('Couldn’t load the days: '+e.message);}

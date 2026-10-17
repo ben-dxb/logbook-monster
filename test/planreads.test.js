@@ -169,20 +169,13 @@ test('PR-PL-030 / PR-FS-032: "today" is the person’s date from the time zone t
   /* Kiritimati (UTC+14) is always a day or two ahead of UTC−12 */
   const ahead = 'Pacific/Kiritimati', behind = 'Etc/GMT+12', aheadDay = todayIn(ahead);
   assert.notStrictEqual(aheadDay, todayIn(behind));
-  const food = { foods: { oats: { n: 'Oats', k: 380, p: 13, c: 60, f: 7, step: 5 } } };
-  assert.strictEqual((await ann('PUT', '/api/my/defaults', { ...food, templates: [{ id: 'A', name: 'Start' }], from: null }, { 'x-version': 'none' })).status, 200);
-  assert.strictEqual((await ann('PUT', '/api/my/defaults', { ...food, templates: [{ id: 'B', name: 'Later' }], from: aheadDay }, { 'x-version': 'none' })).status, 200);
-  const mine = async tz => (await ann('GET', '/api/defaults', undefined, { 'x-time-zone': tz })).body.mine.templates[0].name;
-  assert.strictEqual(await mine(ahead), 'Later');
-  assert.strictEqual(await mine(behind), 'Start');
-  assert.strictEqual(await mine('Not/AZone'), todayIn() >= aheadDay ? 'Later' : 'Start', 'no usable zone: the server’s UTC date');
+  /* (the plan in effect is picked in the browser, from its own date: GET /api/defaults sends every change, no "today" there) */
   /* the AI fill date stamp and the export's file name */
   const r = await ann('POST', '/api/foods/ai-fill', { name: 'Chicken breast', unit: 'g', kind: 'ingredient', k: '', p: '', c: '', f: '' }, { 'x-time-zone': ahead });
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.ai.at, aheadDay);
   const ex = await ann('GET', '/api/export?tz=' + encodeURIComponent(behind));
   assert.match(ex.headers.get('content-disposition'), new RegExp(`logbook-monster-${todayIn(behind)}\\.json`));
-  await ann('DELETE', '/api/my/defaults');
 });
 
 test('PR-PL-042: contradictory food limits are refused', async () => {
@@ -200,7 +193,7 @@ test('PR-PL-029: a plan change with no templates and no foods is no plan, whatev
   const ann = await signIn('ann@example.com');
   const r = await ann('PUT', '/api/my/defaults', { free: { sauce: false, veg: false } });
   assert.strictEqual(r.status, 200);
-  assert.deepStrictEqual([r.body.mine, r.body.myVersions], [null, []]);
+  assert.deepStrictEqual(r.body, { myVersions: [] });
 });
 
 test('PR-PL-043: a damaged saved plan gets a plain message, never the parser’s', async () => {
@@ -213,5 +206,5 @@ test('PR-PL-043: a damaged saved plan gets a plain message, never the parser’s
     assert.strictEqual(r.body.error, 'Your saved meal plan couldn’t be read – ask the person who runs this app to look at it', `${m} ${u}`);
   }
   assert.strictEqual((await cara('DELETE', '/api/my/defaults')).status, 200, 'deleting the whole plan still works');
-  assert.deepStrictEqual((await cara('GET', '/api/defaults')).body, { mine: null, myVersions: [] });
+  assert.deepStrictEqual((await cara('GET', '/api/defaults')).body, { myVersions: [] });
 });

@@ -13,6 +13,7 @@
 <script defer src="/app.js"></script>
 <script defer src="/jobs.js"></script>
 <script defer src="/admin.js"></script>
+<script defer src="/keys.js"></script>
 <script defer src="/gymcsv.js"></script>
 <script defer src="/exifdate.js"></script>
 <script defer src="/gym.js"></script>
@@ -43,11 +44,12 @@
         <a class="ghost" href="#account" id="accountlink">Account admin</a>
         <a class="ghost" href="#admin" id="adminlink" hidden>Super admin</a>
         <a class="ghost" href="/api/export" id="exportlink" download>Download my data</a>
+        <a class="ghost" href="/api/photos/zip" id="photozip" download>Download my photos</a>
         <details id="pwbox"><summary>Change password</summary>
           <form id="pwform" class="pwform">
             <label class="f" id="pwcur"><span class="lbl">Current password</span><input id="pw-cur" type="password" autocomplete="current-password"></label>
             <label class="f"><span class="lbl">New password (10+ characters)</span><input id="pw-new" type="password" autocomplete="new-password" minlength="10"></label>
-            <label class="tog"><input type="checkbox" id="pw-links" checked> Also switch off my coach links</label>
+            <label class="tog" id="pw-linksf" hidden><input type="checkbox" id="pw-links"> <span id="pw-linkst">Also switch off my coach links</span></label>
             <button class="btn" type="submit">Update password</button>
             <p id="pwmsg" class="sub" role="status"></p>
           </form>
@@ -56,6 +58,7 @@
           <div id="tfbody" class="pwform"></div>
         </details>
         <button class="btn" id="logout" type="button">Sign out</button>
+        <p class="acctfoot"><a href="/privacy">Privacy</a><a id="contactlink" hidden>Contact</a></p>
       </div>
     </details>
   </header>
@@ -242,7 +245,9 @@
         <a href="#admin/email" data-adt="email">Email</a>
         <a href="#admin/options" data-adt="options">Options</a>
         <a href="#admin/log" data-adt="log">Security log</a>
+        <a href="#admin/keys" data-adt="keys">Keys</a>
       </nav>
+      <p id="ad-keybanner" class="aderr adapp" role="alert" hidden></p>
     </section>
     <div class="adbar admine" role="status">
       <div id="ad-status" class="status"></div>
@@ -328,8 +333,8 @@
       <form id="ad-share" class="adshare">
         <label class="f"><span class="lbl">Who it’s for (optional)</span><input id="ad-sh-label" maxlength="60" autocomplete="off" placeholder="e.g. Coach Sam"></label>
         <label class="f"><span class="lbl">Stays live for</span><select id="ad-sh-for">
-          <option value="h1">1 hour</option><option value="h24">1 day</option><option value="d3">3 days</option><option value="d7" selected>1 week</option>
-          <option value="d14">2 weeks</option><option value="d30">1 month</option><option value="d90">3 months</option><option value="d180">6 months</option>
+          <option value="h1">1 hour</option><option value="h24">1 day</option><option value="d3">3 days</option><option value="d7">1 week</option>
+          <option value="d14">2 weeks</option><option value="d30">1 month</option><option value="d90" selected>3 months</option><option value="d180">6 months</option>
           <option value="d365">1 year</option><option value="date">Until a date…</option></select></label>
         <label class="f" id="ad-sh-untilf" hidden><span class="lbl">Until the end of</span><input id="ad-sh-until" type="date" disabled></label>
         <button class="btn" type="submit" id="ad-sh-btn">Make link</button>
@@ -352,7 +357,20 @@
         <label class="f"><span class="lbl">To</span><input id="ad-pd-to" type="date" required></label>
         <button class="btn" type="submit" id="ad-pd-btn" disabled>Delete photos</button>
       </form>
+      <p><a class="ghost" id="ad-pd-dl" href="/api/photos/zip" download>Download all my photos</a></p>
       <p id="ad-pdmsg" class="sub" role="status"></p>
+    </section>
+    <section class="panel admine" aria-labelledby="ad-delh">
+      <h2 id="ad-delh">Delete my account</h2>
+      <p>Deletes your account and everything in it, for good: days, history, weights, your meal plan, gym sets and workouts, foods, supplements, checklist,
+        progress photos (the files too), coach links (they stop working) and every place you’re signed in. Foods and supplements you shared with everyone
+        leave every other account’s library too. It can’t be undone.</p>
+      <p><a class="ghost" href="/api/export" id="ad-del-export" download>Download my data</a> first if you want a copy.</p>
+      <form id="ad-del" class="adpdel">
+        <label class="f"><span class="lbl">Type your email to confirm</span><input id="ad-del-email" type="email" autocomplete="off" spellcheck="false" required></label>
+        <button class="btn danger" type="submit" id="ad-del-btn">Delete my account</button>
+      </form>
+      <p id="ad-delmsg" class="sub" role="status"></p>
     </section>
     <section class="panel adsuper" id="ad-aipanel" aria-labelledby="ad-aih2" data-adtab="ai">
       <h2 id="ad-aih2">AI</h2>
@@ -372,6 +390,7 @@
         <div class="admailact"><button class="btn" type="submit">Save models</button></div>
       </form>
       <p id="ad-keymsg" class="sub" role="status"></p>
+      <div id="ad-rot-ai" class="adrot"></div>
     </section>
     <section class="panel adsuper" aria-labelledby="ad-uh" data-adtab="people">
       <h2 id="ad-uh">People</h2>
@@ -436,6 +455,12 @@
         <label class="f"><span class="lbl">Send a test email to</span><input id="ad-m-to" type="email" autocomplete="off" spellcheck="false"></label>
         <button class="ghost" type="submit" id="ad-m-testbtn">Send test email</button>
       </form>
+      <div id="ad-rot-mail" class="adrot"></div>
+    </section>
+    <section class="panel adsuper" aria-labelledby="ad-kyh" data-adtab="keys">
+      <h2 id="ad-kyh">Keys</h2>
+      <p>Every credential the app holds: where it’s kept, the slots in use, how old it is and the next step. Each should be rotated every 30 days – you get an email from day 25. Values are never shown. Step by step: <code>docs/rotation.md</code>.</p>
+      <div id="ad-keys" class="adusers"></div>
     </section>
   </section>
   </main>

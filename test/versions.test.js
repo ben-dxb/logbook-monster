@@ -133,10 +133,14 @@ test('photo details: a note saved from a stale tab doesn’t undo a newer pose',
 test('workouts: an edit made on an older copy is refused', async () => {
   const e = (await A('POST', '/api/gym/exercises', { name: 'Squat' })).body;
   const body = target => ({ name: 'Legs', description: '', items: [{ e: e.id, target }] });
-  const { id } = (await A('POST', '/api/gym/workouts', body('5 × 5'))).body;
+  const made = (await A('POST', '/api/gym/workouts', body('5 × 5'))).body, { id } = made;
   const w = (await A('GET', '/api/gym')).body.workouts.find(x => x.id === id);
   assert.ok(w.updated);
-  assert.strictEqual((await B('PUT', '/api/gym/workouts/' + id, body('5 × 3 from B'), w.updated)).status, 200);
+  assert.deepStrictEqual(made.workout, w, 'a save answers with the workout as the list has it, so the app needn’t read the list again');
+  const b = await B('PUT', '/api/gym/workouts/' + id, body('5 × 3 from B'), w.updated);
+  assert.strictEqual(b.status, 200);
+  assert.deepStrictEqual(b.body.workout, (await A('GET', '/api/gym')).body.workouts.find(x => x.id === id));
+  assert.strictEqual(b.body.workout.updated, b.body.updated);
   const r = await A('PUT', '/api/gym/workouts/' + id, body('3 × 8 from A'), w.updated);
   assert.strictEqual(r.status, 409);
   assert.match(r.body.error, CONFLICT);

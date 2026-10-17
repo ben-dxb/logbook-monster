@@ -74,8 +74,8 @@ if (config.sessionCookie !== OLD_COOKIE) {
 }
 app.use(session({
   name: config.sessionCookie,
-  /* SESSION_SECRET_OLD: the one before a rotation, still accepted on cookies signed with it (README › Rotating secrets) */
-  secret: [config.sessionSecret, config.sessionSecretOld].filter(Boolean),
+  /* SESSION_SECRETS: signs with the first, still accepts cookies signed with the others (docs/rotation.md) */
+  secret: config.sessionSecrets,
   store: new SqliteStore(db, { maxAge: config.sessionDays * 24 * 60 * 60 * 1000 }),
   resave: false,
   saveUninitialized: false,
@@ -96,8 +96,17 @@ app.use('/api', api);
 app.use('/coach/:token/api', shares.coach);
 
 const pub = path.join(__dirname, '..', 'public');
+/* the privacy page names who runs the app and how to reach them (PRIVACY_CONTACT, OPERATOR_NAME), or says to ask them */
+const escHtml = v => String(v).replace(/[&<>"']/g, ch => `&#${ch.charCodeAt(0)};`);
+function privacyPage(html) {
+  const who = config.operatorName ? escHtml(config.operatorName) : 'the person who runs this app';
+  const contact = config.contact
+    ? `Email <a href="mailto:${escHtml(config.contact)}">${escHtml(config.contact)}</a>.`
+    : 'Ask the person who runs this app – whoever invited you or gave you its address.';
+  return html.replace(/<!--OPERATOR-->/g, who).replace(/<!--CONTACT-->/g, contact);
+}
 /* the pages point at versioned scripts and styles (server/assets.js): no-cache + ETag, so the route below runs on every load */
-const files = assets.create(pub, { live: !config.isProd });
+const files = assets.create(pub, { live: !config.isProd, fill: { 'privacy.html': privacyPage } });
 const page = file => (req, res) => files.send(res, file);
 const signedIn = req => !!(req.session && req.session.userId);
 
@@ -105,11 +114,12 @@ const signedIn = req => !!(req.session && req.session.userId);
 const gone = (req, res) => req.session.destroy(() => res.redirect('/login?error=gone'));
 app.get('/login', (req, res, next) => (auth.refused(req) ? gone(req, res) : signedIn(req) ? res.redirect('/') : page('login.html')(req, res, next)));
 app.get('/invite', page('invite.html'));
+app.get('/privacy', page('privacy.html'));
 app.get('/coach/:token', (req, res, next) => { res.set('X-Robots-Tag', 'noindex, nofollow'); page('coach.html')(req, res, next); });
 app.get(['/', '/index.html'], (req, res, next) => (auth.refused(req) ? gone(req, res) : signedIn(req) ? page('index.html')(req, res, next) : res.redirect('/login')));
 /* The HTML pages are served only by the routes above (sign-in check, no-cache). A copy reached through the static files –
    /login.html, or /%69ndex.html, which the routes above don't match but the file server decodes – goes to its route instead. */
-const PAGES = { 'index.html': '/', 'login.html': '/login', 'invite.html': '/invite' };
+const PAGES = { 'index.html': '/', 'login.html': '/login', 'invite.html': '/invite', 'privacy.html': '/privacy' };
 /* A browser opening an address that isn't a page (or a page that broke) gets a page that says so, with a way home – not JSON.
    /api, /auth and the coach API keep answering JSON, as does anything that didn't ask for HTML (fetch, curl). */
 const wantsPage = req => (req.method === 'GET' || req.method === 'HEAD') && !/^\/(api|auth)(\/|$)|^\/coach\/[^/]+\/api(\/|$)/.test(req.path)
@@ -138,7 +148,13 @@ app.use((err, req, res, next) => {
   errorPage(req, res, 500, { error: 'Something went wrong' });
 });
 
+/* compacts an older database before serving; photo file sweep and permissions, then daily (server/upkeep.js) */
+require('./upkeep').start();
+
 app.listen(config.port, config.host, () => {
   console.log(`Logbook Monster listening on ${config.baseUrl} (bound to ${config.host}:${config.port})`);
   if (!config.google.enabled) console.log('Google sign-in is off - set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to turn it on.');
+  /* credential ages (server/credentials.js) and coach links about to run out (server/shares.js): now and daily */
+  require('./credentials').schedule();
+  shares.schedule();
 });

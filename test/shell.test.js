@@ -69,7 +69,7 @@ test('favicon.ico and apple-touch-icon load; no unrecognised Permissions-Policy 
 });
 
 test('every page: fonts from this site only (preloaded before the app), a <main>, deferred scripts in the app', () => {
-  for (const f of ['index.html', 'login.html', 'invite.html', 'coach.html', '404.html', '500.html']) {
+  for (const f of ['index.html', 'login.html', 'invite.html', 'privacy.html', 'coach.html', '404.html', '500.html']) {
     const html = fs.readFileSync(path.join(pub, f), 'utf8');
     assert.doesNotMatch(html, /googleapis|gstatic/, f);
     /* the sign-in, invite and error pages fetch the font early, so the app (always reached through one) finds it cached;

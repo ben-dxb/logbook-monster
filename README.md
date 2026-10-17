@@ -109,9 +109,9 @@ admin without it to set one up before any Super admin page works.
 phone (that also gives new recovery codes). Lost the phone *and* the codes – someone with shell access on the
 server runs `npm run create-user -- you@example.com --no-2fa` (Docker: `docker compose exec logbook-monster node --disable-warning=ExperimentalWarning scripts/create-user.js you@example.com --no-2fa`),
 which sets a new password, signs the account out everywhere and switches its second step off. The key is stored
-encrypted with a key derived from `SEAL_KEY` (or `SESSION_SECRET` without it): if that is lost, authenticator codes stop
-working (recovery codes still do) – sign in with a recovery code and set the step up again. To change it safely see
-**Rotating secrets** below.
+encrypted under a data key wrapped by `SEAL_KEY` (or the session secret without it): if that is lost, authenticator codes
+stop working (recovery codes still do) – sign in with a recovery code and set the step up again. To change it safely see
+[docs/rotation.md](docs/rotation.md).
 
 ## Run it locally
 
@@ -124,7 +124,7 @@ npm run create-user -- you@example.com   # asks for a password
 npm run dev                   # http://localhost:3000
 ```
 
-For local testing you can leave `SESSION_SECRET` empty – a random one is made and kept in
+For local testing you can leave `SESSION_SECRETS` empty – a random one is made and kept in
 `data/.session-secret`, so restarts don't sign you out. Instead of `create-user`, you can put your email in `ALLOWED_EMAILS` and use
 **Create an account** on the sign-in page.
 
@@ -146,21 +146,24 @@ password is saved on the Super admin page. Nothing secret is ever sent to the br
 
 | Variable | What it does |
 |---|---|
-| `SESSION_SECRET` | **Required in production.** Random string, 32+ characters, signs the session cookie. `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` |
-| `SESSION_SECRET_OLD` | Optional, only while rotating: the previous `SESSION_SECRET`. Cookies signed with it still work and secrets sealed with it are resealed on start. |
-| `SEAL_KEY` | Optional, 32+ characters: the key the AI key, SMTP password and authenticator keys are sealed with in the database. Without it they're sealed under `SESSION_SECRET`; once set, values sealed under `SESSION_SECRET` are resealed with it on start. |
+| `SESSION_SECRETS` | **Required in production** (or `SESSION_SECRET`). `newest,current,previous`: random strings, 32+ characters each; the first signs the session cookie, all are accepted, so a new one goes in front without signing anyone out ([docs/rotation.md](docs/rotation.md)). `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` |
+| `SESSION_SECRET` / `SESSION_SECRET_OLD` | The older form of the same: one secret, plus the previous one while rotating. Ignored when `SESSION_SECRETS` is set. |
+| `SEAL_KEY` / `SEAL_KEY_OLD` | Recommended, 32+ characters: the key-encrypting key that wraps the data keys the AI key, SMTP password and authenticator keys are sealed with. Without it the first session secret wraps them. `SEAL_KEY_OLD`: the previous one for one start while rotating. |
+| `AUDIT_HASH_KEY` | Recommended, 32+ characters: keys the hash of masked emails in the security log, so rotating the session secrets doesn't stop new rows matching old ones. Without it, the first session secret. |
+| `<NAME>_SET` | The day a `.env` secret was set (`YYYY-MM-DD`), for its age on Super admin › Keys – or put `YYYY-MM-DD:` in front of the value itself. |
 | `BASE_URL` | The address you open in the browser, e.g. `https://meals.example.com`. Used for the Google redirect, invite links and emails, and to turn on secure cookies/HSTS for `https://`. In production the server warns at start when it isn't set. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Turn on "Continue with Google". Leave empty to hide it. |
 | `ALLOWED_EMAILS` | Comma-separated. If set, **only** these emails can sign in, and they can create their own account the first time. |
 | `ALLOW_REGISTRATION` | `true` lets anyone sign up. Default `false`. |
 | `ADMIN_EMAILS` | Comma-separated. Who can open the Super admin page. **Required in production** (the server won't start without it); empty on a local setup = the first account created. |
+| `PRIVACY_CONTACT` / `OPERATOR_NAME` / `SHOW_ADMIN_CONTACT` | Who runs the app, for the privacy page (`/privacy`) and the Contact link on the sign-in page and account menu. Without `PRIVACY_CONTACT` the page says to ask the person who runs the app and there is no Contact link, unless `SHOW_ADMIN_CONTACT=true` offers the first `ADMIN_EMAILS` address. |
 | `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | Optional. Powers every AI feature (plan, workout and supplement reads, food values, photo poses, exercise body parts, Timeline summary). A key saved on the Super admin page wins over this one. |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` / `MAIL_FROM_NAME` / `SMTP_SECURE` | Optional. `SMTP_SECURE` forces TLS from the start on or off (default: on for port 465). The email account invites and notifications are sent from. Easier to fill in on the Super admin page (Email); a value saved there wins over .env field by field – Save stores only the fields you changed, and the page says which values come from .env. The server must be on the internet (no private, loopback or link-local addresses), and on a port other than 465 it must offer STARTTLS. |
 | `SMTP_ALLOW_HOSTS` | Comma-separated mail servers allowed on internal addresses anyway, e.g. a relay on `127.0.0.1` (plain SMTP is allowed to a loopback one). |
 | `DB_PATH` | SQLite file. Default `./data/logbook-monster.db` (an existing `./data/mealswap.db` from before the rename is used if present). A relative path is taken from the folder the server starts in. |
 | `PHOTO_DIR` | Where progress photo files go. Default `photos/` next to the database. |
 | `PORT` / `HOST` | Default `3000`; `HOST` defaults to `127.0.0.1`, or `0.0.0.0` when `NODE_ENV=production`. |
-| `NODE_ENV` | `production` on a server: needs `SESSION_SECRET` and `ADMIN_EMAILS`, listens on all addresses unless `HOST` says otherwise. |
+| `NODE_ENV` | `production` on a server: needs `SESSION_SECRETS` (or `SESSION_SECRET`) and `ADMIN_EMAILS`, listens on all addresses unless `HOST` says otherwise. |
 | `COOKIE_SECURE` / `SESSION_DAYS` | Secure session cookie (default: on when `BASE_URL` is `https://`); days a sign-in lasts (default 30). |
 | `AUTH_RATE_LIMIT`, `ACCOUNT_FAIL_LIMIT`, `WRITE_RATE_LIMIT`, `EXPORT_RATE_LIMIT`, `TRENDS_RATE_LIMIT`, `COACH_RATE_LIMIT`, `QUOTA_DAYS_BYTES`, `QUOTA_PLAN_BYTES`, `QUOTA_PHOTO_BYTES`, `AUDIT_PER_ACCOUNT`, `AUDIT_ALERT_FAILS` | Limits, rarely changed (defaults in `server/config.js` and `server/audit.js`; the tests raise or lower some). |
 | `OPENROUTER_BASE_URL` | For tests only: points the AI calls at a fake OpenRouter. |
@@ -200,7 +203,7 @@ On the Super admin page:
 ### Docker (recommended)
 
 ```bash
-cp .env.example .env    # set SESSION_SECRET, BASE_URL=https://…, ALLOWED_EMAILS, Google keys
+cp .env.example .env    # set SESSION_SECRETS, SEAL_KEY, BASE_URL=https://…, ALLOWED_EMAILS, Google keys
 docker compose up -d --build
 docker compose exec logbook-monster node --disable-warning=ExperimentalWarning scripts/create-user.js you@example.com   # optional
 ```
@@ -242,7 +245,7 @@ npm ci --omit=dev
 NODE_ENV=production npm start    # keep it running with systemd or pm2
 ```
 
-With `NODE_ENV=production` the app won't start without `SESSION_SECRET` (32+ characters) and `ADMIN_EMAILS`, and
+With `NODE_ENV=production` the app won’t start without `SESSION_SECRETS` or `SESSION_SECRET` (32+ characters) and `ADMIN_EMAILS`, and
 listens on all addresses – set `HOST=127.0.0.1` when a reverse proxy on the same machine is in front.
 
 ### Backups
@@ -252,15 +255,29 @@ progress photos folder (`PHOTO_DIR`, default `data/photos/` next to the database
 photos, the pictures are files). Copying the `.db` file alone loses every photo, and copying it while the app runs
 can give a broken copy (recent changes sit in the `-wal` file beside it).
 
-Without Docker (needs the `sqlite3` command-line tool; `VACUUM INTO` gives a safe copy while the app runs):
+`npm run backup` makes a safe copy of both while the app runs, with Node alone – no `sqlite3` tool, and the same on
+Windows, macOS and Linux. Run it from the app's folder (it reads `DB_PATH` / `PHOTO_DIR` from `.env` like the app):
 
 ```bash
-mkdir -p backup
-sqlite3 data/logbook-monster.db "VACUUM INTO 'backup/logbook-monster.db'"
-cp -a data/photos backup/                     # photos added after the database copy are only extra files
+npm run backup -- ../logbook-backups              # Windows: npm run backup -- D:\logbook-backups
+npm run restore-check -- ../logbook-backups       # checks the newest backup in that folder
 ```
 
-With Docker, stop the app for a moment and copy the whole volume (database and photos):
+Each run makes a new folder, `logbook-monster-<date>T<time>/`, with the database (`VACUUM INTO`: one consistent file,
+no `-wal`), the `photos` folder and – when `SESSION_SECRET` isn't set – the `.session-secret` file the app made beside
+the database. Only your user can open it (folders 0700, files 0600; on Windows the folder's own permissions apply). It
+prints the sizes and how long it took. The photos are copied first, then the database, then any photos added
+meanwhile, and the copy is then checked: the app writes a photo's file before its row and deletes the row before the
+file, so every photo in the database copy has its file in the backup (a photo deleted while the backup ran is left out).
+`npm run restore-check` opens a backup read-only and reports the database's own check, rows per table and photo rows
+against files – it exits with an error if a photo's file is missing. Copy the backup off the machine.
+
+**Keep your secrets with it.** The saved AI key, email password and authenticator keys are sealed with `SEAL_KEY` (or
+`SESSION_SECRET` while `SEAL_KEY` isn't set). Without the same value a restored database can't open them. When
+`SESSION_SECRET` / `SEAL_KEY` are set in `.env` they are not in the backup – keep a copy of `.env` somewhere as safe as
+the backup itself.
+
+With Docker, stop the app for a moment and copy the whole volume (database, photos and `.session-secret`):
 
 ```bash
 docker compose stop
@@ -268,10 +285,29 @@ docker run --rm -v mealswap_mealswap-data:/data -v "$PWD":/out alpine tar czf /o
 docker compose start
 ```
 
-To restore, stop the app, put the database and the `photos` folder back where they were (Docker: `docker run --rm
--v mealswap_mealswap-data:/data -v "$PWD":/out alpine sh -c "rm -rf /data/* && tar xzf /out/logbook-monster-backup.tgz -C /data"`),
-remove any `logbook-monster.db-wal` / `-shm` files left beside the restored database, and start it again. Keep the
-same `SEAL_KEY` (or `SESSION_SECRET` without one): the saved AI key, SMTP password and authenticator keys are sealed with it.
+Or, without stopping it: `docker compose exec logbook-monster npm run backup -- /app/data/backups`, then
+`docker compose cp logbook-monster:/app/data/backups ./logbook-backups` and delete the folder from the volume
+(`docker compose exec logbook-monster rm -rf /app/data/backups`) so it doesn't fill it.
+
+To restore, stop the app and put the backup's database file back as `DB_PATH` (default `data/logbook-monster.db`),
+its `photos` folder as `PHOTO_DIR` (default `data/photos`) and, if the backup has one, `.session-secret` beside the
+database. Remove any `logbook-monster.db-wal` / `-shm` files left beside the restored database, and start the app.
+On Windows (PowerShell, app stopped):
+
+```powershell
+$b = "D:\logbook-backups\logbook-monster-2026-10-17T09-30-00"
+Remove-Item data\logbook-monster.db-wal, data\logbook-monster.db-shm -ErrorAction SilentlyContinue
+Copy-Item "$b\logbook-monster.db" data\ -Force
+Remove-Item data\photos -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item "$b\photos" data\photos -Recurse
+if (Test-Path "$b\.session-secret") { Copy-Item "$b\.session-secret" data\ -Force }
+```
+
+Docker: `docker run --rm -v mealswap_mealswap-data:/data -v "$PWD":/out alpine sh -c "rm -rf /data/* && tar xzf /out/logbook-monster-backup.tgz -C /data"`.
+Keep the same `SEAL_KEY` (or session secret without one) in `.env`: the saved AI key, SMTP password and authenticator keys are sealed under it (docs/rotation.md › Backups).
+
+The app looks after the files itself: at start and once a day it hands the database's free pages back to the disk
+(the file shrinks after big deletes), deletes photo files no photo refers to once they are an hour old, and makes the
+data folder and files readable by its own user only.
 
 Each user can also download their own data from the account menu (photo details only, not the pictures).
 
@@ -291,22 +327,35 @@ Each user can also download their own data from the account menu (photo details 
   else, and by default switches off its coach links. A Google-only account adding a first
   password must have signed in within the last 10 minutes. Sign-out sends `Clear-Site-Data`.
 - Optional second step (TOTP, RFC 6238) for any account: until the code is given the session holds no account, so
-  no `/api` route answers it; it runs out after 5 minutes. The secret is stored AES-256-GCM-encrypted with a key derived
-  from `SEAL_KEY` (or `SESSION_SECRET`), recovery codes only as SHA-256 hashes; each code is taken once and wrong codes
+  no `/api` route answers it; it runs out after 5 minutes. The secret is stored AES-256-GCM-encrypted (sealed, below),
+  recovery codes only as SHA-256 hashes; each code is taken once and wrong codes
   are limited like passwords. Setting the step up, changing the AI key or the email settings, removing an account and
   loosening an Option (a higher or no AI cap, AI privacy or "super admins must use a second step" off) need the password
   or a code again on a sign-in older than 15 minutes; switching the step on doesn't count as that re-check. With that
   Option on, a super admin without the step also loses the other super admin powers (removing others' shared foods and
   supplements, no AI allowance).
-- The OpenRouter key and SMTP password saved on Super admin are stored sealed the same way (AES-256-GCM, a key derived
-  from `SEAL_KEY`, or `SESSION_SECRET` without it). The database runs with `secure_delete` on and its file (and photos)
-  are created readable by the app's own user only.
-- **Rotating secrets** (e.g. after `.env` leaked): set `SEAL_KEY` to a new random value once, so sealed secrets no longer
-  hang on `SESSION_SECRET`, and restart – they're resealed with it on start. Then for a new `SESSION_SECRET`: put the
-  current one in `SESSION_SECRET_OLD`, the new one in `SESSION_SECRET`, restart, and remove `SESSION_SECRET_OLD` after
-  `SESSION_DAYS` (30 days) – or at once to sign everyone out. Anything still sealed under the old secret is resealed on
-  that start. Changing `SEAL_KEY` itself later works the same way only through `SESSION_SECRET_OLD` (set it to the old
-  `SEAL_KEY` for one start); otherwise the AI key, SMTP password and authenticator apps have to be set up again.
+- The OpenRouter key and SMTP password saved on Super admin are stored sealed: envelope encryption (AES-256-GCM) – a
+  random data key per purpose seals the values, the data keys are kept wrapped by `SEAL_KEY` (or the first session secret
+  without it), and data keys are replaced every 30 days. On start every sealed value must open, or the server log says
+  loudly which don't. The database runs with `secure_delete` on and its file (and photos) are created readable by the
+  app's own user only.
+- **Credentials and rotation** ([docs/rotation.md](docs/rotation.md) is the step-by-step runbook). Every credential is
+  meant to be replaced every 30 days; Super admin › Keys lists their ages, and the app emails the super admins from day
+  25, logs `secret.stale` and shows a banner from day 30, and logs an error on every start from day 35 (an unknown age
+  counts as stale).
+
+  | Credential | Type | Where it's held | Blast radius if leaked | Rotation |
+  |---|---|---|---|---|
+  | `SESSION_SECRETS` | HMAC key | `.env` | forge a session for any account | new one first in the list, old one dropped after 30 days + 1 h |
+  | `SEAL_KEY` | key-encrypting key | `.env` | with a database copy: the AI key, SMTP password, authenticator keys | new `SEAL_KEY` + `SEAL_KEY_OLD` for one start, then drop OLD |
+  | Data keys | AES-256 keys | database, wrapped by `SEAL_KEY` | with `SEAL_KEY`: as above | automatic, every 30 days |
+  | `AUDIT_HASH_KEY` | HMAC key | `.env` | link masked emails in the security log | only if leaked (no schedule – breaks linking) |
+  | OpenRouter API key | API key | database, sealed (or `.env`) | spending on the OpenRouter account | Save as next, Test, Promote, revoke at OpenRouter, Test old |
+  | SMTP (Gmail app) password | password | database, sealed (or `.env`) | email sent as the app's account | same, revoke at myaccount.google.com/apppasswords |
+  | `GOOGLE_CLIENT_SECRET` | OAuth client secret | `.env` (only if Google sign-in is on) | impersonate the app to Google's OAuth | add a secret in Google Cloud console, restart, delete the old |
+  | GitHub deploy key | SSH key | the server's `~/.ssh` | push to the repository if write-enabled | remove (the repository is public) or replace on GitHub |
+  | Coach links | 256-bit bearer secret | the coach (only a hash stored) | read-only view of one account | 90-day default, reminder a week before, Renew |
+  | Authenticator keys | TOTP secrets | each person's app; sealed in the database | the second sign-in step of that account | set up again |
 - On HTTPS an old `logbookmonster.sid` cookie (from before the `__Host-` name) still signs in, and is replaced, for 30
   days after the first start of the version that added the limit; after that it is ignored.
 - Every write needs a CSRF token header (per session; signed out, an HMAC of a random cookie).

@@ -102,13 +102,15 @@ function cleanAi(a) {
 /* Only the server says a value is an AI estimate (library-code-002): /ai-fill signs what it returns (of = the fields it filled)
    for the account that asked. A save keeps an ai record only if that signature checks out, or if it is the food's stored record
    unchanged; either way with no field added. Anything else – a hand-made "AI, USDA, high confidence" – is dropped. */
-const AI_KEY = Buffer.from(crypto.hkdfSync('sha256', config.sessionSecret, 'logbook-monster', 'food-ai-v1', 32));
+/* Keyed from the session secrets: signed with the first, a signature from any of them still checks out (docs/rotation.md). */
+const AI_KEYS = config.sessionSecrets.map(s => Buffer.from(crypto.hkdfSync('sha256', s, 'logbook-monster', 'food-ai-v1', 32)));
 const PROV = ['of', 'source', 'basis', 'url', 'confidence', 'model', 'at'];
-const aiSig = (a, uid) => crypto.createHmac('sha256', AI_KEY).update(JSON.stringify([uid, ...PROV.map(k => a[k])])).digest('base64url');
+const aiSig = (a, uid, key = AI_KEYS[0]) => crypto.createHmac('sha256', key).update(JSON.stringify([uid, ...PROV.map(k => a[k])])).digest('base64url');
+const sigOk = (a, uid) => AI_KEYS.some(k => crypto.timingSafeEqual(Buffer.from(a.sig), Buffer.from(aiSig(a, uid, k))));
 function trustedAi(a, user, old) {
   if (!a) return null;
   const within = of => Array.isArray(of) && a.fields.every(m => of.includes(m));
-  if (a.sig && within(a.of) && crypto.timingSafeEqual(Buffer.from(a.sig), Buffer.from(aiSig(a, user.id)))) return a;
+  if (a.sig && within(a.of) && sigOk(a, user.id)) return a;
   const o = old && aiOf(old);
   if (o && within(o.fields) && [...PROV, 'sig'].every(k => JSON.stringify(a[k]) === JSON.stringify(o[k]))) return a;
   return null;
@@ -242,4 +244,4 @@ router.delete('/:id', (req, res) => {
 
 const exportFor = user => q.mine.all(user.id).map(r => ({ ...r, public: !!r.public, ai: aiOf(r) }));
 
-module.exports = { router, exportFor };
+module.exports = { router, exportFor, aiSig, trustedAi };   /* the last two for the key-rotation tests */
