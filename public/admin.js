@@ -302,7 +302,7 @@ document.addEventListener('click',e=>{
     ms.push({id:String(n),name:'New meal',p:[],c:[],x:[]});}
   else if(a==='freset'){AD.foods[b.dataset.id]=clone(AD_BASE.foods[b.dataset.id]);}
   else if(a==='fdel'){const id=b.dataset.id;
-    if(adPlanUses(id)){alert(`${adFoodName(id)} is in your meal plan. Take it out of the plan first.`);return;}
+    if(adPlanUses(id)){noteBy(b,`${adFoodName(id)} is in your meal plan. Take it out of the plan first.`);return;}
     const was=AD;
     ask(`Delete ${adFoodName(id)} from your foods?`,{yes:'Delete food',no:'Keep it',danger:true}).then(ok=>{
       if(!ok||AD!==was||adPlanUses(id))return;delete AD.foods[id];adOpen.delete(id);renderAdmin();});return;}
@@ -313,7 +313,7 @@ document.addEventListener('click',e=>{
     const go_=()=>{adPick(v);adLoad();adMsg='';adErrs=[];adNotes=[];adSaveErr=[];renderAdmin();};
     if(adDirty()){ask('Drop your unsaved changes and edit this plan instead?',{yes:'Drop changes and edit',no:'Keep editing',danger:true}).then(ok=>{if(ok)go_();});return;}
     go_();return;}
-  else if(a==='vdel'){adDelete(b.dataset.from||null);return;}
+  else if(a==='vdel'){adDelete(b.dataset.from||null,b);return;}
   else if(a==='save'){adSave();return;}
   else if(a==='aiuse'){if(adAiPend)adAiUse();}
   else if(a==='aidrop'){adAiPend=null;adNotes=[];jobSeen('plan');}
@@ -347,7 +347,7 @@ $('#ad-addfood').addEventListener('submit',e=>{
 $('#ad-planfiles').addEventListener('change',async e=>{
   const el=e.target;el.disabled=true;
   try{planFiles=(await api('PUT','/api/admin/options',{planFiles:el.checked})).planFiles;}
-  catch(err){if(!err.signedOut)alert(err.message);}
+  catch(err){if(!err.signedOut)noteBy(el,err.message);}
   el.disabled=false;el.checked=planFiles;$('#v-admin').classList.toggle('nofiles',!planFiles);
 });
 /* super admin: private AI providers only, and the daily AI caps (0 = no limit) */
@@ -357,13 +357,13 @@ async function aoLoad(){const o=await loadTry('ao',()=>api('GET','/api/admin/opt
 $('#ad-aiprivate').addEventListener('change',async e=>{
   const el=e.target;el.disabled=true;
   try{aoFill(await api('PUT','/api/admin/options',{aiPrivate:el.checked}));}
-  catch(err){if(!err.signedOut)alert(err.message);aoLoad();}
+  catch(err){if(!err.signedOut)noteBy(el,err.message);aoLoad();}
   el.disabled=false;
 });
 $('#ad-admintotp').addEventListener('change',async e=>{
   const el=e.target;el.disabled=true;
   try{aoFill(await api('PUT','/api/admin/options',{adminTotp:el.checked}));}
-  catch(err){if(!err.signedOut)alert(err.message);aoLoad();}
+  catch(err){if(!err.signedOut)noteBy(el,err.message);aoLoad();}
   el.disabled=false;
 });
 $('#ad-capform').addEventListener('submit',e=>{
@@ -433,7 +433,7 @@ function adSaved_(r,from){
   adPick(from===undefined?undefined:(DEFS.myVersions||[]).find(v=>v.from===from));
   adLoad();adMsg='';adErrs=[];adSaveErr=[];
 }
-async function adDelete(from){
+async function adDelete(from,b){
   const list=DEFS.myVersions||[],v=list.find(x=>x.from===from);if(!v)return;
   const prev=list[list.indexOf(v)-1];
   if(!await ask(`Delete the plan change from ${adWhen(from)}? Those days go back to ${prev?`the plan from ${adWhen(prev.from)}`:'having no plan'}.`,{yes:'Delete plan change',no:'Keep it',danger:true}))return;
@@ -445,7 +445,7 @@ async function adDelete(from){
     setDefaults(r);
     for(const d of Object.keys(S.days)) if((!from||d>=from)&&!LOGGED.has(d)&&!pending.has(d)){delete S.days[d];delete SAVED.days[d];}
     if(was){adPick();adLoad();}else adVer=(DEFS.myVersions||[]).find(x=>x.from===keep)||null;   /* the draft you're editing stays as it is */
-  }catch(err){if(!err.signedOut)alert(err.message);return;}
+  }catch(err){if(!err.signedOut)noteBy(b,err.message);return;}
   renderAdmin();
 }
 function adDownload(name,text,type){
@@ -615,14 +615,20 @@ function adAiRender(){
   $('#ad-key').placeholder=adAi.configured?'Paste a new key to replace it':'sk-or-…';
   $('#ad-keydel').hidden=adAi.source!=='admin';
   const md=$('#ad-model');
-  if(document.activeElement!==md)md.value=adAi.model===adAi.defaultModel?'':adAi.model;
+  /* model boxes typed in but not saved keep what was typed when the rest redraws (a key saved, a Keys rotation, a plan read) */
+  const typed=adModelSeen!==null&&adModelVals()!==adModelSeen;
+  if(!typed&&document.activeElement!==md)md.value=adAi.model===adAi.defaultModel?'':adAi.model;
   md.placeholder=adAi.defaultModel;
   $('#ad-model-hint').textContent='Used for every task without its own model below.';
   const el=$('#ad-aitasks');
-  if(!el.contains(document.activeElement))el.innerHTML=(adAi.tasks||[]).map(t=>`<label class="f admrow"><span class="lbl">${esc(t.name)}</span>
+  if(!typed&&!el.contains(document.activeElement))el.innerHTML=(adAi.tasks||[]).map(t=>`<label class="f admrow"><span class="lbl">${esc(t.name)}</span>
       <input id="ad-tm-${t.id}" data-task="${t.id}" autocomplete="off" spellcheck="false" value="${esc(t.model)}" placeholder="${esc(adAi.model)} (default)">
       <span class="sub">${esc(t.hint)}</span></label>`).join('');
+  if(!typed)adModelSeen=adModelVals();
 }
+/* the model boxes as last filled from the settings in use (null: fill them afresh) */
+let adModelSeen=null;
+const adModelVals=()=>JSON.stringify([$('#ad-model').value,...[...document.querySelectorAll('#ad-aitasks [data-task]')].map(i=>i.value)]);
 $('#ad-keyform').addEventListener('submit',e=>{
   e.preventDefault();const f=e.target,inp=$('#ad-key'),k=inp.value.trim();$('#ad-keymsg').textContent='';
   if(!k)return fieldError(inp,'Paste the key from OpenRouter');
@@ -636,7 +642,7 @@ $('#ad-modelform').addEventListener('submit',e=>{
   e.preventDefault();const f=e.target,models={},ins=[...document.querySelectorAll('#ad-aitasks [data-task]')];$('#ad-keymsg').textContent='';
   ins.forEach(i=>{models[i.dataset.task]=i.value.trim();});
   once(f,async()=>{
-    try{adAi=await api('PUT','/api/admin/ai',{model:$('#ad-model').value.trim(),models});aiOn=adAi.configured;$('#ad-keymsg').textContent='Models saved.';document.activeElement.blur();}
+    try{adAi=await api('PUT','/api/admin/ai',{model:$('#ad-model').value.trim(),models});aiOn=adAi.configured;$('#ad-keymsg').textContent='Models saved.';adModelSeen=null;document.activeElement.blur();}
     catch(err){if(err.signedOut)return;   /* "Food values: model should look like …" goes to that task's box */
       const task=ins.find(i=>{const l=i.closest('label');const n=l&&l.querySelector('.lbl');return n&&err.message.startsWith(n.textContent+':');});
       if(task)fieldError(task,err.message);else if(!errToField(err,[[/^model/i,$('#ad-model')]]))$('#ad-keymsg').textContent=err.message;
@@ -859,11 +865,11 @@ document.addEventListener('click',async e=>{
   /* a new link (new secret) for 3 months in its place; the old one stops working, and the person sends the new one themselves */
   if(a==='renew'){
     if(!await ask(`Renew ${x.label?`“${x.label}”`:'this link'}? You get a new link, live for 3 months, to send your coach – the current one stops working straight away.`,{yes:'Renew link',no:'Keep the current one'}))return;
-    once(b,async()=>{try{shNew=await api('POST',`/api/shares/${x.id}/renew`,{key:x.key});await shLoad();}catch(err){if(!err.signedOut){alert(err.message);await shLoad();}}});
+    once(b,async()=>{try{shNew=await api('POST',`/api/shares/${x.id}/renew`,{key:x.key});await shLoad();}catch(err){if(!err.signedOut){await shLoad();noteBy($('#ad-shares'),err.message);}}});
     return;
   }
   b.disabled=true;
-  try{await api('DELETE',`/api/shares/${x.id}?key=${encodeURIComponent(x.key)}`);shNew=null;await shLoad();}catch(err){b.disabled=false;if(!err.signedOut){alert(err.message);await shLoad();}}
+  try{await api('DELETE',`/api/shares/${x.id}?key=${encodeURIComponent(x.key)}`);shNew=null;await shLoad();}catch(err){b.disabled=false;if(!err.signedOut){await shLoad();noteBy($('#ad-shares'),err.message);}}
 });
 
 /* ---------- People: invites and accounts ---------- */
@@ -907,7 +913,7 @@ document.addEventListener('click',async e=>{
     else if(a==='remove'){if(!await ask(auRemoveText(u),{title:`Remove ${u.email}?`,yes:'Remove account',no:'Keep it',danger:true})){b.disabled=false;return;}
       await api('DELETE',`/api/admin/users/${u.id}`);auLink=null;}
     await auLoad();
-  }catch(err){b.disabled=false;if(!err.signedOut){alert(err.message);if(err.status===404)await auLoad();}}
+  }catch(err){b.disabled=false;if(!err.signedOut){if(err.status===404)await auLoad();noteBy(b.isConnected?b:$('#ad-users'),err.message);}}
 });
 
 /* everything removing an account deletes, said plainly – shared foods and supplements leave everyone's library */
@@ -921,13 +927,14 @@ function auRemoveText(u){
 /* ---------- Email: the account invites and notifications are sent from ---------- */
 let AM=null;
 const AM_PROV={gmail:['smtp.gmail.com',465],outlook:['smtp.office365.com',587]};
-async function amLoad(){AM=await loadTry('am',()=>api('GET','/api/admin/email')).catch(()=>null);amFill();}
+async function amLoad(keep){AM=await loadTry('am',()=>api('GET','/api/admin/email')).catch(()=>null);amFill(keep);}
 /* the form as filled from the settings in use; Save sends only the fields the person changed, so a value left as .env's stays from .env */
 let AMF=null, amTlsSet=false;
 const AM_FIELDS={from:'ad-m-from',fromName:'ad-m-name',host:'ad-m-host',port:'ad-m-port',secure:'ad-m-tls',user:'ad-m-user'};
 const AM_LBL={host:'server',port:'port',secure:'security',user:'username',pass:'password',from:'send-from address',fromName:'sender name'};
 function amVals(){const v={};for(const[k,id]of Object.entries(AM_FIELDS))v[k]=$('#'+id).value.trim();return v;}
-function amFill(){
+/* keep: a refresh after a key rotation – fields changed but not saved stay as typed, only the state lines update */
+function amFill(keep){
   /* a form that didn't load can't be saved over the settings in use */
   $('#ad-mailform').querySelectorAll('button[type=submit],button:not([type])').forEach(b=>{b.disabled=!AM;});
   if(!AM){$('#ad-mailstate').innerHTML=LOADERR.am?loadErr('the email settings','am'):'';return;}
@@ -936,13 +943,14 @@ function amFill(){
   $('#ad-mailstate').innerHTML=(AM.configured?`<span class="chip ok">✓ Set up</span> Sending from ${esc(AM.from)} via ${esc(AM.host)}.`
     :'<span class="chip bad">Not set up</span> Invites give you a link to send yourself until this is filled in.')
     +(saved||env?`<span class="sub adsrc">${saved?`Saved here: ${esc(saved)}.`:''}${saved&&env?' ':''}${env?`From .env: ${esc(env)}.`:''}</span>`:'');
+  $('#ad-m-pass').placeholder=AM.hasPassword?`Saved${AM.passwordSource==='env'?' in .env':''} – type a new one to replace it`:'';
+  $('#ad-m-del').hidden=AM.source!=='admin';
+  if(keep&&AMF&&(JSON.stringify(amVals())!==JSON.stringify(AMF)||$('#ad-m-pass').value))return;
   const host=AM.host||AM_PROV.gmail[0];
   $('#ad-m-from').value=AM.from||'';$('#ad-m-name').value=AM.fromName==='Logbook Monster'?'':AM.fromName||'';
   $('#ad-m-host').value=host;const port=AM.host?AM.port:AM_PROV.gmail[1];$('#ad-m-port').value=port;$('#ad-m-user').value=AM.user||'';$('#ad-m-pass').value='';
   $('#ad-m-tls').value=(AM.host?AM.secure:port===465)?'1':'0';amTlsSet=src.secure==='admin';
   $('#ad-m-prov').value=Object.keys(AM_PROV).find(k=>AM_PROV[k][0]===host)||'other';
-  $('#ad-m-pass').placeholder=AM.hasPassword?`Saved${AM.passwordSource==='env'?' in .env':''} – type a new one to replace it`:'';
-  $('#ad-m-del').hidden=AM.source!=='admin';
   if(!AM.configured)$('#ad-m-help').open=true;
   if(!$('#ad-m-to').value)$('#ad-m-to').value=ME||'';
   AMF=amVals();

@@ -7,6 +7,13 @@ let KY=null, kyBusy=false;
 const KY_ROT={ai:{path:'ai',field:'key',what:'key',where:'OpenRouter'},mail:{path:'email',field:'pass',what:'password',where:'your email provider'}};
 const KY_TIER={ok:['ok','OK'],due:['info','Due soon'],stale:['bad','Over 30 days'],overdue:['bad','Overdue'],unknown:['bad','Age unknown'],info:['','No schedule']};
 const kyMsg={ai:'',mail:''};
+const KY_NAME={OPENROUTER:'ai',SMTP:'mail'};
+/* the server's next step without the old key's steps said twice while an old key is kept (the rotate how-to ends at Promote);
+   once Test old proved it dead the server leaves them out itself (credentials.js) */
+function kyNext(c){
+  const k=KY_NAME[c.name], s=k&&KY&&KY.slots&&KY.slots[k];
+  return s&&s.old?c.next.replace(', Promote, revoke the old one, Test old.',', Promote.'):c.next;
+}
 async function kyLoad(){
   if(kyBusy)return;kyBusy=true;
   try{KY=await api('GET','/api/admin/keys');}catch(e){if(e.signedOut)return;KY=KY||null;}finally{kyBusy=false;}
@@ -19,29 +26,32 @@ function kyRender(){
   if(el)el.innerHTML=!KY?'<p class="sub">Loading…</p>':KY.credentials.map(c=>{const [cl,txt]=KY_TIER[c.tier]||['',''];
     return `<div class="aduser kyrow"><span class="who"><b>${esc(c.label)}</b> <code>${esc(c.name)}</code>
       <span class="sub">${esc(c.where)} · ${esc(c.slots)}${c.rotate?` · ${c.days==null?'age unknown':`${c.days} day${c.days===1?'':'s'} old`}`:''}</span>
-      <span class="sub">${esc(c.next)}</span></span><span class="chip ${cl}">${esc(txt)}</span></div>`;}).join('');
+      <span class="sub">${esc(kyNext(c))}</span></span><span class="chip ${cl}">${esc(txt)}</span></div>`;}).join('');
   for(const k of Object.keys(KY_ROT))kyRot(k);
 }
 /* the rotation block on the AI / Email tab */
 function kyRot(k){
   const el=$(`#ad-rot-${k}`);if(!el)return;
   const R=KY_ROT[k], s=KY&&KY.slots&&KY.slots[k]||{};
-  if(el.contains(document.activeElement)&&el.querySelector('input')===document.activeElement){const m=el.querySelector('[data-ky-msg]');if(m)m.textContent=kyMsg[k];return;}
+  const old=el.querySelector('input');
+  if(old&&old===document.activeElement){const m=el.querySelector('[data-ky-msg]');if(m)m.textContent=kyMsg[k];return;}
   el.innerHTML=`<h3 class="lbl">Rotate the ${R.what}</h3>
     <p class="sub">Make a new ${R.what} at ${R.where}, save it here as next and test it, then promote it. The one it replaces is kept for an hour: revoke it at ${R.where}, then Test old – it must fail. See docs/rotation.md.</p>
+    ${k==='mail'?'<p class="sub">If your provider allows only one password: change it there, then straight away Save as next → Test next → Promote. Test old should then fail.</p>':''}
     <form class="adkey" data-ky-form="${k}"><label class="f"><span class="lbl">Next ${R.what}</span><input type="password" autocomplete="off" spellcheck="false" data-ky-in="${k}" aria-describedby="ad-rot-${k}-msg"></label>
       <button class="btn" type="submit">Save as next</button></form>
     <div class="admailact"><button class="ghost" type="button" data-ky="test" data-k="${k}" data-slot="next"${s.next?'':' disabled'}>Test next</button>
       <button class="ghost" type="button" data-ky="promote" data-k="${k}"${s.next?'':' disabled'}>Promote</button>
       <button class="ghost" type="button" data-ky="test" data-k="${k}" data-slot="old"${s.old?'':' disabled'}>Test old</button></div>
     <p class="sub" role="status" id="ad-rot-${k}-msg" data-ky-msg="${k}">${esc(kyMsg[k]||(s.next?`A next ${R.what} is saved.`:'')+(s.old?` The old one is kept until ${new Date(s.oldUntil).toLocaleTimeString()}.`:''))}</p>`;
+  if(old&&old.value)el.querySelector('input').value=old.value;   /* a pasted key not saved yet stays */
 }
 function kySay(k,t){kyMsg[k]=t;const m=document.querySelector(`[data-ky-msg="${k}"]`);if(m)m.textContent=t;}
 /* after a change: the panel, plus the AI / Email tab's own state (admin.js) */
 async function kyAfter(k){
   await kyLoad();
   if(k==='ai'&&typeof adAiLoad==='function')adAiLoad();
-  if(k==='mail'&&typeof amLoad==='function')amLoad();
+  if(k==='mail'&&typeof amLoad==='function')amLoad(true);
 }
 document.addEventListener('submit',e=>{
   const f=e.target.closest('[data-ky-form]');if(!f)return;e.preventDefault();

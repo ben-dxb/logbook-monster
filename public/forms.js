@@ -204,7 +204,16 @@ async function leaveAsk(g){
   finally{leaveAsking=false;}
 }
 function leaveTo(g,to){try{if(g.drop)g.drop();}catch{}location.hash=to;}
+/* Each history entry carries its place (history.state.lmAt), so an address put back after Back / Forward is the same entry
+   again (history.go), never a replaced or added one: Stay leaves the history exactly as it was. */
+const leaveAt=()=>{const s=history.state;return s&&typeof s.lmAt==='number'?s.lmAt:null;};
+const leaveMark=n=>{try{history.replaceState(Object.assign({},history.state,{lmAt:n}),'');}catch{}};
+let leaveHere=0, leaveBack=null;
 if(typeof document!=='undefined'){
+  if(leaveAt()===null)leaveMark(0);leaveHere=leaveAt();
+  /* the pages tidy their address with replaceState(null…): the entry keeps its place */
+  const rs=history.replaceState.bind(history);
+  history.replaceState=(st,...r)=>rs(st==null&&leaveAt()!==null?{lmAt:leaveAt()}:st,...r);
   document.addEventListener('click',e=>{
     if(e.defaultPrevented||e.button!==0||e.ctrlKey||e.metaKey||e.shiftKey||e.altKey)return;
     const a=e.target.closest&&e.target.closest('a[href^="#"]');if(!a)return;
@@ -215,10 +224,17 @@ if(typeof document!=='undefined'){
   },true);
   /* registered before app.js's route(): stopping here means the page you were on is never drawn away */
   window.addEventListener('hashchange',e=>{
-    const from=e.oldURL?new URL(e.oldURL).hash:'', to=location.hash;if(from===to)return;
-    const g=leaveDirty();if(!g)return;
-    e.stopImmediatePropagation();history.replaceState(null,'',from||'#');
-    leaveAsk(g).then(yes=>{if(yes)leaveTo(g,to);});
+    const from=e.oldURL?new URL(e.oldURL).hash:'', to=location.hash;
+    if(leaveBack!==null&&leaveAt()===leaveBack){leaveBack=null;e.stopImmediatePropagation();return;}   /* our own step back to the page you stayed on */
+    let at=leaveAt();const moved=at!==null&&at!==leaveHere;   /* Back / Forward onto an entry seen before; else a new one */
+    if(at===null){at=leaveHere+1;leaveMark(at);}
+    const g=from!==to&&leaveDirty();
+    if(!g){leaveHere=at;return;}
+    e.stopImmediatePropagation();
+    const here=leaveHere;leaveBack=here;
+    if(moved)history.go(here-at);
+    else history.back();   /* a new entry (a typed address): step back to the one you were on; it stays as Forward */
+    leaveAsk(g).then(yes=>{if(!yes)return;if(!moved)return leaveTo(g,to);try{if(g.drop)g.drop();}catch{}history.go(at-here);});
   });
   window.addEventListener('beforeunload',e=>{if(!leaveOk&&leaveDirty()){e.preventDefault();e.returnValue='';}});
 }
