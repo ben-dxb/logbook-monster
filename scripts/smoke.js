@@ -199,6 +199,63 @@ async function twoStep(browser, w, h) {
 }
 
 /* A sensitive admin change on a sign-in over 15 minutes old asks for the password again, then goes through. */
+/* Phase 1C bugs: sign-in lands on /#dash, one failed feed leaves the rest of the Dashboard and the super admin pages working,
+   entries kept when a library copy fails, a quick Undo is saved, old days keep their foods' names, one e1RM rule. */
+async function phase1c(browser) {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } }), pg = await ctx.newPage(), errs = [];
+  pg.on('pageerror', e => errs.push(e.message));
+  await pg.goto(BASE + '/login'); await signIn(pg); await pg.waitForSelector('#v-dash:not([hidden])');
+  expect(/\/#dash$/.test(pg.url()), 'after sign-in the address should be /#dash, not ' + pg.url());
+  /* the photo feed fails: the checklist and the other cards still show, the photo card says why */
+  await pg.route('**/api/photos', r => r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"boom"}' }));
+  await pg.reload(); await pg.waitForSelector('#v-dash:not([hidden]) .dcheck .dlist', { timeout: 5000 });
+  expect(/Couldn’t load your photos: boom/.test(await pg.textContent('#d-body')) && await pg.locator('#d-body .dcard').count() === 5, 'only the photo card should show the failure');
+  await pg.unroute('**/api/photos');
+  /* super admin: a failed accounts load says so, and loads again when the tab is opened again */
+  await pg.route('**/api/admin/users', r => r.abort());
+  await pg.evaluate(() => { location.hash = '#admin/people'; });
+  await pg.waitForFunction(() => /Couldn’t load the accounts/.test(document.querySelector('#ad-users').textContent), null, { timeout: 5000 });
+  await pg.unroute('**/api/admin/users');
+  await pg.evaluate(() => { location.hash = '#admin/email'; }); await pg.evaluate(() => { location.hash = '#admin/people'; });
+  await pg.waitForSelector('#ad-users .aduser', { timeout: 5000 });
+  expect(await pg.evaluate(() => /progress photos/.test(auRemoveText({ email: 'x@y', photos: 2, shared: 1 })) && /every other account/.test(auRemoveText({ email: 'x@y', photos: 2, shared: 1 }))),
+    'the remove confirm should name photos and shared foods');
+  /* off plan: the name box has the library's limit, and the entry is kept when the library copy fails */
+  const d = later(30);
+  await pg.goto(BASE + '/#day/' + d); await pg.waitForFunction(d => document.querySelector('#datepick').value === d && document.querySelector('#meals .meal'), d);
+  expect(await pg.evaluate(() => document.querySelector('#o-n').maxLength) === 80, 'the off-plan name box should stop at 80');
+  expect(await pg.evaluate(() => libSync && Object.keys(day().lib || {}).length > 0), 'a day keeps a copy of its plan foods');
+  await pg.route('**/api/foods', r => r.request().method() === 'POST' ? r.fulfill({ status: 400, contentType: 'application/json', body: '{"error":"Name is too long"}' }) : r.continue());
+  pg.once('dialog', dg => dg.accept());
+  await pg.fill('#o-n', 'Smoke long off-plan'); await pg.fill('#o-k', '120'); await pg.check('#o-save'); await pg.click('#offform button[type=submit]');
+  await pg.waitForFunction(() => /Smoke long off-plan/.test(document.querySelector('#offlist').textContent), null, { timeout: 5000 });
+  await pg.unroute('**/api/foods');
+  /* a meal edit undone while its save is on the way: the undo is saved too */
+  const d2 = later(31);
+  await pg.goto(BASE + '/#day/' + d2); await pg.waitForFunction(d => document.querySelector('#datepick').value === d && document.querySelector('#meals .meal'), d2);
+  await pg.route('**/api/days/*', async r => { if (r.request().method() === 'PUT') await new Promise(x => setTimeout(x, 800)); return r.continue(); });
+  await pg.evaluate(() => editMeal(0, 'p', (D, m) => { m.p[0].g += 50; }));
+  await pg.waitForFunction(() => inFlight, null, { timeout: 5000 });
+  await pg.evaluate(() => undoMeal(0));
+  await pg.waitForFunction(() => !pending.size && !inFlight && /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 8000 });
+  await pg.unroute('**/api/days/*');
+  const sv = await pg.evaluate(d => api('GET', '/api/days/' + d), d2);
+  expect(sv && !sv.data.meals[0].dirty, 'a quick Undo should be saved');
+  /* the Timeline names a food from the day's own copy when the plan no longer has it; Gym and Timeline share one e1RM rule */
+  expect(await pg.evaluate(() => tFoodName({ lib: { gonefood: { n: 'Copy name' } } }, 'gonefood', todayStr()) === 'Copy name'), 'old days should keep their food names');
+  expect(await pg.evaluate(() => e1rm({ kg: 40, reps: 30 }) === 0 && e1rm({ kg: 60, reps: 5 }) === 70), 'Gym e1RM should ignore sets over 20 reps, as the Timeline does');
+  /* a new supplement's optional amount starts empty */
+  await pg.evaluate(() => { location.hash = '#supps/lib/new'; }); await pg.waitForSelector('#s-lamt');
+  expect(await pg.inputValue('#s-lamt') === '', 'the new supplement amount should start empty');
+  /* Photos use the app's weigh-ins: one cleared on the Daily Tracker is gone there too */
+  await pg.evaluate(() => { location.hash = '#photos'; }); await pg.waitForSelector('#p-form');
+  const wd = await pg.evaluate(async () => { const d = addDays(todayStr(), -3); await api('PUT', '/api/weights/' + d, { kg: 91 }); WEIGHTS[d] = 91; return d; });
+  await pg.evaluate(async d => { await api('DELETE', '/api/weights/' + d); delete WEIGHTS[d]; }, wd);
+  expect(await pg.evaluate(d => !pWeights().some(w => w.date === d), wd), 'a deleted weigh-in should not drive the photo filters');
+  expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
+  await ctx.close();
+}
+
 async function recheck(browser) {
   const { DatabaseSync } = require('node:sqlite');
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } }), pg = await ctx.newPage(), errs = [];
@@ -249,6 +306,7 @@ async function recheck(browser) {
       await pg.click('a[data-view=day]');
       if (first) {   /* no app defaults: a new account has no plan until it makes one; this one takes the old built-in plan */
         await pg.waitForSelector('#v-day:not([hidden]) #meals .noplan', { timeout: 5000 });
+        expect(await pg.evaluate(() => !snacksShown().some(x => x.old) && !/Health Road/.test(document.querySelector('#v-day').textContent)), 'a new account should not get the first user’s snacks or Health Road copy');
         await pg.evaluate(plan => api('PUT', '/api/my/defaults', plan), require('../server/legacy').effective({}, {}));
         await pg.reload();
       }
@@ -1090,6 +1148,7 @@ async function recheck(browser) {
       await twoStep(browser, w, h);
     }
     await recheck(browser);
+    await phase1c(browser);
     console.log('smoke: ok (desktop + phone)');
   } catch (e) { await browser.close(); return fail(e.stack); }
   await browser.close(); cleanup();

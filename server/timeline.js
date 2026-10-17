@@ -39,16 +39,7 @@ const r1 = n => Math.round(n * 10) / 10;
 const e1rm = (kg, reps) => (reps === 1 ? kg : kg * (1 + reps / 30));
 const countsForStrength = s => s.kg > 0 && s.reps >= 1 && s.reps <= 20;
 
-/* an amount in another unit: g / mg / mcg between themselves, and vitamin D's IU (40 IU = 1 mcg); null when it can't be */
-const MCG = { g: 1e6, mg: 1e3, mcg: 1 };
-const isVitD = name => /\bvit(?:amin)?\.?\s*d[23]?\b|calciferol|\bd3\b/i.test(name);
-function inUnit(name, amount, from, to) {
-  if (from === to) return amount;
-  const iu = isVitD(name) ? 40 : 0;
-  const mcg = MCG[from] ? amount * MCG[from] : from === 'IU' && iu ? amount / iu : null;
-  if (mcg == null) return null;
-  return MCG[to] ? mcg / MCG[to] : to === 'IU' && iu ? mcg * iu : null;
-}
+const { inUnit } = require('./units');
 
 /* ---------- one day ---------- */
 function dayCard(user, date) {
@@ -307,4 +298,4 @@ router.post('/summary', aiLimit, async (req, res) => {
   } catch (e) { send(res, e); }
 });
 
-module.exports = { router, summaryText, inUnit };
+module.exports = { router, summaryText };

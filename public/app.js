@@ -141,11 +141,12 @@ async function flush(){
   const jobs=[...pending.entries()];pending.clear();
   if(!jobs.length)return;
   inFlight=true;saveState='saving';renderStatus();
+  jobs.forEach(([k,j])=>{if(k!=='@settings')SENDING.set(k,j);});   /* what the server will have once these land */
   try{
     for(const [key,j] of jobs){
       if(key==='@settings'){await api('PUT','/api/settings',JSON.parse(j));SAVED.settings=j;continue;}
       const D=JSON.parse(j);const summary=summaryOf(key,D);
-      let r;SENDING.set(key,j);
+      let r;
       try{r=await api('PUT','/api/days/'+key,{data:D,summary},VER[key]??null);}
       catch(e){SENDING.delete(key);if(!e.conflict)throw e;CONFLICT.add(key);pending.delete(key);continue;}   /* kept on screen; reload to see the other copy */
       SENDING.delete(key);VER[key]=r.updated;SAVED.days[key]=j;LOGGED.add(key);SUMS[key]={date:key,...summary};
@@ -153,7 +154,7 @@ async function flush(){
     saveState=pending.size?'pending':'saved';saveErr='';
     if(pending.size)saveTimer=setTimeout(flush,600);else if(stashOut)dropStash();
   }catch(e){
-    jobs.forEach(([k,j])=>{if(!pending.has(k))pending.set(k,j);});
+    SENDING.clear();jobs.forEach(([k,j])=>{if(!pending.has(k)&&SAVED.days[k]!==j)pending.set(k,j);});
     inFlight=false;
     if(e.signedOut)return;               /* toLogin() stashes everything still pending */
     saveState='error';saveErr=e.message;
@@ -373,7 +374,7 @@ function render(){
   $('#snackvals').innerHTML='<div class="sv"><span class="lbl">Per item / 100g</span><span class="lbl">kcal</span><span class="lbl">P</span><span class="lbl">C</span><span class="lbl">F</span>'+
     snacksShown().filter(x=>x.id!=='pudding').map(x=>{const v=snackVal(x.id);return `<span>${esc(x.n)}${x.u==='g'?' (per 100g)':''}${x.est&&!(S.snackOv||{})[x.id]?' <span class="est">estimate</span>':''}</span>`+
     ['k','p','c','f'].map(m=>`<input id="sv-${x.id}-${m}" type="number" inputmode="decimal" min="0" step="0.1" value="${esc(v[m])}" data-act="sv" data-s="${x.id}" data-m="${m}" aria-label="${esc(x.n)} ${m}">`).join('');}).join('')+'</div>';
-  $('#snackedit').hidden=!snacksShown().some(x=>x.id!=='pudding');
+  $('#snackvals').parentElement.hidden=!snacksShown().some(x=>x.id!=='pudding');
   persist();
 }
 
