@@ -1019,6 +1019,97 @@ async function recheck(browser) {
 
 /* Phase 5 form kit (public/forms.js): errors said at the field and gone once it's fixed, a Show button on password boxes, a weight
    out of range kept as typed with its message at the box, the calendar a real table, and finger-sized controls on a touch phone. */
+/* Phase 5, Gym / foods / supplements: focus stays on the control you used when the page is drawn again (builder arrows, ×, picks,
+   tabs, Log set, supplement ×), moves go with the exercise you moved, the set bar never covers the focused row, a lost answer
+   is said in words, changes to a draft ask before you leave, and ▲ ▼ 🏆 have words for screen readers. */
+async function phase5Library(browser) {
+  const ctx = await browser.newContext({ viewport: { width: 1100, height: 800 } }), pg = await ctx.newPage(), errs = [];
+  pg.on('pageerror', e => errs.push(e.message));
+  pg.on('dialog', d => { errs.push('dialog: ' + d.message()); return d.dismiss(); });
+  const hash = async (h, sel) => { await pg.evaluate(h => { location.hash = h; }, h); if (sel) await pg.waitForSelector(sel, { timeout: 5000 }); };
+  const on = () => pg.evaluate(() => { const a = document.activeElement; return a ? [a.id, a.dataset.g || a.dataset.fa || a.dataset.sa || '', a.dataset.i || a.dataset.v || ''].join('|') : ''; });
+  await pg.goto(BASE + '/login'); await signIn(pg); await pg.waitForSelector('#v-dash:not([hidden])');
+  const ids = await pg.evaluate(async () => { const out = [];
+    for (const n of ['P5 Alpha', 'P5 Bravo', 'P5 Charlie', 'P5 Delta']) out.push((await api('POST', '/api/gym/exercises', { name: n })).id);
+    const sets = [];   /* eight days of three sets, a rep more each time: ▲ on every set after the first day */
+    for (let d = 0; d < 8; d++) for (let k = 0; k < 3; k++) sets.push({ name: 'P5 Alpha', at: `${addDays(todayStr(), d - 9)}T09:0${k}:00`, reps: 5 + d, kg: 40, note: '' });
+    await api('POST', '/api/gym/import-sets', { sets });
+    await api('POST', '/api/supps', { name: 'P5 Magnesium', amount: 400, unit: 'mg', notes: '', public: false });
+    return out; });
+  await pg.evaluate(() => { GY = null; SUPPS = null; });
+
+  /* the workout builder: picks, moves and × keep focus where it makes sense, and say what happened */
+  await hash('#gym/new', '#g-picklist');
+  for (const id of ids) { await pg.focus(`#g-picklist [data-g=pick][data-id="${id}"]`); await pg.keyboard.press('Enter'); }
+  expect(await on() === `|pick|`, 'a pick should keep focus on the exercise picked, not ' + await on());
+  await pg.waitForFunction(() => /P5 Delta added – 4 exercises/.test((document.querySelector('#live') || {}).textContent || ''), null, { timeout: 2000 });
+  await pg.focus('[data-g=iup][data-i="3"]'); await pg.keyboard.press('Enter');
+  expect(await on() === '|iup|2', 'focus should go with the exercise moved up: ' + await on());
+  await pg.keyboard.press('Enter'); await pg.keyboard.press('Enter');
+  expect(await on() === '|idown|0', 'at the top, focus goes to the row’s other arrow: ' + await on());
+  expect(await pg.evaluate(() => gDraft.items.map(i => exName(i.e)).join()) === 'P5 Delta,P5 Alpha,P5 Bravo,P5 Charlie', 'three Enters moved Delta to the top');
+  await pg.focus('[data-g=idel][data-i="0"]'); await pg.keyboard.press('Enter');
+  expect(await on() === '|idel|0' && await pg.evaluate(() => gDraft.items.length === 3), '× should focus the next row’s ×: ' + await on());
+  /* unsaved: a link away asks; Stay keeps the draft, Leave drops it */
+  await pg.click('a[data-view=foods]');
+  expect(/changed this workout/.test(await answer(pg, false)) && await pg.evaluate(() => location.hash === '#gym/new' && gDraft.items.length === 3), 'Stay keeps the workout being built');
+  await pg.evaluate(() => history.back()); await pg.waitForSelector('#ask[open]');
+  await answer(pg, false);
+  expect(await pg.evaluate(() => location.hash === '#gym/new' && !!$('#g-wname')), 'Back with unsaved changes asks first and stays on the builder');
+  await pg.click('a[data-view=foods]'); await answer(pg, true); await pg.waitForSelector('#v-foods:not([hidden])');
+
+  /* an exercise: ▲ and 🏆 in words, Log set keeps focus and is announced, the set bar never covers the focused control */
+  await hash('#gym/e/' + ids[0], '#g-quick');
+  const t = await pg.evaluate(() => ({ up: (document.querySelector('.gnum.up') || {}).textContent || '', tro: document.querySelector('.gtro') && document.querySelector('.gtro').getAttribute('aria-label'), legend: !!document.querySelector('.glegend') }));
+  expect(/▲ \(more reps than last time\)/.test(t.up) && /^Record/.test(t.tro || '') && t.legend, 'more reps and records should be said in words: ' + JSON.stringify(t));
+  await pg.focus('#g-log'); await pg.keyboard.press('Enter');
+  await pg.waitForFunction(() => /^Logged /.test((document.querySelector('#live') || {}).textContent || '') && !gSending.size, null, { timeout: 5000 });
+  expect(await on() === 'g-log||', 'Log set keeps focus on its button: ' + await on());
+  await pg.focus('[data-g=tab][data-t=records]'); await pg.keyboard.press('Enter'); await pg.waitForSelector('.wstats');
+  expect(await on() === '|tab|', 'a tab keeps focus');
+  await pg.focus('[data-g=tab][data-t=sets]'); await pg.keyboard.press('Enter'); await pg.waitForSelector('.gday');
+  await pg.evaluate(() => { scrollTo(0, 0); document.activeElement.blur(); });
+  let hidden = 0;
+  for (let k = 0; k < 40; k++) { await pg.keyboard.press('Tab');
+    if (await pg.evaluate(() => { const a = document.activeElement, q = $('#g-quick'); if (!a || q.contains(a)) return false; const r = a.getBoundingClientRect(), b = q.getBoundingClientRect(); return r.bottom > b.top + 1 && r.top < b.bottom; })) hidden++; }
+  expect(!hidden, `the set bar covered ${hidden} focused controls`);
+  /* a proxy's 502 page is said in words, not "HTTP 502" */
+  await pg.route('**/api/gym/sets', r => r.request().method() === 'POST' ? r.fulfill({ status: 502, contentType: 'text/html', body: '<html>Bad gateway</html>' }) : r.continue());
+  await pg.click('#g-log');
+  await pg.waitForSelector('.optnote', { timeout: 5000 });
+  const n502 = await pg.textContent('.optnote');
+  expect(/isn’t answering/.test(n502) && !/HTTP/.test(n502), 'a 502 should be said in words: ' + n502);
+  await pg.unroute('**/api/gym/sets');
+  await hash('#gym', '#g-csvfile');
+  expect(/Setgraph, Strong, Hevy/.test(await pg.textContent('#g-csvfile >> xpath=..')), 'the CSV import names the apps it reads');
+
+  /* foods: the type tabs keep focus; a changed food form asks before you leave */
+  await hash('#foods', '#f-kinds [data-v=meal]');
+  await pg.focus('#f-kinds [data-v=meal]'); await pg.keyboard.press('Enter');
+  expect(await on() === '|kind|meal', 'a food type tab keeps focus: ' + await on());
+  await pg.click('#f-kinds [data-v=all]');
+  await hash('#foods/new', '#f-form'); await pg.fill('#f-name', 'P5 draft');
+  await pg.click('a[data-view=supps]');
+  expect(/changed this food/.test(await answer(pg, false)) && await pg.inputValue('#f-name') === 'P5 draft', 'Stay keeps the food being entered');
+  await pg.click('a[data-view=supps]'); await answer(pg, true); await pg.waitForSelector('#v-supps:not([hidden]) #s-log');
+
+  /* supplements: × focuses the next entry's ×, the last one's Undo; Undo puts it back */
+  await hash('#supps/' + addDaysNode(-40), '#s-log');
+  await pg.waitForSelector('[data-sa=quick]');
+  const q = await pg.evaluate(() => [...document.querySelectorAll('[data-sa=quick]')].find(b => /P5 Magnesium/.test(b.textContent)).dataset.id);
+  for (let k = 0; k < 2; k++) { await pg.click(`[data-sa=quick][data-id="${q}"]`); await pg.waitForFunction(k => document.querySelectorAll('#s-log [data-sa=del]').length === k + 1, k, { timeout: 5000 }); }
+  await pg.focus('#s-log [data-sa=del]'); await pg.keyboard.press('Enter');
+  await pg.waitForFunction(() => document.querySelectorAll('#s-log [data-sa=del]').length === 1);
+  expect(await on() === '|del|', 'after × focus should be on the next entry’s ×: ' + await on());
+  await pg.keyboard.press('Enter');
+  await pg.waitForFunction(() => document.activeElement && document.activeElement.closest('.optnote') && /Undo/.test(document.activeElement.textContent), null, { timeout: 5000 });
+  await pg.keyboard.press('Enter');
+  await pg.waitForFunction(() => document.querySelectorAll('#s-log [data-sa=del]').length === 1, null, { timeout: 5000 });
+  expect(!errs.length, 'page errors: ' + errs.join('; '));
+  await ctx.close();
+}
+const addDaysNode = n => { const d = new Date(); d.setDate(d.getDate() + n); return localDay(d); };
+
 async function formKit(browser) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }), pg = await ctx.newPage(), errs = [];
   pg.on('pageerror', e => errs.push(e.message));
@@ -1307,7 +1398,9 @@ async function formKit(browser) {
       expect(/✓/.test(await pg.textContent('#g-picklist')), 'a picked exercise should be marked in the picker');
       const bscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(bscroll <= 1, `horizontal overflow of ${bscroll}px in the workout builder at ${w}px wide`);
-      await pg.click('#g-tabs a[data-g=""]'); await pg.waitForSelector('#g-body a[href="#gym/new"]');
+      await pg.click('#g-tabs a[data-g=""]');   /* the workout isn't saved: leaving asks first */
+      expect(/changed this workout/.test(await answer(pg, true)), 'leaving a changed workout should ask');
+      await pg.waitForSelector('#g-body a[href="#gym/new"]');
       /* food library: add a shared meal with a recipe, filter meals and ingredients, open an AI flag's source,
          find the meal, add it to today's plan, then add it again from the Day page */
       if (first) {   /* only the server marks AI estimates (a hand-made ai record is dropped), so the flag is set in the database */
@@ -1769,7 +1862,7 @@ async function formKit(browser) {
         await pg.click('#ad-save'); await pg.waitForSelector('#ad-saveerr:not([hidden])');
         errs.push(...errs.splice(errs502).filter(m => !/status of 502/.test(m)));   /* the browser logs the 502 asked for */
         { const t = await pg.textContent('#ad-saveerr'), r = await pg.evaluate(() => { const b = $('#ad-saveerr').getBoundingClientRect(); return b.top >= 0 && b.bottom <= innerHeight; });
-          expect(/The server didn’t answer – try again in a minute/.test(t) && !/HTTP/.test(t) && r, 'a 502 should be said in words, in view next to Save: ' + t); }
+          expect(/The server isn’t answering right now – try again in a minute/.test(t) && !/HTTP/.test(t) && r, 'a 502 should be said in words, in view next to Save: ' + t); }
         await pg.unroute('**/api/my/defaults');
         await pg.click('#ad-save');
         await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
@@ -2137,6 +2230,7 @@ async function formKit(browser) {
     await phase2cLast(browser);
     await phase9(browser);
     await formKit(browser);
+    await phase5Library(browser);
     console.log('smoke: ok (desktop + phone)');
   } catch (e) { await browser.close(); return fail(e.stack); }
   await browser.close(); cleanup();

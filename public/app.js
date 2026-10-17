@@ -42,8 +42,6 @@ let LIB=[], LIBV=0;                         /* the food library (yours and share
 /* the one message for a request that never reached the server (offline, server down); e.network marks it */
 const NET_ERR='Can’t connect – check your connection and try again.';
 const netError=()=>{const e=new Error(NET_ERR);e.network=true;return e;};
-/* a server error with no message of ours (a proxy's 502 page, a crash): never "HTTP 502" */
-const SRV_ERR='The server didn’t answer – try again in a minute.';
 /* ver: the version (`updated`) of the record this change was made on, null for none yet; a newer one on the server
    answers 409 (e.conflict) and nothing is saved (server/version.js) */
 async function api(method,url,body,ver,again){
@@ -63,7 +61,7 @@ async function api2(method,url,body,ver,again){
     /* a sensitive change on an older sign-in: password or code again, then the same request once more */
     if(r.status===403&&j.recheck&&!again&&await recheck())return api(method,url,body,ver,true);
     if(r.status===403&&j.setup2fa)setTimeout(tfShow,0);
-    const e=new Error(j.error||(r.status>=500?SRV_ERR:`HTTP ${r.status}`));e.status=r.status;e.conflict=r.status===409&&ver!==undefined;throw e;}
+    const e=new Error(j.error||httpText(r.status));e.status=r.status;e.conflict=r.status===409&&ver!==undefined;throw e;}
   return j;
 }
 function recheck(){
