@@ -648,3 +648,6 @@ footer{font-size:12px;color:var(--muted)}
 .recheck{border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);padding:16px;width:min(360px,calc(100vw - 32px))}
 .recheck h2{margin:0;font-size:18px}
 .rcbtns{display:flex;gap:8px}
+.btn.danger{background:var(--bad);color:var(--accent-ink)}
+.acctfoot{margin:0;display:flex;gap:12px;justify-content:center;font-size:13px}
+.acctfoot a{color:var(--muted)}

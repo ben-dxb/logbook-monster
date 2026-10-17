@@ -1,6 +1,6 @@
 'use strict';
 /* Browser smoke test: starts a throwaway server, signs in, weighs a meal-prep pack, edits and saves a day, logs a weight,
-   opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, checks that pages load only versioned scripts and styles and that the Dashboard and Timeline keep what they read until a write, shares a read-only coach link and opens it signed out, sets up two-step sign-in and signs in with a code and a recovery code, confirms a sensitive admin change on an old sign-in, uploads a plan and adds a day template on Account admin, sets up AI models and invites someone on the Super admin tabs, builds a plan from nothing as the new account, switches a day to another template, edits one day in two tabs, at desktop and phone widths. Fails on any page error.
+   opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, checks that pages load only versioned scripts and styles and that the Dashboard and Timeline keep what they read until a write, shares a read-only coach link and opens it signed out, sets up two-step sign-in and signs in with a code and a recovery code, opens the privacy page and deletes an account, confirms a sensitive admin change on an old sign-in, uploads a plan and adds a day template on Account admin, sets up AI models and invites someone on the Super admin tabs, builds a plan from nothing as the new account, switches a day to another template, edits one day in two tabs, at desktop and phone widths. Fails on any page error.
    Needs Playwright and its Chromium (README, Run it locally); without them it fails, so `npm run check` never passes untested. */
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -44,14 +44,15 @@ const monAt = new Date(); monAt.setDate(monAt.getDate() + 60); monAt.setDate(mon
 const later = n => { const d = new Date(monAt); d.setDate(d.getDate() + n); return localDay(d); };
 const MON = later(0), FROM = later(3), MON2 = later(7);
 
-execSync(`"${node[0]}" ${node[1]} scripts/create-user.js smoke@example.com`, { cwd: root, env: { ...env, NEW_PASSWORD: 'smoke-password-1' }, stdio: 'ignore' });
-for (const w of [1100, 390]) execSync(`"${node[0]}" ${node[1]} scripts/create-user.js smoke2fa${w}@example.com`, { cwd: root, env: { ...env, NEW_PASSWORD: 'smoke-password-1' }, stdio: 'ignore' });
+execSync(`"${node[0]}" ${node[1]} scripts/create-user.js smoke@example.com`, { cwd: root, env: { ...env, NEW_PASSWORD: 'tidy-pass-phrase-1' }, stdio: 'ignore' });
+for (const w of [1100, 390]) execSync(`"${node[0]}" ${node[1]} scripts/create-user.js smokebye${w}@example.com`, { cwd: root, env: { ...env, NEW_PASSWORD: 'tidy-pass-phrase-1' }, stdio: 'ignore' });
+for (const w of [1100, 390]) execSync(`"${node[0]}" ${node[1]} scripts/create-user.js smoke2fa${w}@example.com`, { cwd: root, env: { ...env, NEW_PASSWORD: 'tidy-pass-phrase-1' }, stdio: 'ignore' });
 const srv = spawn(node[0], [node[1], 'server/index.js'], { cwd: root, env, stdio: 'ignore' });
 
 const fail = msg => { console.error('smoke FAILED:', msg); cleanup(); process.exit(1); };
 function cleanup() { srv.kill(); fakeAi.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
-const signIn = async p => { await p.fill('#email', 'smoke@example.com'); await p.fill('#password', 'smoke-password-1'); await p.click('#submit'); };
+const signIn = async p => { await p.fill('#email', 'smoke@example.com'); await p.fill('#password', 'tidy-pass-phrase-1'); await p.click('#submit'); };
 /* the photo list as the Dashboard asks for it (?latest=1…) or as the photos page does – not a photo's own file or thumb */
 const PHOTO_LIST = /\/api\/photos(\?[^/]*)?$/;
 const until = async (fn, ms = 5000) => { for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 100))) if (await fn()) return true; return !!(await fn()); };
@@ -171,7 +172,7 @@ async function twoStep(browser, w, h) {
   const ctx = await browser.newContext({ viewport: { width: w, height: h } }), pg = await ctx.newPage(), errs = [];
   pg.on('pageerror', e => errs.push(e.message));   /* (wrong codes are refused on purpose, so no console-error check here) */
   const overflow = async what => { const x = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth); expect(x <= 1, `horizontal overflow of ${x}px ${what} at ${w}px wide`); };
-  const login = async () => { await pg.goto(BASE + '/login'); await pg.fill('#email', email); await pg.fill('#password', 'smoke-password-1'); await pg.click('#submit'); };
+  const login = async () => { await pg.goto(BASE + '/login'); await pg.fill('#email', email); await pg.fill('#password', 'tidy-pass-phrase-1'); await pg.click('#submit'); };
   await login(); await pg.waitForSelector('#v-dash:not([hidden])');
   await pg.click('#acct>summary'); await pg.click('#tfbox>summary');
   await pg.click('#tfbody [data-tf=start]'); await pg.waitForSelector('#tf-secret');
@@ -205,6 +206,37 @@ async function twoStep(browser, w, h) {
   expect(/recovery code/.test(said), 'using a recovery code should say it won’t work again');
   await pg.click('#acct>summary'); await pg.click('#tfbox>summary');
   await pg.waitForFunction(() => /9 recovery codes left/.test(document.querySelector('#tfbody').textContent), null, { timeout: 5000 });
+  expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
+  await ctx.close();
+}
+
+/* The account area's legal minimum: the privacy page signed out, the account menu's Privacy link, the password box naming the
+   live coach links it would end (unticked), and Account admin › Delete my account – the email typed, then the goodbye. */
+async function deleteAccount(browser, w, h) {
+  const email = `smokebye${w}@example.com`;
+  const ctx = await browser.newContext({ viewport: { width: w, height: h } }), pg = await ctx.newPage(), errs = [];
+  pg.on('pageerror', e => errs.push(e.message));
+  const overflow = async what => { const x = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth); expect(x <= 1, `horizontal overflow of ${x}px ${what} at ${w}px wide`); };
+  await pg.goto(BASE + '/privacy'); await pg.waitForSelector('main.doc h1');
+  expect(/Ask the person who runs this app/.test(await pg.textContent('main')), 'no contact set: the privacy page says to ask');
+  await overflow('on the privacy page');
+  await pg.goto(BASE + '/login'); expect(await pg.locator('.foot a[href="/privacy"]').count() === 1, 'the sign-in page links the privacy page');
+  await pg.fill('#email', email); await pg.fill('#password', 'tidy-pass-phrase-1'); await pg.click('#submit');
+  await pg.waitForSelector('#v-dash:not([hidden])');
+  await pg.evaluate(() => api('POST', '/api/shares', { label: 'Coach Sam', expires: new Date(Date.now() + 86400000).toISOString() }));
+  await pg.click('#acct>summary');
+  expect(await pg.isVisible('.acctfoot a[href="/privacy"]'), 'the account menu links the privacy page');
+  await pg.click('#pwbox>summary'); await pg.waitForSelector('#pw-linksf:not([hidden])');
+  expect(/my coach link \(Coach Sam\)/.test(await pg.textContent('#pw-linkst')) && !(await pg.isChecked('#pw-links')), 'the box names the live link and starts unticked');
+  await overflow('with the password box open');
+  await pg.goto(BASE + '/#account'); await pg.waitForSelector('#ad-del-btn');
+  await pg.fill('#ad-del-email', 'someone@example.com'); await pg.click('#ad-del-btn');
+  await pg.waitForFunction(() => /exactly to confirm/.test(document.querySelector('#ad-delmsg').textContent), null, { timeout: 5000 });
+  await overflow('on Account admin');
+  await pg.fill('#ad-del-email', email); await pg.click('#ad-del-btn');
+  await pg.waitForURL(/\/login$/, { timeout: 5000 });
+  await pg.waitForFunction(() => /has been deleted|have been deleted/.test(document.querySelector('#intro').textContent), null, { timeout: 5000 });
+  expect((await pg.evaluate(async () => (await fetch('/api/me')).status)) === 401, 'signed out after deleting');
   expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
   await ctx.close();
 }
@@ -305,6 +337,16 @@ async function phase9(browser) {
   expect(await pg.isChecked(box(ids[0])) && await pg.isChecked(box(ids[1])), 'two quick ticks should both stay ticked (p9-02)');
   const srv = await pg.evaluate(async () => (await api('GET', `/api/checklist/days?from=${todayStr()}&to=${todayStr()}`)).days[todayStr()] || []);
   expect(ids.every(id => srv.includes(id)), 'both ticks should be saved: ' + srv);
+  await pg.unroute('**/api/checklist/days/*');
+  /* away and back while a tick is still on its way: the Dashboard's kept feeds show it, and so does the next read */
+  await slow('**/api/checklist/days/*', 'PUT', 600);
+  await pg.click(box(ids[1]));
+  await hash('#supps'); await hash('#dash', '#v-dash:not([hidden]) .dcheck .dlist');
+  expect(!(await pg.isChecked(box(ids[1]))), 'a tick still on its way should show after leaving the Dashboard and coming back');
+  await pg.waitForFunction(() => !Object.keys(dQ).length, null, { timeout: 5000 });
+  await hash('#supps'); await hash('#dash', '#v-dash:not([hidden]) .dcheck .dlist');
+  expect(!(await pg.isChecked(box(ids[1]))), 'the saved untick should show on the next visit');
+  await pg.click(box(ids[1])); await pg.waitForFunction(() => !Object.keys(dQ).length, null, { timeout: 5000 });
   await pg.unroute('**/api/checklist/days/*');
   await broken('**/api/checklist/days/*', 'PUT');
   await pg.click(box(ids[0]));
@@ -661,7 +703,7 @@ async function phase2cLast(browser) {
   expect(await pg.textContent('#pwbox summary') === 'Set a password', 'a Google-only account is offered to set a password');
   await pg.route('**/auth/password', r => r.fulfill({ json: { ok: true } }));
   await pg.click('#acct summary'); await pg.click('#pwbox summary');
-  await pg.fill('#pw-new', 'smoke-password-1'); await pg.click('#pwform button[type=submit]');
+  await pg.fill('#pw-new', 'tidy-pass-phrase-1'); await pg.click('#pwform button[type=submit]');
   await pg.waitForFunction(() => /Password updated/.test(document.querySelector('#pwmsg').textContent), null, { timeout: 5000 });
   expect(await pg.textContent('#pwbox summary') === 'Change password', 'after setting one the menu should say Change password');
   await pg.unroute('**/auth/password'); await pg.unroute('**/api/me');
@@ -773,7 +815,7 @@ async function recheck(browser) {
   const x = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth); expect(x <= 1, `horizontal overflow of ${x}px with the re-check open`);
   await pg.fill('#rc-in', 'wrong-password-9'); await pg.click('#rc-form button[type=submit]');
   await pg.waitForFunction(() => /didn’t work/.test(document.querySelector('#rc-msg').textContent), null, { timeout: 5000 });
-  await pg.fill('#rc-in', 'smoke-password-1'); await pg.click('#rc-form button[type=submit]');
+  await pg.fill('#rc-in', 'tidy-pass-phrase-1'); await pg.click('#rc-form button[type=submit]');
   expect(await change === 'ok', 'the change should go through after the password: ' + await change);
   expect(!(await pg.evaluate(() => document.querySelector('#recheck').open)), 'the dialog should close');
   expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
@@ -792,7 +834,7 @@ async function recheck(browser) {
       pg.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
       await pg.goto(BASE + '/');
       expect(pg.url().endsWith('/login'), 'signed-out visit should land on /login');
-      await pg.fill('#email', 'smoke@example.com'); await pg.fill('#password', 'smoke-password-1'); await pg.click('#submit');
+      await pg.fill('#email', 'smoke@example.com'); await pg.fill('#password', 'tidy-pass-phrase-1'); await pg.click('#submit');
       /* the Dashboard is the landing page: the default checklist (Training done too – no plan, so no rest days yet), a tick that survives a reload */
       await pg.waitForSelector('#v-dash:not([hidden]) .dcheck .dlist', { timeout: 5000 });
       expect(await pg.locator('.dcheck .dweek .dday').count() === 7, 'the checklist should show the last 7 days');
@@ -1546,7 +1588,7 @@ async function recheck(browser) {
         gp.on('pageerror', e => errs.push('invite page: ' + e.message));
         await gp.goto(link); await gp.waitForSelector('#form:not([hidden])', { timeout: 5000 });
         expect(/guest@example\.com/.test(await gp.textContent('#intro')), 'invite page should name the invited email');
-        await gp.fill('#password', 'guest-password-1'); await gp.click('#submit');
+        await gp.fill('#password', 'visitor-phrase-1'); await gp.click('#submit');
         /* the guest starts with no plan – nothing of the super admin's – and the default checklist */
         await gp.waitForSelector('#v-dash:not([hidden]) .dcheck .dlist', { timeout: 5000 });
         expect(/No meal plan yet/.test(await gp.textContent('#d-body')) && await gp.locator('.dcheck input[data-dk]:checked').count() === 0, 'a new account’s dashboard is empty');
@@ -1713,7 +1755,7 @@ async function recheck(browser) {
         await ctx.clearCookies();
         await pg.selectOption('#sn', 'skittles'); await pg.click('#snackform button');
         await pg.waitForURL(/\/login/, { timeout: 5000 });
-        await pg.fill('#email', 'smoke@example.com'); await pg.fill('#password', 'smoke-password-1'); await pg.click('#submit');
+        await pg.fill('#email', 'smoke@example.com'); await pg.fill('#password', 'tidy-pass-phrase-1'); await pg.click('#submit');
         await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
         await pg.waitForFunction(() => /Skittles/.test(document.querySelector('#offlist').textContent)
           && /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
@@ -1729,6 +1771,7 @@ async function recheck(browser) {
       expect(await pg.evaluate(() => localStorage.getItem('logbook-monster-unsaved')) === stash, 'unsaved-changes stash should survive sign-out');
       await ctx.close();
       await twoStep(browser, w, h);
+      await deleteAccount(browser, w, h);
     }
     await versionedAssets(browser);
     await recheck(browser);

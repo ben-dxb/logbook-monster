@@ -150,7 +150,7 @@ router.use(rateLimit({
 /* Carries the CSRF token: never echo request text into this answer (with proxy compression that would open it to BREACH). */
 router.get('/me', (req, res) => {
   res.json({ id: req.user.id, email: req.user.email, name: req.user.name, hasPassword: !!req.user.password_hash,
-    google: !!req.user.google_sub, totp: twostep.isOn(req.user.id), admin: defaults.isAdmin(req.user), ai: ai.status().configured, ...options(), csrf: csrfToken(req, res) });
+    google: !!req.user.google_sub, totp: twostep.isOn(req.user.id), admin: defaults.isAdmin(req.user), contact: config.contact, ai: ai.status().configured, ...options(), csrf: csrfToken(req, res) });
 });
 
 /* Each account's own meal plan (foods, day templates, week, targets), as dated changes. There are no app-wide defaults. */
@@ -225,6 +225,26 @@ router.delete('/admin/users/:id', adminOnly, fresh, (req, res) => {
     audit.log(req, 'account.removed', { email: target && target.email }, id);
     res.json(out);
     try { photos.removeFiles(files); } catch (e) { console.error('Removing the photo files of account #' + id + ' failed:', e.message); }
+  } catch (e) { fail(res, e); }
+});
+
+/* Deleting your own account (Account admin › Delete my account): password or code again, and the email typed to confirm.
+   Signs this browser out the way /auth/logout does; the photo files go after the rows. */
+router.delete('/my/account', fresh, (req, res) => {
+  const user = req.user;
+  if (!isObj(req.body) || String(req.body.email || '').trim().toLowerCase() !== String(user.email).toLowerCase()) {
+    return bad(res, 'Type your email address exactly as shown to confirm.');
+  }
+  try {
+    const files = photos.filesOf(user.id);
+    users.removeOwn(user, defaults.isAdmin);
+    audit.log(req, 'account.deleted', { email: user.email }, user.id);
+    req.session.destroy(() => {
+      res.set('Clear-Site-Data', '"cache", "storage"');
+      res.clearCookie(config.sessionCookie, { path: '/', secure: config.cookieSecure });
+      res.json({ ok: true });
+      try { photos.removeFiles(files); } catch (e) { console.error('Removing the photo files of account #' + user.id + ' failed:', e.message); }
+    });
   } catch (e) { fail(res, e); }
 });
 
