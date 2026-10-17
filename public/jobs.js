@@ -58,7 +58,7 @@ function jFinished(j){
 /* Show a finished read on its page and take it off the list. */
 async function jOpen(id){
   let full;
-  try{full=await api('GET','/api/jobs/'+id);}catch(e){if(!e.signedOut)alert('Couldn’t open it: '+e.message);return;}
+  try{full=await api('GET','/api/jobs/'+id);}catch(e){if(!e.signedOut)noteBy(null,`Couldn’t open that AI read: ${endStop(e.message)}`,()=>jOpen(id));return;}
   JOBS=JOBS.filter(j=>j.id!==id);jRender();
   if(!full||!J_KIND[full.kind]||full.status==='running'){jSeen(id);return;}
   const k=J_KIND[full.kind];
@@ -79,11 +79,13 @@ const jKeep=j=>j.expires&&/^\d{4}-\d\d-\d\d$/.test(j.expires)?` <span class="sub
 /* One compact bar at the bottom: a single note as it is; several as a count you can open into the list. The page keeps room
    for the bar (body/html .hasjobs, --jobs-h) so it never sits over the control you're on. */
 let jExpanded=false,jLast=null;
+/* a failed read: the server's reason, which often already starts "The AI couldn’t…", said once */
+const jFail=j=>j.error?`Your ${esc(jWhat(j))} wasn’t read: ${esc(endStop(j.error))}`:`The AI couldn’t read your ${esc(jWhat(j))}.`;
 const jRow=j=>j.status==='running'
   ?`<div class="job"><p><span class="jspin" aria-hidden="true">✦</span> Reading your ${esc(jWhat(j))}… <span class="sub">You can carry on.</span></p></div>`
   :j.status==='done'
   ?`<div class="job ok"><p>Your ${esc(jWhat(j))} is ready to check.${jKeep(j)}</p><span class="jacts"><button class="btn" type="button" data-job="open" data-id="${j.id}">Open</button><button class="x" type="button" data-job="drop" data-id="${j.id}" aria-label="Dismiss: ${esc(jWhat(j))}">×</button></span></div>`
-  :`<div class="job bad"><p>The AI couldn’t read your ${esc(jWhat(j))}: ${esc(j.error||'')}</p><span class="jacts"><button class="x" type="button" data-job="drop" data-id="${j.id}" aria-label="Dismiss: ${esc(jWhat(j))}">×</button></span></div>`;
+  :`<div class="job bad"><p>${jFail(j)}</p><span class="jacts"><button class="x" type="button" data-job="drop" data-id="${j.id}" aria-label="Dismiss: ${esc(jWhat(j))}">×</button></span></div>`;
 function jRender(){
   const box=$('#jobs');if(!box)return;
   const n=JOBS.length;
