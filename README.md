@@ -185,6 +185,14 @@ also download their own data from the account menu.
   are checked.
 - Strict Content-Security-Policy (no inline scripts), plus the usual Helmet headers.
 - All data is scoped to the signed-in user; input is validated on the server.
+- Storage caps per account, so one account (or a stolen session) can't fill the disk: anything stored under a
+  date (days, weights, checklist ticks, supplement log, gym sets, photos, plan changes) must be a real date from
+  2000-01-01 to a year after today (`server/dates.js`); saved days up to 50 MB of JSON in all, the plan history up
+  to 100 changes and 10 MB, photos up to 3000 and 5 GB including thumbnails (a full one answers 413); food and
+  supplement libraries 500 and 300 entries. Saves (any POST/PUT/DELETE under `/api`) are limited to 1000 per
+  10 minutes per account – the tracker autosaves a changed day once you pause, far below that – photo uploads to
+  6000 an hour, and the data export to 10 an hour; the export is written a section at a time, so a large account
+  doesn't hold up everyone else. The disk itself still needs an alert and log rotation on the server.
 - Invite links carry a random token (only its SHA-256 is stored), run out after 7 days and are
   void once used or replaced. The SMTP password is kept on the server and never sent back.
 - Coach links carry a random 256-bit secret (only its SHA-256 is stored, so the link is shown once),

@@ -8,6 +8,7 @@
      set is logged, so nobody has to tick what the app already knows. */
 const express = require('express');
 const db = require('./db');
+const { isDate, writeError } = require('./dates');
 
 const DEFAULTS = [
   { id: 'weigh', label: 'Weigh in', show: 'all', auto: 'weight' },
@@ -22,8 +23,6 @@ const AUTOS = ['', 'weight', 'supps', 'gym'];
 const MAX_ITEMS = 20;
 const ID_RE = /^[a-z][a-z0-9_]{0,15}$/;
 const SHOW_RE = /^(all|training|tpl:[A-Za-z][A-Za-z0-9_]{0,15})$/;
-const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
-const isDate = s => typeof s === 'string' && DATE_RE.test(s) && !isNaN(Date.parse(s + 'T00:00:00Z'));
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 const fail = msg => Object.assign(new Error(msg), { status: 400 });
 
@@ -93,7 +92,8 @@ router.get('/days', send(req => {
 /* PUT /days/2026-10-16 {item, done} ticks or unticks one item; only items on your list can be ticked. */
 router.put('/days/:date', send(req => {
   const date = req.params.date, b = isObj(req.body) ? req.body : {};
-  if (!isDate(date)) throw fail('Bad date');
+  const bad = writeError(date);
+  if (bad) throw fail(bad);
   const item = String(b.item || '');
   if (b.done) {
     if (!itemsOf(req.user).some(i => i.id === item)) throw fail('That isn’t on your checklist');

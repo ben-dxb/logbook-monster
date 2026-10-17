@@ -4,6 +4,7 @@
    Workout plans can be read from a PDF or photo with AI, checked in the browser, then imported. */
 const express = require('express');
 const db = require('./db');
+const { isDate, writeError } = require('./dates');
 const ai = require('./ai');
 const jobs = require('./jobs');
 
@@ -82,7 +83,8 @@ function cleanSet(b, user) {
   if (!Number.isInteger(reps) || reps < 0 || reps > 1000) throw fail('Reps must be a whole number from 0 to 1000');
   if (!Number.isFinite(kg) || kg < -500 || kg > 2000) throw fail('Weight must be between -500 and 2000 kg');
   const m = AT_RE.exec(String(b.at || ''));
-  if (!m || isNaN(Date.parse(m[1] + 'T00:00:00Z'))) throw fail('Date and time look wrong');
+  if (!m || !isDate(m[1])) throw fail('Date and time look wrong');
+  if (writeError(m[1])) throw fail(writeError(m[1]));
   const at = m[5] ? b.at : b.at + ':00';
   return { e, reps, kg: Math.round(kg * 100) / 100, note: text(b.note, 300, 'Note'), at };
 }
@@ -270,7 +272,7 @@ router.put('/order', send(req => {
 router.get('/sets', send(req => {
   if (req.query.exercise !== undefined) return q.setsFor.all(req.user.id, idOf(req.query.exercise));
   const d = String(req.query.date || '');
-  if (!AT_RE.test(d + 'T00:00')) throw fail('Give an exercise or a date');
+  if (!isDate(d)) throw fail('Give an exercise or a date');
   const next = new Date(Date.parse(d + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10);
   return q.setsOn.all(req.user.id, d, next);
 }));

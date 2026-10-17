@@ -270,4 +270,11 @@ db.exec(`CREATE TABLE IF NOT EXISTS login_failures (
 );
 CREATE INDEX IF NOT EXISTS login_failures_email ON login_failures(email, at);`);
 
+/* Added later, for the per-account storage caps: the size of each day's JSON is indexed so the total is cheap to add up,
+   and a photo's thumbnail size is kept beside the photo's (older thumbnails count as 0). */
+db.exec('CREATE INDEX IF NOT EXISTS days_size ON days(user_id, length(data))');
+if (!db.prepare('PRAGMA table_info(photos)').all().some(c => c.name === 'thumb_size')) {
+  db.exec('ALTER TABLE photos ADD COLUMN thumb_size INTEGER NOT NULL DEFAULT 0');
+}
+
 module.exports = db;

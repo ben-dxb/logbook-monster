@@ -199,6 +199,7 @@ function adTotals(){
 }
 function adStatus(){
   const d=adDirty(), fe=$('#ad-from');
+  fe.min='2000-01-01';fe.max=lastDate();
   if(document.activeElement!==fe)fe.value=adFrom;
   const later=(DEFS.myVersions||[]).filter(v=>v.from&&v.from>(adFrom||'')&&v!==adVer).map(v=>fmtShort(v.from));
   $('#ad-fromhint').textContent=(adFrom?`Your days from ${fmtShort(adFrom)} start from this plan; earlier days keep the plan they had.`:'Every day starts from this plan, back to the start.')

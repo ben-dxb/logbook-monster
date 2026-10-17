@@ -11,6 +11,8 @@ const express = require('express');
 const db = require('./db');
 const config = require('./config');
 const ai = require('./ai');
+const rateLimit = require('express-rate-limit');
+const { isDate, writeError } = require('./dates');
 
 fs.mkdirSync(config.photoDir, { recursive: true });
 
@@ -18,29 +20,37 @@ const COLS = 'id, date, pose, style, pose_ai, note, size, created_at AS created,
 const q = {
   list: db.prepare(`SELECT ${COLS} FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date DESC, id DESC`),
   get: db.prepare(`SELECT ${COLS} FROM photos WHERE user_id = ? AND id = ?`),
-  files: db.prepare('SELECT file, type, thumb FROM photos WHERE user_id = ? AND id = ?'),
+  files: db.prepare('SELECT file, type, thumb, thumb_size FROM photos WHERE user_id = ? AND id = ?'),
   /* through a coach link: only a photo some Timeline day card shows – the latest (highest id) of its pose on its date */
   shown: db.prepare(`SELECT file, type, thumb FROM photos p WHERE user_id = ? AND id = ?
     AND NOT EXISTS (SELECT 1 FROM photos o WHERE o.user_id = p.user_id AND o.pose = p.pose AND o.date = p.date AND o.id > p.id)`),
   allFiles: db.prepare('SELECT file, thumb FROM photos WHERE user_id = ?'),
   count: db.prepare('SELECT COUNT(*) AS n FROM photos WHERE user_id = ?'),
+  bytes: db.prepare('SELECT COALESCE(SUM(size + thumb_size), 0) AS n FROM photos WHERE user_id = ?'),
   add: db.prepare('INSERT INTO photos (user_id, date, pose, style, pose_ai, note, file, type, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
   put: db.prepare('UPDATE photos SET date = ?, pose = ?, style = ?, pose_ai = ?, note = ? WHERE user_id = ? AND id = ?'),
-  thumb: db.prepare('UPDATE photos SET thumb = ? WHERE user_id = ? AND id = ?'),
+  thumb: db.prepare('UPDATE photos SET thumb = ?, thumb_size = ? WHERE user_id = ? AND id = ?'),
   del: db.prepare('DELETE FROM photos WHERE user_id = ? AND id = ?'),
   delRange: db.prepare('DELETE FROM photos WHERE user_id = ? AND date BETWEEN ? AND ? RETURNING file, thumb'),
   all: db.prepare('SELECT id, date, pose, style, pose_ai, note, size, created_at AS created FROM photos WHERE user_id = ? ORDER BY date, id'),
 };
 
 const MAX_PHOTOS = 3000, MAX_BYTES = 10 * 1024 * 1024, MAX_THUMB = 512 * 1024;
+/* all of an account's photo files together, thumbnails included */
+const MAX_TOTAL = config.quota.photos;
+const GB = n => `${Math.round(n / 1073741824 * 10) / 10} GB`;
+const full = () => fail(`Your photos have reached the ${GB(MAX_TOTAL)} an account can keep – delete some first`, 413);
+/* uploads (a photo and its thumbnail are two) per account an hour: a bulk upload of the most photos an account keeps fits */
+const uploadLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, limit: MAX_PHOTOS * 2, standardHeaders: 'draft-7', legacyHeaders: false,
+  keyGenerator: req => 'u' + req.user.id, message: { error: 'That’s a lot of photo uploads this hour – wait a while and try again.' },
+});
 /* left / right: that side of the body toward the camera. 'side' (either) is from before photos had left and right,
    kept for those – POSES is what a photo may have, PICK what the app offers. */
 const POSES = ['front', 'left', 'right', 'side', 'back', 'other'];
 const PICK = POSES.filter(p => p !== 'side');
 /* the pose type; '' when not set */
 const STYLES = ['relaxed', 'front_relaxed', 'back_relaxed', 'front_double_biceps', 'back_double_biceps', 'most_muscular'];
-const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
-const isDate = s => typeof s === 'string' && DATE_RE.test(s) && new Date(s + 'T00:00:00Z').toISOString().startsWith(s);
 const fail = (msg, status = 400) => Object.assign(new Error(msg), { status });
 const idOf = v => (/^\d{1,12}$/.test(String(v)) ? +v : 0);
 
@@ -104,7 +114,8 @@ const EXT = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' }
 
 function meta(b) {
   const o = b || {};
-  if (!isDate(o.date)) throw fail('Pick the date the photo was taken');
+  const bad = writeError(o.date, 'Pick the date the photo was taken');
+  if (bad) throw fail(bad);
   const pose = o.pose == null || o.pose === '' ? 'other' : o.pose;
   if (!POSES.includes(pose)) throw fail(`Pick a pose: ${POSES.join(', ')}`);
   const style = o.style == null ? '' : o.style;
@@ -131,14 +142,15 @@ router.get('/', (req, res) => {
 
 /* POST /api/photos?date=…&pose=…&style=…&note=… with the image itself as the body; ai=1 when the AI is to pick the pose
    (the pose sent is a stand-in until it does, and counts as not set by hand) */
-router.post('/', rawImage(MAX_BYTES), (req, res) => {
+router.post('/', uploadLimit, rawImage(MAX_BYTES), async (req, res) => {
   try {
     const m = meta(req.query);
     const type = sniff(req.body);
     if (!type) throw fail('That isn’t a JPEG, PNG or WebP picture');
     if (q.count.get(req.user.id).n >= MAX_PHOTOS) throw fail(`You have the most photos an account can keep (${MAX_PHOTOS})`);
     const file = newName(EXT[type]), bytes = clean(req.body, type);
-    fs.writeFileSync(fileAt(file), bytes, { flag: 'wx' });
+    if (q.bytes.get(req.user.id).n + bytes.length > MAX_TOTAL) throw full();
+    await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx' });
     try {
       const { lastInsertRowid } = q.add.run(req.user.id, m.date, m.pose, m.style, req.query.ai === '1' ? 1 : 0, m.note, file, type, bytes.length);
       res.json(view(q.get.get(req.user.id, Number(lastInsertRowid))));
@@ -147,14 +159,15 @@ router.post('/', rawImage(MAX_BYTES), (req, res) => {
 });
 
 /* the small version for the catalog, made in the browser; a JPEG */
-router.put('/:id/thumb', rawImage(MAX_THUMB), (req, res) => {
+router.put('/:id/thumb', uploadLimit, rawImage(MAX_THUMB), async (req, res) => {
   try {
     const id = idOf(req.params.id), row = q.files.get(req.user.id, id);
     if (!row) throw fail('No such photo', 404);
     if (sniff(req.body) !== 'image/jpeg') throw fail('The thumbnail must be a JPEG');
-    const file = newName('.jpg');
-    fs.writeFileSync(fileAt(file), cleanJpeg(req.body), { flag: 'wx' });
-    q.thumb.run(file, req.user.id, id);
+    const file = newName('.jpg'), bytes = cleanJpeg(req.body);
+    if (q.bytes.get(req.user.id).n - row.thumb_size + bytes.length > MAX_TOTAL) throw full();
+    await fs.promises.writeFile(fileAt(file), bytes, { flag: 'wx' });
+    if (!q.thumb.run(file, bytes.length, req.user.id, id).changes) { unlink(file); throw fail('No such photo', 404); }   /* deleted meanwhile */
     unlink(row.thumb);
     res.json(view(q.get.get(req.user.id, id)));
   } catch (e) { send(res, e); }
