@@ -275,6 +275,7 @@ const FRESH = 10 * 60 * 1000;
 router.post('/password', csrfProtect, requireAuth, limiter, async (req, res) => {
   const { current, next, endLinks } = req.body || {};
   if (req.user.password_hash) {
+    if (current === undefined || current === null || current === '') return res.status(400).json({ error: 'Enter your current password.' });
     if (!(await verifyPassword(String(current || ''), req.user.password_hash))) {
       return res.status(400).json({ error: 'Current password is wrong.' });
     }

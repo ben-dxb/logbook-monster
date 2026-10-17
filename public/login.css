@@ -9,8 +9,8 @@ form{display:flex;flex-direction:column;gap:10px}
 .google{display:flex;align-items:center;justify-content:center;gap:10px;border:1px solid var(--line);border-radius:8px;padding:9px 12px;
   text-decoration:none;color:var(--ink);font-weight:700;background:var(--surface)}
 .google:hover{background:var(--soft)}
-.or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px}
+.or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:var(--fs-xs)}
 .or::before,.or::after{content:"";flex:1;border-top:1px solid var(--line)}
 .switch{margin:0;text-align:center;font-size:14px}
 .link{border:0;background:none;color:var(--info);padding:0;text-decoration:underline}
-.hint{margin:0;color:var(--muted);font-size:13px}
+.hint{margin:0;color:var(--muted);font-size:var(--fs-s)}

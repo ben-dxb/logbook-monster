@@ -1,6 +1,6 @@
 'use strict';
 /* Browser smoke test: starts a throwaway server, signs in, weighs a meal-prep pack, edits and saves a day, logs a weight,
-   opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, checks that pages load only versioned scripts and styles and that the Dashboard and Timeline keep what they read until a write, shares a read-only coach link and opens it signed out, sets up two-step sign-in and signs in with a code and a recovery code, confirms a sensitive admin change on an old sign-in, uploads a plan and adds a day template on Account admin, sets up AI models and invites someone on the Super admin tabs, builds a plan from nothing as the new account, switches a day to another template, edits one day in two tabs, at desktop and phone widths. Fails on any page error.
+   opens History and Weight, logs gym sets, adds a shared food to the library, filters it by food group and adds one to a day, logs supplements, uploads, filters and compares progress photos, charts trends and opens day cards on the Timeline, checks that pages load only versioned scripts and styles and that the Dashboard and Timeline keep what they read until a write, shares a read-only coach link and opens it signed out, sets up two-step sign-in and signs in with a code and a recovery code, confirms a sensitive admin change on an old sign-in, uploads a plan and adds a day template on Account admin, sets up AI models and invites someone on the Super admin tabs, builds a plan from nothing as the new account, switches a day to another template, edits one day in two tabs, at desktop and phone widths, and checks the shared form pieces (errors at the field, Show password, the confirm dialog, touch sizes). Fails on any page error.
    Needs Playwright and its Chromium (README, Run it locally); without them it fails, so `npm run check` never passes untested. */
 const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -54,6 +54,21 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
 const signIn = async p => { await p.fill('#email', 'smoke@example.com'); await p.fill('#password', 'smoke-password-1'); await p.click('#submit'); };
 /* the photo list as the Dashboard asks for it (?latest=1…) or as the photos page does – not a photo's own file or thumb */
 const PHOTO_LIST = /\/api\/photos(\?[^/]*)?$/;
+/* the app's own confirm dialog (forms.js ask()): wait for it, read it, press the yes or the no button */
+const answer = async (p, yes) => {
+  await p.waitForSelector('#ask[open]', { timeout: 5000 }); const t = await p.textContent('#ask-t');
+  /* closed – or already asking the next thing (a second ask opens in the same tick) */
+  await p.click(yes ? '#ask-yes' : '#ask-no'); await p.waitForFunction(t => !document.querySelector('#ask').open || document.querySelector('#ask-t').textContent !== t, t); return t;
+};
+/* a page that says yes to every ask() by itself, as `p.on('dialog', d => d.accept())` does for alerts */
+const autoYes = async p => {
+  const f = () => new MutationObserver(() => { const d = document.getElementById('ask');
+    if (d && d.open && !d.dataset.auto) { d.dataset.auto = '1'; setTimeout(() => { delete d.dataset.auto; document.getElementById('ask-yes').click(); }, 0); } })
+    .observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['open'] });
+  await p.addInitScript(f); await p.evaluate(f).catch(() => {});
+};
+/* once() keeps a form's second click within 400 ms as the same tap: a test that sends the same form again waits that out */
+const tapGap = p => p.waitForTimeout(450);
 const until = async (fn, ms = 5000) => { for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 100))) if (await fn()) return true; return !!(await fn()); };
 
 /* Logged food is never lost: Timeline controls and the protein buttons on Account admin leave an unloaded day alone, changes kept
@@ -118,7 +133,7 @@ async function trackerKeepsFood(browser, pg, ctx) {
   await pg.evaluate(() => localStorage.removeItem('logbook-monster-unsaved:' + (UID + 1000)));
   /* a tab left open past midnight: the Timeline's Today, a plan change and the Daily Tracker use the new date */
   const c3 = await browser.newContext({ viewport: { width: 1100, height: 900 } }), p3 = await c3.newPage();
-  p3.on('pageerror', e => errs.push(e.message)); p3.on('dialog', d => d.accept());
+  p3.on('pageerror', e => errs.push(e.message)); p3.on('dialog', d => d.accept()); await autoYes(p3);
   const eve = new Date(); eve.setDate(eve.getDate() + 30); eve.setHours(23, 58, 0, 0);
   const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const day1 = ymd(eve), day2 = ymd(new Date(eve.getFullYear(), eve.getMonth(), eve.getDate() + 1));
@@ -180,8 +195,12 @@ async function twoStep(browser, w, h) {
   await overflow('with the two-step set-up open');
   const code = n => totp.totp(totp.fromBase32(secret), Date.now() + n * 30000);
   await pg.fill('#tf-code', '000000' === code(0) ? '111111' : '000000'); await pg.click('#tfbody [data-tf=on] button');
-  await pg.waitForFunction(() => /didn’t match/.test(document.querySelector('#tfmsg').textContent), null, { timeout: 5000 });
-  await pg.fill('#tf-code', code(0)); await pg.click('#tfbody [data-tf=on] button');
+  /* a wrong code is said at the box (aria-invalid, its message as the description) and goes once the box is changed */
+  await pg.waitForFunction(() => { const i = document.querySelector('#tf-code'), m = i && document.getElementById((i.getAttribute('aria-describedby') || '').split(' ')[0]);
+    return i.getAttribute('aria-invalid') === 'true' && m && /didn’t match/.test(m.textContent); }, null, { timeout: 5000 });
+  await tapGap(pg); await pg.fill('#tf-code', code(0));
+  expect(await pg.getAttribute('#tf-code', 'aria-invalid') === null, 'the code’s error should go once it is changed');
+  await pg.click('#tfbody [data-tf=on] button');
   await pg.waitForFunction(() => document.querySelectorAll('#tf-codes li').length === 10, null, { timeout: 5000 });
   const recovery = await pg.textContent('#tf-codes li >> nth=0');
   await overflow('with the recovery codes shown');
@@ -193,8 +212,12 @@ async function twoStep(browser, w, h) {
   expect(await pg.isHidden('#form'), 'the password form should give way to the code');
   expect((await pg.evaluate(async () => (await fetch('/api/me')).status)) === 401, 'half signed in reaches no /api route');
   await overflow('on the code step');
+  expect(await pg.getAttribute('#code', 'inputmode') === 'numeric', 'the code box should ask for the number keypad');
+  await pg.click('#userec');
+  expect(await pg.getAttribute('#code', 'inputmode') === 'text' && await pg.getAttribute('#userec', 'aria-pressed') === 'true', '"Use a recovery code" should let letters in');
+  await pg.click('#userec');
   await pg.fill('#code', '12345'); await pg.click('#codebtn');
-  await pg.waitForFunction(() => !document.querySelector('#err').hidden, null, { timeout: 5000 });
+  await pg.waitForSelector('#code[aria-invalid=true]', { timeout: 5000 });
   await pg.fill('#code', code(1)); await pg.click('#codebtn');
   await pg.waitForSelector('#v-dash:not([hidden])');
   await pg.click('#acct>summary'); await pg.click('#logout'); await pg.waitForURL(/\/login/);
@@ -274,7 +297,7 @@ async function phase1c(browser) {
    deleted from History. */
 async function phase2c(browser) {
   const ctx = await browser.newContext({ viewport: { width: 1100, height: 900 } }), pg = await ctx.newPage(), errs = [];
-  pg.on('pageerror', e => errs.push(e.message)); pg.on('dialog', d => d.accept());
+  pg.on('pageerror', e => errs.push(e.message)); pg.on('dialog', d => d.accept()); await autoYes(pg);
   await pg.goto(BASE + '/login'); await signIn(pg); await pg.waitForSelector('#v-dash:not([hidden])');
   /* REG-1: a date past the window keeps the box as typed, says why and can't be saved; clearing it means from the start */
   await pg.evaluate(() => { location.hash = '#account'; }); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
@@ -345,7 +368,7 @@ async function phase2c(browser) {
   await c2.close();
   /* NEW-03: a Daily Tracker left on Today past midnight moves on at the next tap, so food goes to the new day */
   const c3 = await browser.newContext({ viewport: { width: 1100, height: 900 } }), p3 = await c3.newPage();
-  p3.on('pageerror', e => errs.push(e.message)); p3.on('dialog', d => d.accept());
+  p3.on('pageerror', e => errs.push(e.message)); p3.on('dialog', d => d.accept()); await autoYes(p3);
   const eve = new Date(); eve.setDate(eve.getDate() + 20); eve.setHours(23, 57, 0, 0);
   const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const day1 = ymd(eve), day2 = ymd(new Date(eve.getFullYear(), eve.getMonth(), eve.getDate() + 1));
@@ -582,11 +605,61 @@ async function recheck(browser) {
   const change = pg.evaluate(() => api('PUT', '/api/admin/email', { from: '', fromName: '', host: '', port: '', secure: null, user: '', pass: '' }).then(() => 'ok', e => e.message));
   await pg.waitForSelector('#recheck[open] #rc-in');
   const x = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth); expect(x <= 1, `horizontal overflow of ${x}px with the re-check open`);
+  expect(await pg.locator('#recheck .pwshow[aria-controls=rc-in]').count() === 1, 'the password box should have a Show button');
   await pg.fill('#rc-in', 'wrong-password-9'); await pg.click('#rc-form button[type=submit]');
-  await pg.waitForFunction(() => /didn’t work/.test(document.querySelector('#rc-msg').textContent), null, { timeout: 5000 });
-  await pg.fill('#rc-in', 'smoke-password-1'); await pg.click('#rc-form button[type=submit]');
+  await pg.waitForFunction(() => /didn’t work/.test(document.querySelector('#rc-form').textContent) && document.querySelector('#rc-in').getAttribute('aria-invalid') === 'true', null, { timeout: 5000 });
+  await tapGap(pg); await pg.fill('#rc-in', 'smoke-password-1'); await pg.click('#rc-form button[type=submit]');
   expect(await change === 'ok', 'the change should go through after the password: ' + await change);
   expect(!(await pg.evaluate(() => document.querySelector('#recheck').open)), 'the dialog should close');
+  expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
+  await ctx.close();
+}
+
+/* Phase 5 form kit (public/forms.js): errors said at the field and gone once it's fixed, a Show button on password boxes, a weight
+   out of range kept as typed with its message at the box, the calendar a real table, and finger-sized controls on a touch phone. */
+async function formKit(browser) {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }), pg = await ctx.newPage(), errs = [];
+  pg.on('pageerror', e => errs.push(e.message));
+  await pg.goto(BASE + '/login');
+  await pg.fill('#email', 'a'); await pg.click('#submit');
+  expect(await pg.getAttribute('#email', 'aria-invalid') === 'true' && await pg.getAttribute('#password', 'aria-invalid') === 'true'
+    && await pg.evaluate(() => document.activeElement.id === 'email'), 'a bad email and no password should be marked at each field, the first focused');
+  const why = await pg.evaluate(() => document.getElementById(document.querySelector('#email').getAttribute('aria-describedby').split(' ')[0]).textContent);
+  expect(/name@example\.com/.test(why) && await pg.isHidden('#err'), 'the email’s message should be its description, not a form-level line: ' + why);
+  await pg.fill('#email', 'smoke@example.com');
+  expect(await pg.getAttribute('#email', 'aria-invalid') === null && await pg.getAttribute('#password', 'aria-invalid') === 'true', 'fixing the email should clear only its error');
+  const show = pg.locator('.pwshow[aria-controls=password]');
+  expect(await show.getAttribute('aria-pressed') === 'false', 'the password box should have a Show button');
+  await pg.fill('#password', 'smoke-password-1'); await show.click();
+  expect(await pg.getAttribute('#password', 'type') === 'text' && await show.getAttribute('aria-pressed') === 'true', 'Show should show the password');
+  expect(await pg.evaluate(() => getComputedStyle(document.querySelector('#password')).fontSize) === '16px', 'fields should be 16px on a phone (no zoom on focus)');
+  await pg.click('#submit'); await pg.waitForSelector('#v-dash:not([hidden])');
+  const day = later(40);
+  await pg.goto(BASE + '/#day/' + day); await pg.waitForFunction(d => document.querySelector('#datepick').value === d && document.querySelector('#meals .meal'), day);
+  await pg.fill('#wt', '500'); await pg.press('#wt', 'Tab');
+  await pg.waitForSelector('#wt[aria-invalid=true]', { timeout: 5000 });
+  await pg.waitForTimeout(4300);   /* the old note went after 4 s */
+  expect(await pg.inputValue('#wt') === '500' && /from 20 to 400 kg/.test(await pg.textContent('.wt')), 'a weight out of range should stay as typed with its message at the box');
+  expect(await pg.evaluate(d => api('GET', '/api/weights').then(l => !l.some(w => w.date === d)), day), 'an out-of-range weight must not be saved');
+  await pg.fill('#wt', '81.2'); await pg.press('#wt', 'Tab');
+  await pg.waitForFunction(d => !document.querySelector('#wt').hasAttribute('aria-invalid') && WEIGHTS[d] === 81.2, day, { timeout: 5000 });
+  const x = await pg.locator('#meals .row .x >> nth=0').boundingBox();
+  expect(x.width >= 44 && x.height >= 44, `the remove × should be 44px on a touch screen, is ${x.width}×${x.height}`);
+  expect(await pg.textContent('#snackform button[type=submit]') === 'Add snack' && await pg.textContent('#offform button[type=submit]') === 'Add item', 'Add buttons should say what they add');
+  await pg.goto(BASE + '/#history'); await pg.waitForSelector('#cal table th');
+  expect(await pg.locator('#cal thead th').count() === 7 && await pg.locator('#cal tbody td button[data-act=open]').count() >= 28, 'the calendar should be a table of weeks');
+  const scroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(scroll <= 1, `horizontal overflow of ${scroll}px on the calendar`);
+  await pg.evaluate(d => api('DELETE', '/api/weights/' + d), day);
+  /* a field the browser itself checks (required) says so under it, not in the browser's bubble, and nothing is sent */
+  await pg.goto(BASE + '/#supps/' + day); await pg.waitForSelector('#s-form');
+  let posted = 0; const onPost = r => { if (r.method() === 'POST' && /\/api\/supps\/log/.test(r.url())) posted++; }; pg.on('request', onPost);
+  await pg.fill('#s-desc', 'Smoke magnesium'); await pg.fill('#s-amt', ''); await pg.click('#s-form button[type=submit]');
+  await pg.waitForSelector('#s-amt[aria-invalid=true]', { timeout: 5000 });
+  expect(posted === 0 && await pg.evaluate(() => document.activeElement.id === 's-amt'), 'an empty required amount should be marked and focused, nothing sent');
+  await pg.fill('#s-amt', '200');
+  expect(await pg.getAttribute('#s-amt', 'aria-invalid') === null, 'filling it in should clear the error');
+  pg.off('request', onPost);
   expect(errs.length === 0, 'page errors: ' + errs.join(' | '));
   await ctx.close();
 }
@@ -715,9 +788,15 @@ async function recheck(browser) {
         await pg.waitForFunction(() => /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
         expect(await amts() === eatenAmts, 'rebalancing the day should not move an eaten meal');
         await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal.eaten');
-        pg.once('dialog', d => d.dismiss()); await pg.click(`${m2} >> [data-act=uneat]`);
-        expect(await pg.locator('#meals .meal.eaten').count() === 1, 'cancelling the confirmation should keep the meal eaten');
-        pg.once('dialog', d => d.accept()); await pg.click(`${m2} >> [data-act=uneat]`);
+        await pg.click(`${m2} >> [data-act=uneat]`);
+        expect(await pg.evaluate(() => document.activeElement.id === 'ask-yes' && document.querySelector('#ask-yes').textContent === 'Undo eaten'
+          && document.querySelector('#ask').getAttribute('aria-describedby') === 'ask-t'), 'the confirm should take focus and name its buttons');
+        await pg.keyboard.press('Tab'); await pg.keyboard.press('Tab');
+        expect(await pg.evaluate(() => document.activeElement.id === 'ask-yes'), 'Tab should stay inside the confirm');
+        await pg.keyboard.press('Escape'); await pg.waitForFunction(() => !document.querySelector('#ask').open);
+        expect(await pg.locator('#meals .meal.eaten').count() === 1 && await pg.evaluate(() => document.activeElement.dataset.act === 'uneat'),
+          'Escape should keep the meal eaten and give focus back to Undo eaten');
+        await pg.click(`${m2} >> [data-act=uneat]`); await answer(pg, true);
         await pg.waitForFunction(() => !document.querySelector('#meals .meal.eaten') && /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
         await pg.click('#coach');
         await pg.waitForFunction(() => /Saved/.test(document.querySelector('#status').textContent), null, { timeout: 5000 });
@@ -1070,19 +1149,19 @@ async function recheck(browser) {
           const ph = await pg.evaluate(id => PHOTOS.find(x => x.id === id), id);
           await r.fulfill({ json: { pose: ph.pose, model: 'test/vision', photo: { ...ph, poseAi: true } } });
         });
-        const asked = [], answer = d => { asked.push(d.message()); return asked.length === 1 ? d.dismiss() : d.accept(); };
-        pg.on('dialog', answer); await pg.click('#p-aibtn');
+        const asked = [];
+        await pg.click('#p-aibtn'); asked.push(await answer(pg, false)); asked.push(await answer(pg, true));
         await pg.waitForFunction(() => /The AI looked at \d+ photo/.test(document.querySelector('#p-list').textContent), null, { timeout: 5000 });
-        pg.off('dialog', answer);
         expect(/1 of the \d+ photos shown has a pose you set yourself/.test(asked[0]), `"Tag poses with AI" should ask about the one pose set by hand, asked: ${asked[0]}`);
         /* "Tag only untagged" leaves out every photo that has a pose already – here the one set by hand – and doesn't ask about it */
         const untagged = await pg.evaluate(() => PHOTOS.filter(p => pShown().includes(p) && (p.poseAi && p.pose === 'other' && !p.style || p.pose === 'side')).map(p => p.id));
         const sent = [], seen = r => { const m = r.url().match(/photos\/(\d+)\/ai-pose/); if (m) sent.push(+m[1]); };
-        const asked2 = [], ok = d => { asked2.push(d.message()); return d.accept(); };
+        const asked2 = [];
         await pg.evaluate(() => { document.querySelector('#p-list .fmsg')?.remove(); });
-        pg.on('request', seen); pg.on('dialog', ok); await pg.click('#p-aiuntag');
+        pg.on('request', seen); await pg.click('#p-aiuntag'); asked2.push(await answer(pg, true));
         await pg.waitForFunction(() => /The AI looked at \d+ photo/.test(document.querySelector('#p-list').textContent), null, { timeout: 5000 });
-        pg.off('dialog', ok); pg.off('request', seen);
+        if (await pg.evaluate(() => document.querySelector('#ask').open)) asked2.push(await answer(pg, false));
+        pg.off('request', seen);
         expect(untagged.length > 0 && asked2.length === 1 && new RegExp(`these ${untagged.length} photos|this photo`).test(asked2[0]), `"Tag only untagged" should ask once about the ${untagged.length} untagged photos, asked: ${asked2.join(' | ')}`);
         expect(sent.sort().join() === untagged.sort().join(), `"Tag only untagged" should send only the untagged photos: sent ${sent}, untagged ${untagged}`);
       }
@@ -1192,7 +1271,7 @@ async function recheck(browser) {
       const coachScroll = await cp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(coachScroll <= 1, `horizontal overflow of ${coachScroll}px on the coach page at ${w}px wide`);
       await cp.keyboard.press('Escape');
-      pg.once('dialog', d => d.accept()); await pg.click('#ad-shares [data-sh=off]');
+      await pg.click('#ad-shares [data-sh=off]'); await answer(pg, true);
       await pg.waitForFunction(() => !document.querySelector('#ad-shares [data-sh=off]'), null, { timeout: 5000 });
       coachOff = true; await cp.reload(); await cp.waitForSelector('#c-gone:not([hidden])', { timeout: 5000 });
       await cctx.close();
@@ -1260,9 +1339,14 @@ async function recheck(browser) {
         await pg.click('.adfood[data-id=banana] summary');
         await pg.fill('#ad-fd-banana-min', '300'); await pg.fill('#ad-fd-banana-max', '100'); await pg.fill('#ad-fd-banana-d', '50');
         await pg.click('#ad-save');
-        await pg.waitForFunction(() => /min serving \(300\) is more than the max serving \(100\)/.test(document.querySelector('#ad-upmsg').textContent)
-          && /direct protein \(50\) is more than its protein/.test(document.querySelector('#ad-upmsg').textContent), null, { timeout: 5000 });
+        /* said next to Save and at each field, the first focused; fixing one takes its message away */
+        await pg.waitForFunction(() => /min serving \(300\) is more than the max serving \(100\)/.test(document.querySelector('#ad-saveerr').textContent)
+          && /direct protein \(50\) is more than its protein/.test(document.querySelector('#ad-saveerr').textContent), null, { timeout: 5000 });
         expect(/Unsaved/.test(await pg.textContent('#ad-status')), 'nothing should be saved with contradictory limits');
+        expect(await pg.evaluate(() => document.activeElement.id === 'ad-fd-banana-min' && document.querySelector('#ad-fd-banana-d').getAttribute('aria-invalid') === 'true'),
+          'the first bad field should have focus and each should be marked');
+        await pg.fill('#ad-fd-banana-d', '0');
+        await pg.waitForFunction(() => !document.querySelector('#ad-fd-banana-d').hasAttribute('aria-invalid') && !/direct protein/.test(document.querySelector('#ad-saveerr').textContent), null, { timeout: 5000 });
         await pg.click('#ad-discard');
         await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
         /* the plan CSV download keeps a value that starts like a formula as text */
@@ -1342,6 +1426,9 @@ async function recheck(browser) {
         pg.on('request', onReq); pg.on('dialog', onDlg); const errsAt = errs.length;
         await pg.route('**/api/admin/users/*', r => (r.request().method() === 'DELETE' ? r.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"No such account"}' }) : r.continue()));
         await pg.click('#ad-users .aduser:has-text("guest@example.com") [data-au=remove]');
+        expect(/Remove guest@example\.com/.test(await pg.textContent('#ask-h')) && await pg.textContent('#ask-yes') === 'Remove account'
+          && await pg.evaluate(() => document.activeElement.id === 'ask-no'), 'removing an account should ask with named buttons, focus on the safe one');
+        await answer(pg, true);
         for (let i = 0; i < 50 && !reloads; i++) await pg.waitForTimeout(100);
         await pg.unroute('**/api/admin/users/*'); pg.off('request', onReq); pg.off('dialog', onDlg);
         expect(reloads > 0, 'a refused Remove (404) should reload the accounts');
@@ -1405,12 +1492,12 @@ async function recheck(browser) {
         const NOPLAN = later(21);
         await gp.evaluate(() => { AD.templates = []; AD.plan = {}; AD.targets = {}; AD.foods = {}; renderAdmin(); });
         await gp.fill('#ad-from', NOPLAN); await gp.press('#ad-from', 'Tab');
-        let asked = ''; gp.once('dialog', d => { asked = d.message(); d.dismiss(); }); await gp.click('#ad-save');
+        await gp.click('#ad-save'); const asked = await answer(gp, false);
         expect(/no day templates or foods/.test(asked) && /Unsaved/.test(await gp.textContent('#ad-status')), 'saving an empty plan should ask first; No keeps it unsaved');
-        gp.once('dialog', d => d.accept()); await gp.click('#ad-save');
+        await gp.click('#ad-save'); await answer(gp, true);
         await gp.waitForFunction(() => /No plan from/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
         expect(!/Saved/.test(await gp.textContent('#ad-status')) && /No plan/.test(await gp.textContent('#ad-versions')), 'an empty plan change should say "No plan from …"');
-        gp.once('dialog', d => d.accept()); await gp.click(`[data-ad=vdel][data-from="${NOPLAN}"]`);
+        await gp.click(`[data-ad=vdel][data-from="${NOPLAN}"]`); await answer(gp, true);
         await gp.waitForFunction(d => !document.querySelector(`[data-ad=vdel][data-from="${d}"]`), NOPLAN, { timeout: 5000 });
         /* delete progress photos between two dates: only those in the range go */
         await gp.evaluate(async () => {
@@ -1419,7 +1506,7 @@ async function recheck(browser) {
         });
         await gp.fill('#ad-pd-from', '2026-03-01'); await gp.fill('#ad-pd-to', '2026-03-31');
         await gp.waitForFunction(() => /^2 photos/.test(document.querySelector('#ad-pdmsg').textContent) && !document.querySelector('#ad-pd-btn').disabled, null, { timeout: 5000 });
-        gp.once('dialog', d => d.accept()); await gp.click('#ad-pd-btn');
+        await gp.click('#ad-pd-btn'); await answer(gp, true);
         await gp.waitForFunction(() => /Deleted 2 photos/.test(document.querySelector('#ad-pdmsg').textContent), null, { timeout: 5000 });
         expect((await gp.evaluate(async () => (await api('GET', '/api/photos')).photos.map(p => p.date))).join() === '2026-05-01', 'only the photos in the range should be deleted');
         const gscroll = await gp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -1486,7 +1573,7 @@ async function recheck(browser) {
         expect(await pg.inputValue('#ad-capuser') === '100' && await pg.inputValue('#ad-capall') === '1000' && await pg.isChecked('#ad-aiprivate'), 'AI caps should show their defaults');
         for (const v of ['150', '100']) {
           await pg.evaluate(() => { document.querySelector('#ad-capmsg').textContent = ''; });
-          await pg.fill('#ad-capuser', v); await pg.click('#ad-capform button[type=submit]');
+          await tapGap(pg); await pg.fill('#ad-capuser', v); await pg.click('#ad-capform button[type=submit]');
           await pg.waitForFunction(() => /saved/.test(document.querySelector('#ad-capmsg').textContent), null, { timeout: 5000 });
         }
         expect(await pg.inputValue('#ad-capuser') === '100', 'saved cap should show');
@@ -1548,6 +1635,7 @@ async function recheck(browser) {
     await phase2c(browser);
     await phase2cLibrary(browser);
     await phase2cLast(browser);
+    await formKit(browser);
     console.log('smoke: ok (desktop + phone)');
   } catch (e) { await browser.close(); return fail(e.stack); }
   await browser.close(); cleanup();

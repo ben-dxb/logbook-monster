@@ -1,25 +1,61 @@
 :root{
   --bg:#EEF1F6; --surface:#FFFFFF; --ink:#18213A; --muted:#5B6479; --line:#D5DBE6;
   --accent:#1F2A44; --accent-ink:#FFFFFF; --soft:#E3E8F2;
-  --good:#1E7A4C; --bad:#B3261E; --info:#2B5DB8; --warnbg:#FFF4DC; --warnink:#7A4B00;
+  --good:#17663F; --good-ink:#FFFFFF; --bad:#B3261E; --info:#2B5DB8; --warnbg:#FFF4DC; --warnink:#7A4B00;
+  --field-line:#8A93A6;   /* input, select and textarea borders: 3:1 against the page and the cards (WCAG 1.4.11) */
+  --fs-xs:12px; --fs-s:14px; --fs-m:16px; --fs-l:20px; --fs-xl:24px;   /* the type scale; nothing smaller than 12px */
   --font:"Archivo",system-ui,-apple-system,"Segoe UI",sans-serif;
   color-scheme:light;
 }
 @media (prefers-color-scheme:dark){:root{
   --bg:#0F1422; --surface:#182033; --ink:#E7EBF4; --muted:#9AA4BA; --line:#2B3550;
   --accent:#9DB3E6; --accent-ink:#0F1422; --soft:#222C44;
-  --good:#5CC48E; --bad:#F08A80; --info:#8FB0F2; --warnbg:#3A2E12; --warnink:#F2D08A; color-scheme:dark}}
+  --good:#5CC48E; --good-ink:#0F1422; --bad:#F08A80; --info:#8FB0F2; --warnbg:#3A2E12; --warnink:#F2D08A; --field-line:#5D6B8C; color-scheme:dark}}
 *{box-sizing:border-box}
 html{scroll-padding-top:env(safe-area-inset-top,0px)}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.4;font-variant-numeric:tabular-nums;
   padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 [hidden]{display:none!important}
-button,select,input{font:inherit;color:inherit}
+button,select,input,textarea{font:inherit;color:inherit}
 button{cursor:pointer}
 :focus-visible{outline:2px solid var(--info);outline-offset:2px}
-.lbl{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-stretch:85%}
+.lbl{font-size:var(--fs-xs);font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-stretch:85%}
 .btn{border:0;background:var(--accent);color:var(--accent-ink);border-radius:8px;padding:6px 12px;font-weight:700}
 .btn:disabled{opacity:.6;cursor:default}
-.ghost{border:1px solid var(--line);background:transparent;border-radius:99px;padding:4px 12px;font-size:13px;color:var(--muted)}
+.ghost{border:1px solid var(--line);background:transparent;border-radius:99px;padding:4px 12px;font-size:var(--fs-s);color:var(--muted)}
+a.ghost,a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
 .f{display:flex;flex-direction:column;gap:2px;min-width:0}
-.f input{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 6px}
+.f input,.f select,.f textarea{width:100%;border:1px solid var(--field-line);background:var(--surface);border-radius:6px;padding:5px 6px}
+.f textarea{resize:vertical}
+/* every field's border at 3:1, whatever its own rule says (a borderless one stays borderless) */
+input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):not([type=color]),select,textarea{border-color:var(--field-line)}
+[aria-invalid="true"]{border-color:var(--bad)!important;box-shadow:0 0 0 1px var(--bad)}
+.btn.danger{background:var(--bad);color:var(--surface)}
+.btn[aria-busy="true"],.ghost[aria-busy="true"]{cursor:progress}
+.link{border:0;background:none;color:var(--info);padding:0;text-decoration:underline;font:inherit;cursor:pointer;text-align:left}
+/* read by screen readers, not shown */
+.vh{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
+
+/* ---------- shared form pieces (forms.js) ---------- */
+.ferr{display:block;color:var(--bad);font-size:var(--fs-xs);font-weight:700;text-transform:none;letter-spacing:0;margin-top:2px;flex-basis:100%}
+.ferr::before{content:"⚠ "}
+.ferrsum{border:1px solid var(--bad);border-left-width:4px;border-radius:8px;padding:8px 12px;background:var(--surface);color:var(--ink)}
+.ferrsum p{margin:0;font-weight:700;color:var(--bad)}
+.ferrsum ul{margin:4px 0 0;padding-left:18px}
+.pwf{display:flex;flex-wrap:wrap;align-items:flex-end;gap:2px 6px;min-width:0}
+.pwf>label{flex:1 1 auto;min-width:0}
+.pwshow{flex:none;min-height:32px;min-width:56px}
+.askd{border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);padding:16px;width:min(400px,calc(100vw - 32px))}
+.askd::backdrop{background:rgba(0,0,0,.45)}
+.askd h2{margin:0 0 6px;font-size:var(--fs-m)}
+.askd p{margin:0 0 14px;white-space:pre-line}
+.askbtns{display:flex;flex-wrap:wrap;gap:8px}
+.askbtns button{min-height:36px}
+
+/* touch: 16px fields (iOS Safari zooms into anything smaller) and finger-sized buttons */
+@media (pointer:coarse),(max-width:700px){
+  input:not([type=checkbox]):not([type=radio]),select,textarea{font-size:16px!important}
+}
+@media (pointer:coarse){
+  .btn,.ghost,.askbtns button,.pwshow{min-height:44px}
+}

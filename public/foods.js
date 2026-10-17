@@ -286,7 +286,7 @@ async function fFill(btn){
   /* blank boxes and ones AI filled before get (re)estimated together, so one source covers them all */
   for(const m of ['k','p','c','f'])body[m]=fEdit.ai&&fEdit.ai.fields.includes(m)?'':v('f-'+m).trim();
   err.hidden=true;
-  if(!body.name.trim()){err.textContent='Give the food a name first – AI works from it.';err.hidden=false;$('#f-name').focus();return;}
+  if(!body.name.trim())return fieldError($('#f-name'),'Give the food a name first – AI works from it');
   btn.disabled=true;msg.hidden=false;msg.textContent='Asking AI…';
   /* the answer is for this form and this name: dropped if the form was closed or reopened (another food, New food) or renamed meanwhile */
   const form=$('#f-form'), ed=fEdit, here=()=>form.isConnected&&fEdit===ed;
@@ -305,17 +305,24 @@ async function fSave(form){
   const v=id=>$('#'+id).value, err=$('#f-err');
   const body={name:v('f-name'),unit:v('f-unit'),kind:form.dataset.kind,k:v('f-k'),p:v('f-p'),c:v('f-c'),f:v('f-f'),recipe:v('f-recipe'),public:$('#f-public').checked,ai:fEdit&&fEdit.ai,state:v('f-state'),yield:v('f-yield'),free:v('f-free')};
   const id=form.dataset.id, btn=form.querySelector('button[type=submit]');
-  btn.disabled=true;err.hidden=true;
+  err.hidden=true;
+  if(!fieldErrors(form,[[!body.name.trim()&&$('#f-name'),'Give the food a name']]))return;
+  btn.disabled=true;
   try{
     const food=await api(id?'PUT':'POST','/api/foods'+(id?'/'+id:''),body,id&&form.dataset.ver||undefined);
     LIB=LIB.filter(x=>x.id!==food.id);LIB.push(food);fSort();
     fMsg=id?`Saved “${food.name}”.`:`Added “${food.name}” to your library.`;go('foods');
-  }catch(e){btn.disabled=false;if(!e.signedOut){err.textContent=e.message+(fAiOn&&/calories or macros/.test(e.message)?' – or tap “Fill blanks with AI”.':'');err.hidden=false;
+  }catch(e){btn.disabled=false;if(!e.signedOut){const m=e.message+(fAiOn&&/calories or macros/.test(e.message)?' – or tap “Fill blanks with AI”':'');
+    /* a refusal about one box goes to that box */
+    const at=[[/name/i,'f-name'],[/^calories|calories or macros/i,'f-k'],[/^protein/i,'f-p'],[/^carb/i,'f-c'],[/^fat/i,'f-f'],[/cooked weight/i,'f-yield'],[/recipe/i,'f-recipe']].find(([re])=>re.test(e.message));
+    if(at&&$('#'+at[1])&&!$('#'+at[1]).closest('[hidden]'))fieldError($('#'+at[1]),m);else{err.textContent=endStop(m);err.hidden=false;}
     if(e.conflict||/No such/.test(e.message))fFetch().catch(()=>{});}}   /* changed or gone elsewhere: the list shows it as it is now */
 }
 async function fDelete(id){
   const f=fById(id);if(!f)return;
-  if(!confirm(f.mine?`Delete “${f.name}” from your library? Days you've already added it to keep it.`:`Delete “${f.name}”${f.by?' (shared by '+f.by+')':''} from the library for everyone?`))return;
+  if(!await ask(f.mine?`Delete “${f.name}” from your library? Days you've already added it to keep it.`:`Delete “${f.name}”${f.by?' (shared by '+f.by+')':''} from the library for everyone?`,
+    {yes:f.mine?'Delete food':'Delete for everyone',no:'Keep it',danger:true}))return;
+  if(!fById(id))return;
   try{await api('DELETE','/api/foods/'+id);}catch(e){if(!e.signedOut)alert(e.message);return;}
   LIB=LIB.filter(x=>x.id!==id);libRegister();fMsg=`Deleted “${f.name}”.`;
   if(location.hash==='#foods')renderFoodList();else go('foods');
@@ -373,7 +380,7 @@ document.addEventListener('submit',async e=>{
   else if(e.target.id==='f-addform'){
     e.preventDefault();const f=fShown(fById(e.target.dataset.id)),date=$('#f-adate').value,qty=+$('#f-aqty').value||0;
     if(!f)return;
-    if(!isDate(date)||!(qty>0)){alert('Pick a day and an amount above 0.');return;}
+    if(!fieldErrors(e.target,[[!isDate(date)&&$('#f-adate'),'Pick a day from 2000 to a year from now'],[!(qty>0)&&$('#f-aqty'),'Enter an amount above 0']]))return;
     const w=$('#f-awhere').value;
     await once(e.target,()=>{fAdding=null;return addFoodToDay(f,date,qty,w==='off'?null:+w);});   /* the day may load first: a second click waits */
   }

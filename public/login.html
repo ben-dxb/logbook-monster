@@ -27,13 +27,14 @@
     <button class="btn" id="submit" type="submit">Sign in</button>
   </form>
   <form id="second" novalidate hidden>
-    <label class="f"><span class="lbl">Code from your authenticator app</span><input id="code" autocomplete="one-time-code" inputmode="numeric" maxlength="11" spellcheck="false" autocapitalize="characters" required></label>
-    <p class="hint">Lost your phone? Enter one of your recovery codes instead.</p>
+    <label class="f"><span class="lbl" id="codelbl">Code from your authenticator app</span><input id="code" autocomplete="one-time-code" inputmode="numeric" maxlength="11" spellcheck="false" autocapitalize="characters" required></label>
+    <p class="hint"><span id="codehint">Lost your phone?</span> <button class="link" id="userec" type="button" aria-pressed="false" aria-controls="code">Use a recovery code</button></p>
     <button class="btn" id="codebtn" type="submit">Continue</button>
     <button class="link" id="restart" type="button">Start again</button>
   </form>
   <p class="switch" id="switch" hidden><button type="button" class="link" id="toggle">Create an account</button></p>
 </main>
+<script src="/forms.js"></script>
 <script src="/login.js"></script>
 </body>
 </html>

@@ -25,16 +25,21 @@
     } catch { showErr('Can’t reach the server.'); }
   })();
 
+  const pwWhy = el => !el.value ? 'Pick a password' : el.value.length < 10 ? 'Use at least 10 characters' : '';
   $('form').addEventListener('submit', async e => {
     e.preventDefault();
     showErr('');
-    $('submit').disabled = true;
+    if (!fieldErrors($('form'), [[pwWhy($('password')) && $('password'), pwWhy($('password')), { check: pwWhy }]])) return;
+    if ($('submit').disabled) return;
+    const done = busyOn($('submit'), 'Creating your account…');
     try {
       const { ok, status, j } = await post('/auth/invite/accept', { token, password: $('password').value, name: $('name').value.trim() });
       if (ok) { location.replace('/#dash'); return; }
       if (status === 403 && /session/i.test(j.error || '')) { location.reload(); return; }
-      showErr(j.error || 'That didn’t work.');
+      done();
+      if (!errToField({ message: j.error || '' }, [[/^password|characters/i, $('password')], [/^name/i, $('name')]])) showErr(j.error || 'That didn’t work.');
+      return;
     } catch { showErr('Can’t reach the server.'); }
-    $('submit').disabled = false;
+    done();
   });
 })();
