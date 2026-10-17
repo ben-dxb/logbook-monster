@@ -170,11 +170,16 @@ also download their own data from the account menu.
 
 ## Security notes
 
-- Passwords hashed with scrypt; login and Google sign-in are rate-limited; same response for
-  unknown email and wrong password.
+- Passwords hashed with scrypt; login and Google sign-in are rate-limited per IP, and 10 wrong
+  passwords for one account in 15 minutes lock it for the rest of that time (kept in SQLite, so a
+  restart doesn't reset it); same response for unknown email, wrong password and a locked account.
 - Sessions are server-side (SQLite), in an `HttpOnly`, `SameSite=Lax` cookie (`Secure` on
-  HTTPS), and the session ID changes at sign-in.
-- Every write needs a per-session CSRF token header.
+  HTTPS); the session ID changes at sign-in and a session ends `SESSION_DAYS` (30) after sign-in
+  however often it's used. Visiting signed out stores nothing on the server.
+- Changing your password (or resetting it with `create-user`) signs the account out everywhere
+  else, and by default switches off its coach links. A Google-only account adding a first
+  password must have signed in within the last 10 minutes. Sign-out sends `Clear-Site-Data`.
+- Every write needs a CSRF token header (per session; signed out, an HMAC of a random cookie).
 - Google uses the OpenID Connect code flow with PKCE, `state` and `nonce`; the client secret
   stays on the server and the ID token's issuer, audience, expiry, nonce and verified email
   are checked.
@@ -183,7 +188,7 @@ also download their own data from the account menu.
 - Invite links carry a random token (only its SHA-256 is stored), run out after 7 days and are
   void once used or replaced. The SMTP password is kept on the server and never sent back.
 - Coach links carry a random 256-bit secret (only its SHA-256 is stored, so the link is shown once),
-  answer only reads of that account's day summaries, weights, Timeline and photos, are checked on
+  answer only reads of that account's day summaries, weights, Timeline and the photos its day cards show, are checked on
   every request against their expiry, and send `no-store`, `noindex` and `no-referrer`.
 
 ## Working on it

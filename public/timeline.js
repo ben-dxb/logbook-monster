@@ -201,7 +201,7 @@ function tOpen(d){
   $('#t-cbody').innerHTML=tCardHead(d)+'<p class="note">Loading…</p>';
   if(!dlg.open)dlg.showModal();
   api('GET','/api/timeline/day/'+d).then(r=>{if(tok===tCardTok&&dlg.open)$('#t-cbody').innerHTML=tCardHead(d,r)+tCardBody(r);},
-    e=>{if(tok===tCardTok&&!e.signedOut)$('#t-cbody').innerHTML=tCardHead(d)+gEmpty('Couldn’t load that day: '+esc(e.message));});
+    e=>{if(tok===tCardTok&&!e.signedOut)$('#t-cbody').innerHTML=tCardHead(d)+gEmpty('Couldn’t load that day: '+e.message);});
 }
 function tCloseCard(quiet){const dlg=$('#t-card');tCardDate=null;tCardTok++;if(dlg&&dlg.open){if(quiet)dlg.dataset.quiet='1';dlg.close();}}
 function tCardHead(d,r){
@@ -240,8 +240,8 @@ function tCardBody(r){
     +(sp.regime.length?`<span class="lbl">Regime – the 14 days to this one</span><ul class="tclist">${sp.regime.map(x=>`<li><b>${esc(x.name)}</b> <span class="sub">${x.days} of 14 days · usually ${esc(x.usual)}</span></li>`).join('')}</ul>`:'');
   /* gym */
   const g=r.gym;
-  const gym=g.exercises.length?`<p class="sub">${g.sets} set${g.sets===1?'':'s'} · ${g.volume.toLocaleString()} kg volume</p><ul class="tclist">${g.exercises.map(x=>`<li><b>${esc(x.name)}</b>${x.best?` <span class="chip info">e1RM ${tNum(x.best,'kg')}</span>`:''}<small>${x.sets.map(s=>`${s.reps}×${s.kg}kg`).join(' · ')}</small></li>`).join('')}</ul>`
-    :gEmpty(g.last?`No gym sets that day. Last session: ${esc(fmtShort(g.last))}.`:'No gym sets up to this day.');
+  const gym=g.exercises.length?`<p class="sub">${g.sets} set${g.sets===1?'':'s'} · ${g.volume.toLocaleString()} kg volume</p><ul class="tclist">${g.exercises.map(x=>`<li><b>${esc(x.name)}</b>${x.best?` <span class="chip info">e1RM ${esc(tNum(x.best,'kg'))}</span>`:''}<small>${x.sets.map(s=>`${esc(s.reps)}×${esc(s.kg)}kg`).join(' · ')}</small></li>`).join('')}</ul>`
+    :gEmpty(g.last?`No gym sets that day. Last session: ${fmtShort(g.last)}.`:'No gym sets up to this day.');
   return `<div class="tcgrid">${sec('tcfood','Food',food,[`#day/${d}`,'Open in Daily Tracker'])}
     ${sec('','Weight',weight,[`#day/${d}`,'Log in Daily Tracker'])}
     ${sec('','Supplements',supps,[`#supps/${d}`,'Open supplements'])}

@@ -16,13 +16,14 @@ const timeline = require('./timeline');
 const photos = require('./photos');
 
 const q = {
-  list: db.prepare('SELECT id, label, expires_at, created_at, used_at FROM shares WHERE user_id = ? ORDER BY expires_at DESC, id DESC'),
-  get: db.prepare('SELECT id, label, expires_at, created_at, used_at FROM shares WHERE user_id = ? AND id = ?'),
+  list: db.prepare('SELECT id, token_hash, label, expires_at, created_at, used_at FROM shares WHERE user_id = ? ORDER BY expires_at DESC, id DESC'),
+  get: db.prepare('SELECT id, token_hash, label, expires_at, created_at, used_at FROM shares WHERE user_id = ? AND id = ?'),
   live: db.prepare('SELECT COUNT(*) AS n FROM shares WHERE user_id = ? AND expires_at > ?'),
   add: db.prepare('INSERT INTO shares (user_id, token_hash, label, expires_at) VALUES (?, ?, ?, ?)'),
   byHash: db.prepare('SELECT id, user_id, label, expires_at FROM shares WHERE token_hash = ?'),
   used: db.prepare("UPDATE shares SET used_at = datetime('now') WHERE id = ?"),
   del: db.prepare('DELETE FROM shares WHERE user_id = ? AND id = ?'),
+  delKey: db.prepare('DELETE FROM shares WHERE user_id = ? AND id = ? AND substr(token_hash, 1, 12) = ?'),
   purge: db.prepare('DELETE FROM shares WHERE user_id = ? AND expires_at < ?'),
   sums: db.prepare('SELECT date, summary FROM days WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date'),
   weights: db.prepare('SELECT date, kg FROM weights WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date'),
@@ -39,8 +40,10 @@ const sqlIso = s => (s ? s.replace(' ', 'T') + 'Z' : null);
 const idOf = v => (/^\d{1,12}$/.test(String(v)) ? +v : 0);
 const send = (res, e) => { if (!e.status) console.error(e); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); };
 
+/* key: a piece of the secret's hash, which a reused id doesn't share – switching off sends it, so a stale tab can't
+   switch off a newer link that took the same id */
 function view(r) {
-  return { id: r.id, label: r.label, expires: r.expires_at, created: sqlIso(r.created_at), used: sqlIso(r.used_at), live: r.expires_at > nowIso() };
+  return { id: r.id, key: r.token_hash.slice(0, 12), label: r.label, expires: r.expires_at, created: sqlIso(r.created_at), used: sqlIso(r.used_at), live: r.expires_at > nowIso() };
 }
 
 /* ---------- the account's own links (under /api, signed in) ---------- */
@@ -68,7 +71,12 @@ const mine = express.Router();
 mine.get('/', (req, res) => res.json({ shares: list(req.user) }));
 mine.post('/', (req, res) => { try { res.json(create(req.user, req.body)); } catch (e) { send(res, e); } });
 /* Switching a link off deletes it: the next request with it finds nothing. */
-mine.delete('/:id', (req, res) => { q.del.run(req.user.id, idOf(req.params.id)); res.json({ ok: true }); });
+mine.delete('/:id', (req, res) => {
+  const id = idOf(req.params.id), key = req.query.key;
+  if (key === undefined) { q.del.run(req.user.id, id); return res.json({ ok: true }); }
+  if (!q.delKey.run(req.user.id, id, String(key)).changes) return res.status(404).json({ error: 'That link was switched off already – reload to see your links.' });
+  res.json({ ok: true });
+});
 
 /* ---------- the coach's side (under /coach/<secret>/api, no sign-in, read only) ---------- */
 /* The secret is 256 random bits, so guessing is hopeless; this only slows anyone trying, and never a working link. */

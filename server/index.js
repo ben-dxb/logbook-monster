@@ -44,7 +44,7 @@ app.use((req, res, next) => {
 app.use(session({
   name: 'logbookmonster.sid',
   secret: config.sessionSecret,
-  store: new SqliteStore(db),
+  store: new SqliteStore(db, { maxAge: config.sessionDays * 24 * 60 * 60 * 1000 }),
   resave: false,
   saveUninitialized: false,
   rolling: true,

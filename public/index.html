@@ -33,6 +33,7 @@
           <form id="pwform" class="pwform">
             <label class="f" id="pwcur"><span class="lbl">Current password</span><input id="pw-cur" type="password" autocomplete="current-password"></label>
             <label class="f"><span class="lbl">New password (10+ characters)</span><input id="pw-new" type="password" autocomplete="new-password" minlength="10"></label>
+            <label class="tog"><input type="checkbox" id="pw-links" checked> Also switch off my coach links</label>
             <button class="btn" type="submit">Update password</button>
             <p id="pwmsg" class="sub" role="status"></p>
           </form>
@@ -289,7 +290,7 @@
           <option value="h1">1 hour</option><option value="h24">1 day</option><option value="d3">3 days</option><option value="d7" selected>1 week</option>
           <option value="d14">2 weeks</option><option value="d30">1 month</option><option value="d90">3 months</option><option value="d180">6 months</option>
           <option value="d365">1 year</option><option value="date">Until a date…</option></select></label>
-        <label class="f" id="ad-sh-untilf" hidden><span class="lbl">Until the end of</span><input id="ad-sh-until" type="date"></label>
+        <label class="f" id="ad-sh-untilf" hidden><span class="lbl">Until the end of</span><input id="ad-sh-until" type="date" disabled></label>
         <button class="btn" type="submit" id="ad-sh-btn">Make link</button>
       </form>
       <div id="ad-shnew"></div>

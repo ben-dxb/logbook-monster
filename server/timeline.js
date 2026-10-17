@@ -262,7 +262,9 @@ function rangeOf(o) {
 router.get('/day/:date', (req, res) => {
   try {
     if (!isDate(req.params.date)) throw fail('Bad date');
-    res.json(dayCard(req.user, req.params.date));
+    const card = dayCard(req.user, req.params.date);
+    if (req.share) card.photos.forEach(p => { delete p.note; });   /* a coach link: the card shows no photo notes */
+    res.json(card);
   } catch (e) { send(res, e); }
 });
 

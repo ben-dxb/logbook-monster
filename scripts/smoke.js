@@ -427,7 +427,8 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.fill('#p-nearkg', ''); await pg.uncheck('#p-near');
       await pg.waitForFunction(() => document.querySelectorAll('#p-list .pday').length === 2);
       expect(first === !(await pg.locator('#p-aibtn').count()), '"Tag poses with AI" only once AI is set up');
-      if (!first) expect(await pg.locator('#p-pose').inputValue() === 'ai', 'with AI set up, uploads default to "Let AI tell"');
+      if (!first) expect(await pg.locator('#p-pose').inputValue() === 'other' && await pg.locator('#p-pose option[value=ai]').count() === 1,
+        'with AI set up, "Let AI tell" is offered on upload but not picked: nothing goes to the AI unless asked');
       if (!first) {
         /* the photos went in with AI off (no pose picked), so they're left for the AI; only the one whose pose was set by
            hand above is asked about – "leave it" tags the rest. The faked AI keeps each pose, so later steps see the same photos. */
@@ -525,6 +526,7 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-share');
       await pg.fill('#ad-sh-label', 'Smoke coach'); await pg.selectOption('#ad-sh-for', 'date');
       expect(!(await pg.isHidden('#ad-sh-until')), 'picking "Until a date" should show a date field');
+      await pg.fill('#ad-sh-until', '2020-01-01');   /* a past date left in the hidden field mustn't hold up "Make link" */
       await pg.selectOption('#ad-sh-for', 'h24'); await pg.click('#ad-sh-btn');
       await pg.waitForSelector('#ad-sh-link', { timeout: 5000 });
       const coachUrl = await pg.inputValue('#ad-sh-link');
@@ -539,6 +541,7 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
       expect(!(await cp.locator('#t-aibtn, #t-expick, .tclink, input[type=number]').count()), 'the coach page should have nothing to edit');
       await cp.click('#c-days .cday >> nth=0'); await cp.waitForFunction(() => document.querySelector('#t-card').open && /Atlantis hack squat/.test(document.querySelector('#t-card').textContent), null, { timeout: 5000 });
       expect(await cp.locator('#t-card .tcphotos .ptile img').count() >= 1, 'the coach should see the latest photos');
+      await cp.waitForFunction(() => [...document.querySelectorAll('#t-card .tcphotos img')].every(i => i.complete && i.naturalWidth > 0), null, { timeout: 5000 });
       const coachScroll = await cp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(coachScroll <= 1, `horizontal overflow of ${coachScroll}px on the coach page at ${w}px wide`);
       await cp.keyboard.press('Escape');
@@ -749,7 +752,11 @@ const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
         await pg.reload(); await pg.waitForSelector('#v-day:not([hidden]) #meals .meal');
         expect(/Skittles/.test(await pg.textContent('#offlist')), 'change made while signed out should be saved after sign-in');
       }
+      /* sign-out sends Clear-Site-Data: another account's unsaved changes waiting in this browser must survive it */
+      const stash = JSON.stringify({ email: 'other@example.com', at: Date.now(), jobs: [] });
+      await pg.evaluate(v => localStorage.setItem('logbook-monster-unsaved', v), stash);
       await pg.click('#acct summary'); await pg.click('#logout'); await pg.waitForURL(/\/login/);
+      expect(await pg.evaluate(() => localStorage.getItem('logbook-monster-unsaved')) === stash, 'unsaved-changes stash should survive sign-out');
       await ctx.close();
     }
     console.log('smoke: ok (desktop + phone)');

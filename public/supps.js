@@ -49,7 +49,7 @@ async function renderSupps(args){
     box.innerHTML=tabs+sLogPage();
     await sLogOn(sDate);if(tok!==sTok||view!=='supps')return;
     renderSuppLog();
-  }catch(e){if(!e.signedOut&&tok===sTok)box.innerHTML=tabs+gEmpty('Couldn’t load your supplements: '+esc(e.message));}
+  }catch(e){if(!e.signedOut&&tok===sTok)box.innerHTML=tabs+gEmpty('Couldn’t load your supplements: '+e.message);}
 }
 
 /* ---------- the day's log ---------- */

@@ -552,13 +552,16 @@ $('#coach').addEventListener('click',()=>act(D=>{const t=hasTemplate(D.type)?D.t
 window.addEventListener('hashchange',route);
 $('#logout').addEventListener('click',async()=>{
   if(pending.size){clearTimeout(saveTimer);await flush();}
+  let keep=null;try{keep=localStorage.getItem(STASH);}catch{}
   try{await api('POST','/auth/logout',{});}catch{}
-  location.href='/login';
+  /* sign-out clears this site's storage (Clear-Site-Data); put back changes still waiting to be sent */
+  try{if(keep)localStorage.setItem(STASH,keep);}catch{}
+  if(pending.size&&ME)toLogin();else location.href='/login';
 });
 $('#pwform').addEventListener('submit',async e=>{
   e.preventDefault();const msg=$('#pwmsg');msg.textContent='';
-  try{await api('POST','/auth/password',{current:$('#pw-cur').value,next:$('#pw-new').value});
-    msg.textContent='Password updated.';$('#pw-cur').value=$('#pw-new').value='';$('#pwcur').hidden=false;}
+  try{const r=await api('POST','/auth/password',{current:$('#pw-cur').value,next:$('#pw-new').value,endLinks:$('#pw-links').checked});
+    msg.textContent='Password updated.'+(r.signedOut?' Signed out everywhere else.':'')+(r.linksOff?` ${r.linksOff} coach link${r.linksOff>1?'s':''} switched off.`:'');$('#pw-cur').value=$('#pw-new').value='';$('#pwcur').hidden=false;}
   catch(err){msg.textContent=err.message;}
 });
 document.addEventListener('click',e=>{const d=$('#acct');if(d.open&&!d.contains(e.target))d.open=false;});
