@@ -6,6 +6,9 @@
    it's ready. Each page fills in J_OPEN (put a finished read where it's checked) and J_BUSY (show that one is running). */
 let JOBS=[], jTimer=null;
 const J_OPEN={}, J_BUSY={};
+/* a finished read open on its page, per kind: it stays unseen on the server until the person adds or drops it (jobSeen),
+   so reloading before then lists it again to reopen */
+const J_HELD={};
 const J_KIND={plan:{name:'meal plan',page:'account'},workout:{name:'workout plan',page:'gym'},supps:{name:'supplement regime',page:'supps/lib'}};
 const jobBusy=kind=>JOBS.some(j=>j.kind===kind&&j.status==='running');
 const jWhat=j=>`${J_KIND[j.kind].name}${j.label?` (${j.label})`:''}`;
@@ -14,7 +17,7 @@ const jWhat=j=>`${J_KIND[j.kind].name}${j.label?` (${j.label})`:''}`;
 async function jobStart(url,kind,file){
   if('Notification' in window&&Notification.permission==='default'){try{Notification.requestPermission();}catch{}}
   let r;
-  try{r=await fetch(url+'?bg=1',{method:'POST',credentials:'same-origin',body:file,
+  try{r=await fetch(url+(url.includes('?')?'&':'?')+'bg=1',{method:'POST',credentials:'same-origin',body:file,
     headers:{'content-type':file.type||'application/pdf','x-csrf-token':csrf,'x-file-name':encodeURIComponent(file.name.slice(0,120))}});}
   catch{throw new Error('Can’t reach the server – is it still running?');}
   if(r.status===401){setTimeout(toLogin,0);const e=new Error('You were signed out');e.signedOut=true;throw e;}
@@ -32,7 +35,7 @@ async function jRefresh(){
   try{r=await api('GET','/api/jobs');}catch(e){if(!e.signedOut)jPoll(15000);return;}
   if(!r)return;
   const before=new Map(JOBS.map(j=>[j.id,j]));
-  JOBS=r.jobs.filter(j=>J_KIND[j.kind]).map(j=>({...j,here:!!(before.get(j.id)||{}).here}));
+  JOBS=r.jobs.filter(j=>J_KIND[j.kind]&&!Object.values(J_HELD).includes(j.id)).map(j=>({...j,here:!!(before.get(j.id)||{}).here}));
   const kinds=new Set();
   for(const j of JOBS){const b=before.get(j.id);if(b&&b.status==='running'&&j.status!=='running'){kinds.add(j.kind);jFinished(j);}}
   kinds.forEach(jChanged);jRender();
@@ -55,14 +58,18 @@ async function jOpen(id){
   let full;
   try{full=await api('GET','/api/jobs/'+id);}catch(e){if(!e.signedOut)alert('Couldn’t open it: '+e.message);return;}
   JOBS=JOBS.filter(j=>j.id!==id);jRender();
-  api('POST',`/api/jobs/${id}/seen`,{}).catch(()=>{});
-  if(!full||!J_KIND[full.kind]||full.status==='running')return;
+  if(!full||!J_KIND[full.kind]||full.status==='running'){jSeen(id);return;}
   const k=J_KIND[full.kind];
+  jobSeen(full.kind);                                   /* the one it replaces on that page */
+  if(full.status==='done')J_HELD[full.kind]=id;else jSeen(id);
   if(location.hash!=='#'+k.page)go(k.page);
   J_OPEN[full.kind](full);
   jChanged(full.kind);
 }
-function jDismiss(id){JOBS=JOBS.filter(j=>j.id!==id);jRender();api('POST',`/api/jobs/${id}/seen`,{}).catch(()=>{});}
+function jSeen(id){api('POST',`/api/jobs/${id}/seen`,{}).catch(()=>{});}
+/* the page is done with its open read (added, dropped or replaced) */
+function jobSeen(kind){const id=J_HELD[kind];if(id==null)return;delete J_HELD[kind];jSeen(id);}
+function jDismiss(id){JOBS=JOBS.filter(j=>j.id!==id);jRender();jSeen(id);}
 function jChanged(kind){jRender();if(J_BUSY[kind])J_BUSY[kind]();}
 
 function jRender(){

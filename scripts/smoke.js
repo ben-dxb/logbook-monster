@@ -427,7 +427,7 @@ async function trackerKeepsFood(browser, pg, ctx) {
         await pg.click('#jobs [data-job=open]');
         await pg.waitForSelector('.sai .sairow');
         expect(await pg.evaluate(() => location.hash) === '#supps/lib' && await pg.isHidden('#jobs'), 'Open should go to the regime and clear the note');
-        await pg.unroute(/\/api\/jobs(\/.*)?$/);
+        expect(!job.seen, 'an opened regime stays unseen until it is added or dropped, so a reload can reopen it');
         expect(await pg.locator('.sai .sairow').count() === 3 && /Guessed the strength/.test(await pg.textContent('.sai')), 'the AI’s line items and notes should be shown');
         await pg.fill('.sai [data-sai=amount][data-i="0"]', '300');
         await pg.uncheck('.sai [data-sai=on][data-i="1"]');
@@ -437,6 +437,8 @@ async function trackerKeepsFood(browser, pg, ctx) {
         expect(aiscroll <= 1, `horizontal overflow of ${aiscroll}px on the supplement regime preview at ${w}px wide`);
         await pg.click('[data-sa=aiadd]');
         await pg.waitForFunction(() => /Added 2 to your library\. Logged 2/.test((document.querySelector('#s-list') || {}).textContent), null, { timeout: 5000 });
+        expect(job.seen, 'adding the regime marks the read seen');
+        await pg.unroute(/\/api\/jobs(\/.*)?$/);
         expect(await pg.evaluate(() => SUPPS.some(s => s.name === 'Smoke magnesium' && s.amount === 300) && !SUPPS.some(s => s.name === 'Smoke zinc')), 'edited lines should be added, unticked ones left out');
         await pg.unroute('**/api/supps/ai-import');
         await pg.click('#s-body a[href="#supps"]'); await pg.waitForFunction(() => /Smoke magnesium\s*300 mg/.test((document.querySelector('#s-log') || {}).textContent), null, { timeout: 5000 });
@@ -546,6 +548,21 @@ async function trackerKeepsFood(browser, pg, ctx) {
         pg.off('dialog', ok); pg.off('request', seen);
         expect(untagged.length > 0 && asked2.length === 1 && new RegExp(`these ${untagged.length} photos|this photo`).test(asked2[0]), `"Tag only untagged" should ask once about the ${untagged.length} untagged photos, asked: ${asked2.join(' | ')}`);
         expect(sent.sort().join() === untagged.sort().join(), `"Tag only untagged" should send only the untagged photos: sent ${sent}, untagged ${untagged}`);
+      }
+      if (!first) {
+        /* "Ask AI for the pose" on one photo, then on to another before the answer comes: it must not land on the other photo */
+        await pg.unroute('**/api/photos/*/ai-pose');
+        const [pa, pb] = await pg.evaluate(() => { const l = pShown(); return [l[0], l[1]]; });
+        await pg.route('**/api/photos/*/ai-pose', async r => { await new Promise(ok => setTimeout(ok, 1200));
+          await r.fulfill({ json: { pose: 'other', style: 'most_muscular', model: 'test/vision', photo: pa } }).catch(() => {}); });
+        await pg.evaluate(id => { location.hash = '#photos/' + id; }, pa.id); await pg.waitForSelector(`#p-eform[data-id="${pa.id}"] [data-pa=aione]`);
+        await pg.click('[data-pa=aione]');
+        await pg.evaluate(id => { location.hash = '#photos/' + id; }, pb.id); await pg.waitForSelector(`#p-eform[data-id="${pb.id}"]`);
+        await pg.waitForTimeout(1800);
+        expect(await pg.inputValue('#p-epose') === pb.pose && await pg.inputValue('#p-estyle') === (pb.style || '') && await pg.textContent('#p-aisay') === '',
+          'an AI pose answer for one photo should be dropped once another photo is open');
+        await pg.unroute('**/api/photos/*/ai-pose');
+        await pg.evaluate(() => { location.hash = '#photos'; }); await pg.waitForSelector('#p-jump');
       }
       await pg.fill('#p-jump', '2026-09-04'); await pg.waitForSelector('#p-d-2026-09-01.hit');
       /* pick two photos in the catalog and compare them, older on the left */
@@ -793,6 +810,39 @@ async function trackerKeepsFood(browser, pg, ctx) {
         await gctx.close();
         await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
         expect(/^Using /.test(await pg.textContent('#ad-aistate')) && !(await pg.isDisabled('#ad-aifile')), 'PDF upload should be on once a key is saved');
+        /* an AI plan read (faked, in the background) opens as a preview of what it would change: a food edited here keeps its
+           value unless its box is ticked, a new food and the template's new meals are taken on "Use ticked" */
+        const [fid, tid, tname, pfood] = await pg.evaluate(() => { const id = Object.keys(AD.foods)[0]; return [id, AD.templates[0].id, AD.templates[0].name, AD.foods[id]]; });
+        await pg.click(`.adfood[data-id="${fid}"] > summary`);
+        await pg.fill(`#ad-fd-${fid}-k`, '389'); await pg.press(`#ad-fd-${fid}-k`, 'Tab');
+        const pjob = { id: 902, kind: 'plan', label: 'plan.pdf', status: 'running', error: null, seen: false };
+        await pg.route(/\/api\/my\/ai-import\?/, r => r.fulfill({ status: 202, json: { job: pjob } }));
+        await pg.route(/\/api\/jobs(\/.*)?$/, r => {
+          const u = new URL(r.request().url()).pathname;
+          if (u === '/api/jobs') return r.fulfill({ json: { jobs: pjob.seen ? [] : [pjob] } });
+          if (u.endsWith('/seen')) { pjob.seen = true; return r.fulfill({ json: { ok: true } }); }
+          r.fulfill({ json: { ...pjob, result: { model: 'test/model', notes: [], templates: [{ id: tid, name: tname }], targets: {}, schedule: null,
+            plan: { [tid]: [{ id: '1', name: 'Smoke AI breakfast', p: [{ f: fid, g: 100, lock: false }], c: [], x: [] }] },
+            foods: { [fid]: { ...pfood, k: 379 }, smoke_ai_seeds: { n: 'Smoke AI seeds', k: 560, p: 20, c: 10, f: 48, group: 'x', unit: 'g', d: 0, step: 1, min: null, max: null, order: null, free: '' } } } } });
+        });
+        await pg.setInputFiles('#ad-aifile', { name: 'plan.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4') });
+        await pg.waitForFunction(() => /Reading your meal plan/.test(document.querySelector('#jobs').textContent), null, { timeout: 5000 });
+        pjob.status = 'done';
+        await pg.waitForSelector('#ad-aiprev:not([hidden]) [data-ad=aiuse]', { timeout: 10000 });
+        expect(!(await pg.isChecked(`#ad-aiprev input[data-key="f:${fid}"]`)) && await pg.isChecked(`#ad-aiprev input[data-key="t:${tid}"]`)
+          && /Smoke AI seeds/.test(await pg.textContent('#ad-aiprev')), 'the plan read preview should list the edited food unticked, the template ticked and the new food');
+        expect(await pg.evaluate(f => AD.foods[f].k === 389 && !AD.foods.smoke_ai_seeds, fid), 'nothing should change before "Use ticked"');
+        expect(!pjob.seen, 'an opened read stays unseen until it is used or dropped, so a reload can reopen it');
+        const prscroll = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        expect(prscroll <= 1, `horizontal overflow of ${prscroll}px on the plan read preview at ${w}px wide`);
+        await pg.click('#ad-aiprev [data-ad=aiuse]');
+        await pg.waitForSelector('#ad-aiprev', { state: 'hidden' });
+        expect(await pg.evaluate(([f, t]) => AD.foods[f].k === 389 && !!AD.foods.smoke_ai_seeds && AD.plan[t][0].name === 'Smoke AI breakfast', [fid, tid]),
+          'the edited food should keep 389 kcal; the new food and the meals should be taken');
+        expect(pjob.seen, 'using the read marks it seen');
+        await pg.unroute(/\/api\/jobs(\/.*)?$/); await pg.unroute(/\/api\/my\/ai-import\?/);
+        await pg.click('[data-ad=discard]');
+        await pg.waitForFunction(f => !AD.foods.smoke_ai_seeds && AD.foods[f].k !== 389, fid, { timeout: 5000 });
         /* Options tab: plan files off hides the CSV / JSON buttons on Account admin, on again brings them back */
         expect(!(await pg.isHidden('[data-ad=csv]')), 'plan file buttons should show by default');
         await pg.click('#acct>summary'); await pg.click('#adminlink');

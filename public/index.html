@@ -225,11 +225,12 @@
       </div>
       <section class="adai" id="ad-ai" aria-labelledby="ad-aih">
         <h3 class="lbl" id="ad-aih">Read a PDF with AI</h3>
-        <p>Upload your coach's meal plan as a PDF (or a photo) and AI breaks it down into day templates, meals, foods, amounts and targets. New foods are added to My foods. Check everything before you save – nothing changes until you do.</p>
+        <p>Upload your coach's meal plan as a PDF (or a photo) and AI breaks it down into day templates, meals, foods, amounts and targets. You see what it would change and tick what to take – your own foods keep their values unless you tick them. Check everything before you save – nothing changes until you do.</p>
         <div class="adtools">
           <label class="btn adfile" id="ad-aibtn">Choose PDF…<input id="ad-aifile" type="file" accept=".pdf,application/pdf,image/png,image/jpeg,image/webp"></label>
           <span id="ad-aistate" class="sub" role="status"></span>
         </div>
+        <div id="ad-aiprev" class="adaiprev" hidden></div>
       </section>
       <details class="adhelp adfiles"><summary>CSV format</summary>
         <p>One row per food, with these headings in the first row: <code>day_type, meal, meal_name, box, food, grams, locked, note</code>.
