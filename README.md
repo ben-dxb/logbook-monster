@@ -181,7 +181,7 @@ also download their own data from the account menu.
 - Invite links carry a random token (only its SHA-256 is stored), run out after 7 days and are
   void once used or replaced. The SMTP password is kept on the server and never sent back.
 - Coach links carry a random 256-bit secret (only its SHA-256 is stored, so the link is shown once),
-  answer only reads of that account's day summaries, weights, Timeline and photos, are checked on
+  answer only reads of that account's day summaries, weights, Timeline and the photos its day cards show, are checked on
   every request against their expiry, and send `no-store`, `noindex` and `no-referrer`.
 
 ## Working on it

@@ -23,7 +23,7 @@ function ago(d){if(!d)return '';const n=Math.round((parse(todayStr())-parse(d))/
   return n===0?'Today':n===1?'Yesterday':n>1&&n<7?`${n} days ago`:fmtShort(d);}
 function dayLabel(d){const t=todayStr();if(d===t)return 'Today';if(d===addDays(t,-1))return 'Yesterday';
   return parse(d).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short',...(d.slice(0,4)!==t.slice(0,4)?{year:'numeric'}:{})});}
-const gEmpty=t=>`<p class="empty">${t}</p>`;
+const gEmpty=t=>`<p class="empty">${esc(t)}</p>`;   /* plain text */
 /* ---------- body parts: chips, the filter bar, AI tagging ---------- */
 const partName=id=>{const p=(GY.parts||[]).find(x=>x.id===id);return p?p.name:id;};
 const gPartChips=ids=>ids.length?`<span class="gpts">${ids.map(id=>`<span class="chip gpart">${esc(partName(id))}</span>`).join('')}</span>`:'';

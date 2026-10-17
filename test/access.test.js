@@ -336,12 +336,12 @@ const ROUTES = [
   { key: 'GET /coach/:token/api/timeline/day/:date', scope: 'coach', check: r => {
     assert.strictEqual(r.body.food.summary.tname, 'annmark day');
     assert.deepStrictEqual(r.body.photos.map(p => p.id), [c.p2]);
+    assert.ok(!r.text.includes('annmark p2'), 'no photo notes through a coach link');
   } },
   { key: 'GET /coach/:token/api/timeline/trends', scope: 'coach', u: () => `/coach/${c.token}/api/timeline/trends?from=2026-09-01&to=2026-09-30`,
     check: r => assert.ok(r.text.includes('81.37')) },
   { key: 'POST /coach/:token/api/timeline/summary', scope: 'coach', body: () => ({ metrics: ['k'] }) },
-  { key: 'GET /coach/:token/api/photos', scope: 'coach', expect: 404,
-    todo: 'BUG: a coach link lists every photo with its note (GET /coach/<secret>/api/photos), not just the ones the Timeline shows' },
+  { key: 'GET /coach/:token/api/photos', scope: 'coach', expect: 404 },
   { key: 'POST /coach/:token/api/photos', scope: 'coach', u: () => `/coach/${c.token}/api/photos?date=${DATE}&pose=back`, body: () => jpeg('coach') },
   { key: 'PUT /coach/:token/api/photos/:id/thumb', scope: 'coach', u: () => `/coach/${c.token}/api/photos/${c.p2}/thumb`, body: () => jpeg('coachthumb') },
   { key: 'PUT /coach/:token/api/photos/:id', scope: 'coach', u: () => `/coach/${c.token}/api/photos/${c.p1}`, body: () => ({ date: DATE, pose: 'back', note: 'coach' }) },
@@ -352,14 +352,12 @@ const ROUTES = [
     check: r => assert.strictEqual(r.headers.get('content-type'), 'image/jpeg'),
     extra: [
       { name: 'another account’s photo', u: () => `/coach/${c.token}/api/photos/${c.bobPhoto}/file`, expect: 404 },
-      { name: 'a photo the Timeline never shows', u: () => `/coach/${c.token}/api/photos/${c.p1}/file`, expect: 404,
-        todo: 'BUG: a coach link serves the full-size file of any of the owner’s photos, not only those the Timeline shows' },
+      { name: 'a photo the Timeline never shows', u: () => `/coach/${c.token}/api/photos/${c.p1}/file`, expect: 404 },
     ] },
   { key: 'GET /coach/:token/api/photos/:id/thumb', scope: 'coach', u: () => `/coach/${c.token}/api/photos/${c.p2}/thumb`,
     extra: [
       { name: 'another account’s photo', u: () => `/coach/${c.token}/api/photos/${c.bobPhoto}/thumb`, expect: 404 },
-      { name: 'a photo the Timeline never shows', u: () => `/coach/${c.token}/api/photos/${c.p1}/thumb`, expect: 404,
-        todo: 'BUG: a coach link serves any of the owner’s photos (here p1, never on the Timeline), not only those the Timeline shows' },
+      { name: 'a photo the Timeline never shows', u: () => `/coach/${c.token}/api/photos/${c.p1}/thumb`, expect: 404 },
     ] },
 ];
 for (const r of ROUTES) {

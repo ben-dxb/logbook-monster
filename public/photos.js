@@ -9,7 +9,7 @@
    any without one. Uses helpers from app.js and gym.js (gHead, gEmpty). */
 
 let PHOTOS=null, PPOSES=['front','left','right','back','other'], PSTYLES=[], PWT={};
-let pPose='all', pDate=todayStr(), pUpPose='ai', pMsg='', pTok=0, pBusy=false;
+let pPose='all', pDate=todayStr(), pUpPose='other', pMsg='', pTok=0, pBusy=false;
 let pSel=false, pPick=[];                          /* picking photos to compare, and the ones picked (up to 2) */
 let pAi=false, pAiBusy=false;                     /* AI set up (an admin's OpenRouter key), and a "Tag with AI" run going */
 let pUseExif=true;                                /* date each photo from its own data (the date picked for any without one) */
@@ -87,7 +87,7 @@ async function renderPhotos(args){
     }
     if(cmp){box.innerHTML=tabs+pCmpPage(+x||0,+y||0);return;}
     box.innerHTML=tabs+pCatalogPage();renderPhotoList();
-  }catch(e){if(!e.signedOut&&tok===pTok)box.innerHTML=tabs+gEmpty('Couldn’t load your photos: '+esc(e.message));}
+  }catch(e){if(!e.signedOut&&tok===pTok)box.innerHTML=tabs+gEmpty('Couldn’t load your photos: '+e.message);}
 }
 
 /* ---------- the catalog: upload, then every day with photos, newest first ---------- */
@@ -100,7 +100,16 @@ function pStyleOptions(sel){
   return `<option value=""${sel?'':' selected'}>None</option>`+PSTYLES.map(v=>`<option value="${v}"${v===sel?' selected':''}>${esc(pStyleName(v))}</option>`).join('');
 }
 /* the AI's pose for a photo; save stores it too */
-const pAskAi=(id,save)=>api('POST',`/api/photos/${id}/ai-pose`,{save});
+/* the AI only ever gets the small version: a photo without one (from before thumbnails) gets one first */
+async function pAskAi(id,save){
+  const p=PHOTOS.find(x=>x.id===id);
+  if(p&&!p.tv){
+    try{const b=await(await fetch(pSrc(p),{credentials:'same-origin'})).blob();
+      const t=await pSend('PUT',`/api/photos/${id}/thumb`,await pShrink(b,P_THUMB,0.8));const i=PHOTOS.findIndex(x=>x.id===id);if(i>=0)PHOTOS[i]=t;}
+    catch(e){if(e.signedOut)throw e;}
+  }
+  return api('POST',`/api/photos/${id}/ai-pose`,{save});
+}
 const P_AI_NOTE='The AI looks at the small version of each photo, sent to the AI service set up for this app; nothing else about you goes with it.';
 function pCatalogPage(){
   const seg=[['all','All'],...[...PPOSES,...(PHOTOS.some(p=>p.pose==='side')?['side']:[])].map(v=>[v,pPoseName(v)])].map(([v,l])=>`<button type="button" data-pa="filter" data-v="${v}" aria-pressed="${pPose===v}">${esc(l)}</button>`).join('');
@@ -144,7 +153,7 @@ function renderPhotoList(){
   const n=Object.keys(days).length;
   if(pNear&&t!=null)h+=`<p class="note">${n?`${n} day${n===1?'':'s'}`:'No days'} with photos when you weighed ${esc(t)} kg ± ${esc(pTol)} (from a weigh-in within ${P_NEAR_DAYS} days of the photo).</p>`;
   if(!PHOTOS.length)h+=gEmpty('No photos yet. Pick some above, set the date they were taken and tap Upload.');
-  else if(!list.length&&!pNear)h+=gEmpty(`No ${esc(pPoseName(pPose).toLowerCase())} photos yet.`);
+  else if(!list.length&&!pNear)h+=gEmpty(`No ${pPoseName(pPose).toLowerCase()} photos yet.`);
   h+=Object.keys(days).sort().reverse().map(d=>`<section class="pday" id="p-d-${d}" aria-label="${esc(fmtLong(d))}">
       <h3><span>${esc(fmtLong(d))}</span>${pKg(d)?`<span class="chip">${esc(pKg(d))}</span>`:''}</h3>
       <div class="pgrid">${days[d].map(pTile).join('')}</div></section>`).join('');
@@ -252,7 +261,7 @@ async function pUpload(form){
   const err=$('#p-err'), st=$('#p-state'), btn=form.querySelector('button[type=submit]');
   const files=[...$('#p-file').files], date=$('#p-date').value, pick=$('#p-pose')?$('#p-pose').value:'other', note=$('#p-note').value.trim();
   const byAi=pick==='ai', pose=byAi?'other':pick, useExif=pUseExif;
-  const unset=byAi||!$('#p-pose');                  /* no pose picked (AI off: they go in as Other) – not set by hand, so "Tag poses with AI" takes them later */
+  const unset=byAi||pick==='other';                 /* left as Other (the default, and all there is with AI off) – not set by hand, so "Tag poses with AI" takes them later */
   err.hidden=true;
   if(!files.length){err.textContent='Pick one or more photos.';err.hidden=false;return;}
   if(!isDate(date)){err.textContent=useExif?'Pick a date for any photos without one of their own.':'Pick the date the photos were taken.';err.hidden=false;return;}

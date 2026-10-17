@@ -616,8 +616,9 @@ function shExpiry(){
   if(v==='date'){const d=$('#ad-sh-until').value;if(!isDate(d))return null;const t=parse(d);t.setHours(23,59,59,0);return t;}
   const n=+v.slice(1);return new Date(Date.now()+(v[0]==='h'?n*3600000:n*86400000));
 }
+/* a hidden date is disabled too, so a bad one left in it can't hold up "Make link" (the browser checks only enabled fields) */
 $('#ad-sh-for').addEventListener('change',()=>{const on=$('#ad-sh-for').value==='date';$('#ad-sh-untilf').hidden=!on;
-  const i=$('#ad-sh-until');i.min=todayStr();i.max=addDays(todayStr(),365);if(on&&!i.value)i.value=addDays(todayStr(),7);});
+  const i=$('#ad-sh-until');i.disabled=!on;i.min=todayStr();i.max=addDays(todayStr(),365);if(on&&!i.value)i.value=addDays(todayStr(),7);});
 $('#ad-share').addEventListener('submit',async e=>{
   e.preventDefault();const msg=$('#ad-shmsg'), btn=$('#ad-sh-btn'), t=shExpiry();
   if(!t){msg.textContent='Pick the day the link runs out.';return;}
@@ -633,7 +634,7 @@ document.addEventListener('click',async e=>{
   const x=SH&&SH.find(s=>String(s.id)===b.dataset.id);if(!x)return;
   if(a==='off'&&!confirm(`Switch off ${x.label?`“${x.label}”`:'this link'}? It stops working straight away.`))return;
   b.disabled=true;
-  try{await api('DELETE','/api/shares/'+x.id);shNew=null;await shLoad();}catch(err){b.disabled=false;if(!err.signedOut)alert(err.message);}
+  try{await api('DELETE',`/api/shares/${x.id}?key=${encodeURIComponent(x.key)}`);shNew=null;await shLoad();}catch(err){b.disabled=false;if(!err.signedOut){alert(err.message);await shLoad();}}
 });
 
 /* ---------- People: invites and accounts ---------- */

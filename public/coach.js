@@ -21,7 +21,7 @@ const OLD_TYPES={T:'Training',R:'Rest',S:'Saturday training'};   /* day types be
 const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const r0=x=>Math.round(x), r1=x=>(Math.round(x*10)/10).toFixed(1);
-const gEmpty=t=>`<p class="empty">${t}</p>`;
+const gEmpty=t=>`<p class="empty">${esc(t)}</p>`;   /* plain text, as in gym.js */
 const P_NAME={front:'Front',left:'Side – Left',right:'Side – Right',side:'Side',back:'Back',other:'Other'};
 const pSrc=p=>`${SHARED.base}/api/photos/${p.id}/file?v=${encodeURIComponent(p.v)}`;
 const pThumb=p=>p.tv?`${SHARED.base}/api/photos/${p.id}/thumb?v=${encodeURIComponent(p.tv)}`:pSrc(p);
@@ -97,7 +97,7 @@ async function start(){
   $('#c-who').textContent=`${info.name}’s logbook`;
   $('#c-until').textContent=`${info.label?info.label+' · ':''}Shared with you read only. This link works until ${cUntil(info.expires)}.`;
   $('#c-loading').hidden=true;$('#c-main').hidden=false;
-  try{await cLoadDays();}catch(e){if(!e.signedOut)$('#c-days').innerHTML=gEmpty('Couldn’t load the days: '+esc(e.message));}
+  try{await cLoadDays();}catch(e){if(!e.signedOut)$('#c-days').innerHTML=gEmpty('Couldn’t load the days: '+e.message);}
   route();
 }
 $('#c-more').addEventListener('click',async()=>{cDays=Math.min(cDays+14,366);$('#c-more').hidden=cDays>=366;try{await cLoadDays();}catch{}});
