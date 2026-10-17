@@ -8,9 +8,9 @@
    Order: photos, then the database, then the photos again (only files not copied yet), then a check of the copy. The app writes a
    photo's file before its row and deletes the row before the file, so every row in the database copy had its file on disk when
    the copy was made: copied by the first pass if it was there already, by the second if it was added after the first pass and
-   still there. The one way left to miss a file – added after the first pass, then deleted (or its thumbnail replaced) after the
+   still there. The one way left to miss a file – added after the first pass, then deleted (or its thumbnail or middle size replaced) after the
    database copy and before the second pass – is a photo its owner had already deleted: the check takes that row out of the copy
-   (a lost thumbnail only clears the thumbnail; the app makes a new one). So no row in the backup is without its file.
+   (a lost thumbnail or middle size only clears it; the app makes a new thumbnail and serves the full file for a missing middle size). So no row in the backup is without its file.
    A file with no row (added after the database copy) is only an extra file – the app removes such files an hour after it starts
    on the restored copy. Check a backup with npm run restore-check -- <its folder>. */
 process.umask(0o077);
@@ -65,9 +65,12 @@ const copy = new DatabaseSync(dbFile);
 let gone = 0;
 if (copy.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'photos'").get()) {
   const has = f => fs.existsSync(path.join(photos, path.basename(f)));
-  for (const r of copy.prepare('SELECT id, file, thumb FROM photos').all()) {
-    if (!has(r.file)) { copy.prepare('DELETE FROM photos WHERE id = ?').run(r.id); gone++; }
-    else if (r.thumb && !has(r.thumb)) copy.prepare('UPDATE photos SET thumb = NULL, thumb_size = 0 WHERE id = ?').run(r.id);
+  /* mid (the middle size) only in a database the app has started on since it was added */
+  const mid = copy.prepare("SELECT 1 FROM pragma_table_info('photos') WHERE name = 'mid'").get();
+  for (const r of copy.prepare(`SELECT id, file, thumb${mid ? ', mid' : ''} FROM photos`).all()) {
+    if (!has(r.file)) { copy.prepare('DELETE FROM photos WHERE id = ?').run(r.id); gone++; continue; }
+    if (r.thumb && !has(r.thumb)) copy.prepare('UPDATE photos SET thumb = NULL, thumb_size = 0 WHERE id = ?').run(r.id);
+    if (r.mid && !has(r.mid)) copy.prepare('UPDATE photos SET mid = NULL, mid_size = 0 WHERE id = ?').run(r.id);   /* the full file is served instead */
   }
 }
 copy.close();
