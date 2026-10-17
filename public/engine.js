@@ -67,6 +67,15 @@ const SWAP_LISTS={p:PROTEIN_SWAPS,c:CARB_SWAPS,x:FAT_SWAPS};
 const FOOD_FIELDS=['n','k','p','c','f','d','step','unit','min','max','order','group','free'];
 const ZERO_TARGETS={k:0,p:0,c:0,f:0};
 function foodGroup(id){for(const g in SWAP_LISTS)if(SWAP_LISTS[g].includes(id))return g;return '';}
+/* a calculator food from a plan's food record */
+function planFoodRec(id,r){
+  const F={cat:r.group==='p'?'p':'c'};
+  ['n','k','p','c','f','d','step'].forEach(k=>{F[k]=+r[k]||0;});
+  F.n=String(r.n||id);F.step=+r.step||1;['min','max','order'].forEach(k=>{if(r[k]!=null)F[k]=+r[k];});
+  if(r.unit==='ml')F.unit='ml';
+  if(FREE_KINDS.includes(r.free))F.free=r.free;
+  return F;
+}
 /* Use a plan (one of the account's dated plan changes, or null for none). Library foods (L:…) are dropped too –
    app.js registers them again after. */
 function applyDefaults(cfg){
@@ -78,11 +87,8 @@ function applyDefaults(cfg){
   PUD_ON=!!foods.pudding;
   for(const [id,r] of Object.entries(foods)){
     if(!r||typeof r!=='object')continue;
-    const F=id==='pudding'?FOODS.pudding:(FOODS[id]={cat:r.group==='p'?'p':'c'});
-    if(id!=='pudding')['n','k','p','c','f','d','step'].forEach(k=>{F[k]=+r[k]||0;});
-    if(id!=='pudding'){F.n=String(r.n||id);F.step=+r.step||1;['min','max','order'].forEach(k=>{if(r[k]!=null)F[k]=+r[k];});}
-    if(r.unit==='ml')F.unit='ml';
-    if(FREE_KINDS.includes(r.free))F.free=r.free;
+    if(id==='pudding'){if(r.unit==='ml')FOODS.pudding.unit='ml';if(FREE_KINDS.includes(r.free))FOODS.pudding.free=r.free;}
+    else FOODS[id]=planFoodRec(id,r);
     if(groups[r.group])groups[r.group].push(id);
   }
   for(const [a,b] of Object.entries(SPILL)){if(FOODS[a]){if(FOODS[b])FOODS[a].spill=b;else delete FOODS[a].spill;}}
@@ -99,8 +105,8 @@ function applyDefaults(cfg){
 }
 const hasTemplate=id=>TEMPLATES.some(t=>t.id===id);
 const templateName=id=>{const t=TEMPLATES.find(x=>x.id===id);return t?t.name:'';};
-/* a plan food (not a library food) the account can pick in its plan's boxes */
-const planFood=id=>!!FOODS[id]&&(id!=='pudding'||PUD_ON)&&!String(id).startsWith('L:');
+/* a plan food (not a library food, nor one only kept for an old day – .gone) the account can pick in its plan's boxes */
+const planFood=id=>!!FOODS[id]&&!FOODS[id].gone&&(id!=='pudding'||PUD_ON)&&!String(id).startsWith('L:');
 /* the meals of a day template, ready to use; foods that no longer exist are left out. Fats and spreads go in their own box. */
 function planOf(t){
   return (PLAN[t]||[]).map(m=>{const o={id:String(m.id),name:m.name,p:[],c:[],x:[]};if(m.note)o.note=m.note;

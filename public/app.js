@@ -120,9 +120,10 @@ async function loadDay(date){
   return true;
 }
 async function openDay(date){
-  S.cur=date;
+  const was=S.cur;S.cur=date;
   if(!await loadDay(date))return;
-  if(S.cur===date) render();
+  if(S.cur!==date)return;
+  try{render();}catch(e){S.cur=was;render();alert('Couldn’t show that day: '+e.message);}   /* never leave another day on screen */
 }
 async function saveNow(){                    /* log a plan you haven't changed */
   const date=S.cur;pending.set(date,JSON.stringify(day()));await flush();
@@ -298,7 +299,16 @@ function libFoodRec(food){const m=food.unit==='each'?100:1;
   const F={n:food.name+(food.ai?' ⚑':''),kind:food.kind,ai:food.ai?food.ai.fields:undefined,k:food.k*m,p:food.p*m,c:food.c*m,f:food.f*m,d:0,step:food.unit==='each'?1:food.unit==='ml'?10:5,cat:'c'};
   if(food.free)F.free=food.free;
   if(food.unit!=='g')F.unit=food.unit==='each'?'×':'ml';return F;}
-function libLoad(D){for(const [fid,F] of Object.entries(D.lib||{}))if(isLib(fid)&&!FOODS[fid])FOODS[fid]={...F};}
+function libLoad(D){for(const [fid,F] of Object.entries(D.lib||{}))if(isLib(fid)&&!FOODS[fid])FOODS[fid]={...F};planFill(D);}
+/* A saved day can use a plan food the plan in effect on its date doesn't have (a plan change carried over without it,
+   or one dated after the day was made): take it from your other plan changes, newest first, or show it with no values,
+   so the day still opens. */
+function planFill(D){
+  const vs=(typeof DEFS!=='undefined'&&DEFS.myVersions)||[];
+  allItems(D).forEach(({f})=>{if(FOODS[f])return;
+    const v=!isLib(f)&&[...vs].reverse().find(x=>x.foods&&x.foods[f]&&typeof x.foods[f]==='object');
+    FOODS[f]={...(v?planFoodRec(f,v.foods[f]):{cat:'c',n:`Unknown food (${f})`,k:0,p:0,c:0,f:0,d:0,step:1}),gone:true};});
+}
 /* After the library changes or the admin defaults are applied (which drop foods the calculator didn't ship with). */
 function libRegister(){LIB.forEach(f=>{FOODS[libFid(f)]=libFoodRec(f);});Object.values(S.days).forEach(libLoad);LIBV++;}
 function libSync(D){let lib=null;
