@@ -11,7 +11,7 @@
 
 let PHOTOS=null, PPOSES=[], PSTYLES=[], pReadAt=0;
 let pPose='all', pDate=todayStr(), pUpPose='other', pMsg='', pTok=0, pBusy=false;
-let pUpSay='', pUpErr='';   /* an upload's progress line and its error: kept here so leaving Photos and coming back still shows them */
+let pUpSay='', pUpErr='', pFocusAdd=false;   /* an upload's progress line and its error: kept here so leaving Photos and coming back still shows them */
 let pSel=false, pPick=[];                          /* picking photos to compare, and the ones picked (up to 2) */
 let pAi=false, pAiBusy=false, pAiSay='';         /* AI set up (an admin's OpenRouter key), a "Tag with AI" run going and how far it is */
 let pStopUp=false, pStopAi=false;                 /* Stop pressed: the upload / AI run finishes the photos in flight, then stops */
@@ -99,6 +99,7 @@ async function renderPhotos(args){
     }
     if(cmp){box.innerHTML=tabs+pCmpPage(+x||0,+y||0);pSize(box);return;}
     box.innerHTML=tabs+pCatalogPage();renderPhotoList();
+    if(pFocusAdd){pFocusAdd=false;const b=$('#p-addbtn');if(b)b.focus();}   /* the photo page it was on is gone */
   }catch(e){if(!e.signedOut&&tok===pTok)box.innerHTML=tabs+gEmpty('Couldn’t load your photos: '+e.message);}
 }
 
@@ -380,6 +381,8 @@ async function pUpload(form){
     await Promise.all(Array.from({length:Math.min(P_PARALLEL,n)},worker));
     if(stop&&stop.signedOut)return;
     const left=files.filter(f=>{const e=pWent(f);return !(e&&e.t);}).length;
+    /* stored, but a smaller version refused (a full account answers its 413 too): kept, shown from the full picture */
+    const unsent=files.filter(f=>!pWent(f)).length, noThumb=left-unsent;
     if(!left){files.forEach(f=>pSent.delete(pSig(f)));pSentKeep();}
     const ds=[...dates].sort();
     pMsg=!added?'':pDot(`Added ${added} photo${added===1?'':'s'} `+(ds.length===1?`for ${fmtLong(ds[0])}`:`over ${ds.length} days, ${fmtShort(ds[0])} to ${fmtShort(ds[ds.length-1])}`)+
@@ -388,9 +391,10 @@ async function pUpload(form){
       (aiMiss?` The AI couldn’t tag ${aiMiss===added?(added===1?'it':'them'):aiMiss} – ${aiMiss===1?'it’s':'they’re'} under Other; try “Tag poses with AI” again later or change the pose on the photo.`:'');
     if(!added&&before&&!left)pMsg=`All ${n===1?'of it':n} had gone up already – nothing sent again.`;
     if(stop||fails.length||left){
-      showErr((done()?`Added ${done()} of ${n}. `:'')+(stop?stop.message+' ':pStopUp&&!fails.length?'Stopped. ':'')+
+      showErr((done()?`Added ${done()} of ${n}. `:'')+(stop?pDot(stop.message)+' ':pStopUp&&!fails.length?'Stopped. ':'')+
         (fails.length?`${fails.length} couldn’t be added – ${fails.slice(0,3).join('; ')}${fails.length>3?'; …':''} `:'')+
-        (left&&left>fails.length?`${left} not sent yet – tap “Upload the rest”.`:''));
+        (unsent&&unsent>fails.length?`${unsent} not sent yet – tap “Upload the rest”. `:'')+
+        (noThumb>0?`${noThumb} ${noThumb===1?'was stored but has':'were stored but have'} no thumbnail yet, so ${noThumb===1?'it loads':'they load'} slowly – “Upload the rest” sends ${noThumb===1?'it':'them'} once there’s room.`:''));
     }
   }catch(x){
     if(x.signedOut)return;
@@ -402,7 +406,8 @@ async function pUpload(form){
   if(view!=='photos'||location.hash.replace(/^#/,'').split('/')[1])return;
   const f=$('#p-form');if(!f)return;
   if(!pUpErr){f.reset();$('#p-date').value=pDate;if($('#p-pose'))$('#p-pose').value=pUpPose;$('#p-exif').checked=pUseExif;$('#p-pick').textContent='';
-    if(PHOTOS&&PHOTOS.length){pAddOpen=false;f.hidden=true;const a=$('#p-addbtn');if(a)a.setAttribute('aria-expanded','false');}}
+    if(PHOTOS&&PHOTOS.length){pAddOpen=false;const a=$('#p-addbtn');if(a)a.setAttribute('aria-expanded','false');
+      const lost=f.contains(document.activeElement)||document.activeElement===document.body;f.hidden=true;if(lost&&a)a.focus();}}   /* focus was in the form just hidden */
   $('#p-state').textContent='';const b=btn();if(b)b.disabled=false;const s=stopBtn();if(s)s.hidden=true;
   pUpLabel();renderPhotoList();
 }
@@ -476,14 +481,23 @@ async function pSave(form){
       ...(said&&said.pose===pose&&said.style===style?{ai:true}:{})},form.dataset.ver||undefined);
     PHOTOS=PHOTOS.filter(x=>x.id!==id);PHOTOS.push(p);pSort();
     pDirty=false;pMsg='Saved.';go('photos');
-  }catch(e){btn.disabled=false;if(!e.signedOut){if(e.conflict||/No such/.test(e.message))pLoad().catch(()=>{});
-    if(!errToField(e,[[/date|day/i,$('#p-edate')],[/note/i,$('#p-enote')]])){err.textContent=endStop(e.message);err.hidden=false;}}}
+  }catch(e){btn.disabled=false;if(e.signedOut)return;
+    if(e.conflict){
+      /* changed in another tab: take its version and keep what's typed here, so Save works again once checked */
+      try{await pLoad();}catch(x){if(x.signedOut)return;}
+      const q=pById(id);
+      if(q){form.dataset.ver=q.updated||'';err.textContent='Changed elsewhere – check and save again.';}
+      else err.textContent='This photo was deleted in another tab or device.';
+      err.hidden=false;return;
+    }
+    if(/No such/.test(e.message))pLoad().catch(()=>{});
+    if(!errToField(e,[[/date|day/i,$('#p-edate')],[/note/i,$('#p-enote')]])){err.textContent=endStop(e.message);err.hidden=false;}}
 }
 async function pDelete(id){
   const p=pById(id);if(!p)return;
   if(!await ask(`Delete this ${(pPoseName(p.pose)).toLowerCase()} photo from ${fmtLong(p.date)}? This can’t be undone.`,{yes:'Delete photo',no:'Keep it',danger:true})||!pById(id))return;
   try{await api('DELETE','/api/photos/'+id);}catch(e){if(!e.signedOut)noteBy(document.querySelector(`[data-pa=del][data-id="${id}"]`)||null,'Couldn’t delete the photo: '+endStop(e.message));return;}
-  PHOTOS=PHOTOS.filter(x=>x.id!==id);pPick=pPick.filter(x=>x!==id);pDirty=false;pMsg='Deleted the photo.';go('photos');
+  PHOTOS=PHOTOS.filter(x=>x.id!==id);pPick=pPick.filter(x=>x!==id);pDirty=false;pMsg='Deleted the photo.';pFocusAdd=true;go('photos');
 }
 
 

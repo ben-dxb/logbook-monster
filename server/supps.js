@@ -41,7 +41,7 @@ const q = {
 };
 const trendsOf = user => q.trends.all(user.id).map(r => r.name);
 
-const MAX_SUPPS = 300, MAX_LOG = 50000, MAX_TRENDS = 30;
+const MAX_SUPPS = 300, MAX_LOG = 50000, MAX_TRENDS = 30, MAX_AMOUNT = 1e6;   // the amount boxes in public/supps.js carry the same max
 const UNITS = ['g', 'mg', 'mcg', 'IU', 'ml', 'drops', 'capsules', 'tablets', 'softgels', 'scoops', 'servings'];
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 const fail = (msg, status = 400) => Object.assign(new Error(msg), { status });
@@ -59,7 +59,8 @@ const unitOf = v => {
 function amountOf(v, optional) {
   if (optional && (v === '' || v == null)) return null;
   const n = +v;
-  if (!isNum(v) || n <= 0 || n > 1e6) throw fail('Amount must be a number above 0');
+  if (!isNum(v) || n <= 0) throw fail('Amount must be a number above 0');
+  if (n > MAX_AMOUNT) throw fail(`Amount can be ${MAX_AMOUNT.toLocaleString('en')} at most`);
   const r = Math.round(n * 1000) / 1000;
   if (!r) throw fail('That amount is too small to keep – use a smaller unit (mg or mcg)');   /* never stored as 0 */
   return r;
@@ -198,10 +199,21 @@ router.post('/import', (req, res) => {
     if (list.length > MAX_ITEMS) throw fail(`Import ${MAX_ITEMS} supplements at most at a time`);
     const day = req.body.log == null || req.body.log === '' ? null : req.body.log;
     if (day !== null && writeError(day)) throw fail(writeError(day, 'Pick a day to log them on'));
-    const items = list.map((b, i) => {
-      try { return clean({ ...(isObj(b) ? b : {}), public: false }); }
+    /* the same name twice (whatever the case or spacing) is one supplement: the first line's spelling, and its amount
+       and notes unless it has none */
+    const byName = new Map();
+    list.forEach((b, i) => {
+      let d;
+      try { d = clean({ ...(isObj(b) ? b : {}), public: false }); }
       catch (e) { throw fail(`Item ${i + 1}${isObj(b) && b.name ? ` (${String(b.name).slice(0, 40)})` : ''}: ${e.message}`); }
+      const k = d.name.replace(/\s+/g, ' ').trim().toLowerCase(), had = byName.get(k);
+      if (!had) byName.set(k, d);
+      else {
+        if (had.amount == null && d.amount != null) { had.amount = d.amount; had.unit = d.unit; }
+        if (!had.notes) had.notes = d.notes;
+      }
     });
+    const items = [...byName.values()];
     const out = tx(() => {
       let added = 0, updated = 0;
       const entries = [];

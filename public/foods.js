@@ -225,7 +225,7 @@ function fAddForm(f){
   const ul=f.unit==='each'?'How many':f.unit==='ml'?'Millilitres':'Grams';
   return `<form class="fadd" id="f-addform" data-id="${f.id}">
     <label class="f"><span class="lbl">Day</span><input id="f-adate" type="date" value="${esc(a.date)}" required></label>
-    <label class="f"><span class="lbl">${ul}</span><input id="f-aqty" type="number" inputmode="decimal" min="0" step="${f.unit==='each'?'0.5':'1'}" value="${esc(a.qty)}" required></label>
+    <label class="f"><span class="lbl">${ul}</span><input id="f-aqty" type="number" inputmode="decimal" min="0" max="${f.unit==='each'?20:2000}" step="${f.unit==='each'?'0.5':'1'}" value="${esc(a.qty)}" required></label>
     <label class="f fwhere"><span class="lbl">Where</span><select id="f-awhere">${fWhereOpts(a.date,a.where)}</select></label>
     <span class="ml fprev" id="f-aprev">${fMacros(m)}</span>
     <div class="factions"><button class="btn" type="submit">Add to plan</button><button class="ghost" type="button" data-fa="cancel">Cancel</button></div>
@@ -316,11 +316,20 @@ async function fSave(form){
     const food=await api(id?'PUT':'POST','/api/foods'+(id?'/'+id:''),body,id&&form.dataset.ver||undefined);
     LIB=LIB.filter(x=>x.id!==food.id);LIB.push(food);fSort();fDirty=false;
     fMsg=id?`Saved “${food.name}”.`:`Added “${food.name}” to your library.`;go('foods');
-  }catch(e){btn.disabled=false;if(!e.signedOut){const m=e.message+(fAiOn&&/calories or macros/.test(e.message)?' – or tap “Fill blanks with AI”':'');
+  }catch(e){btn.disabled=false;if(e.signedOut)return;
+    if(e.conflict){
+      /* changed in another tab: take its version and keep what's typed here, so Save works again once checked */
+      try{await fFetch();}catch(x){if(x.signedOut)return;}
+      const q=fById(id);
+      if(q){form.dataset.ver=q.updated||'';err.textContent='Changed elsewhere – check and save again.';}
+      else err.textContent='This food was deleted in another tab or device.';
+      err.hidden=false;return;
+    }
+    {const m=e.message+(fAiOn&&/calories or macros/.test(e.message)?' – or tap “Fill blanks with AI”':'');
     /* a refusal about one box goes to that box */
     const at=[[/name/i,'f-name'],[/^calories|calories or macros/i,'f-k'],[/^protein/i,'f-p'],[/^carb/i,'f-c'],[/^fat/i,'f-f'],[/cooked weight/i,'f-yield'],[/recipe/i,'f-recipe']].find(([re])=>re.test(e.message));
     if(at&&$('#'+at[1])&&!$('#'+at[1]).closest('[hidden]'))fieldError($('#'+at[1]),m);else{err.textContent=endStop(m);err.hidden=false;}
-    if(e.conflict||/No such/.test(e.message))fFetch().catch(()=>{});}}   /* changed or gone elsewhere: the list shows it as it is now */
+    if(/No such/.test(e.message))fFetch().catch(()=>{});}}   /* changed or gone elsewhere: the list shows it as it is now */
 }
 async function fDelete(id){
   const f=fById(id);if(!f)return;
@@ -365,7 +374,8 @@ document.addEventListener('change',e=>{
   if(view!=='foods')return;
   if(e.target.id==='f-who'){fF.who=e.target.value;fKeep();renderFoodList();}
   else if(e.target.id==='f-order'){fF.order=e.target.value;fKeep();renderFoodList();}
-  else if(e.target.id==='f-unit'&&fEdit){fEdit.unitSet=true;fPaintState();}
+  else if(e.target.id==='f-unit'&&fEdit){fEdit.unitSet=true;fPaintState();
+    if(fEdit.ai){fEdit.ai=null;fPaintAi();}}   /* the AI's numbers were per the old unit: no longer its estimates */
   else if(e.target.id==='f-state'&&fEdit){fPaintState();}
 });
 document.addEventListener('input',e=>{
