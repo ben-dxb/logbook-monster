@@ -86,7 +86,7 @@ async function appShell(browser, pg, w, h) {
   await pg.waitForFunction(() => document.title.includes(fmtLong(todayStr())));
   expect(await pg.evaluate(() => document.activeElement.dataset.act) === 'next', 'next day should keep focus on its button');
   for (const [hsh, t] of [['dash', 'Dashboard'], ['history', 'History'], ['history/timeline', 'Timeline'], ['foods', 'Food Library'], ['supps', 'Supplements'],
-    ['photos', 'Progress photos'], ['account', 'Account admin'], ['admin/people', 'Super admin – People'], ['admin/log', 'Super admin – Security log']]) {
+    ['photos', 'Progress photos'], ['account', 'Account admin – Plan'], ['account/sharing', 'Account admin – Sharing'], ['admin/people', 'Super admin – People'], ['admin/log', 'Super admin – Security log']]) {
     await pg.evaluate(x => { location.hash = '#' + x; }, hsh);
     await pg.waitForFunction(t => document.title === t + ' – Logbook Monster' && document.activeElement.id === 'vh', t, { timeout: 5000 })
       .catch(() => { throw new Error(`#${hsh}: title should be “${t} – Logbook Monster” with focus on its heading`); });
@@ -313,6 +313,7 @@ async function twoStep(browser, w, h) {
   await pg.click('#tfbody [data-tf=start]'); await pg.waitForSelector('#tf-secret');
   const secret = (await pg.textContent('#tf-secret')).replace(/\s/g, '');
   expect(/^[A-Z2-7]{32}$/.test(secret) && await pg.locator(`#tfbody a[href^="otpauth://totp/"][href*="secret=${secret}"]`).count() === 1, 'the key should show as text and as an otpauth link');
+  expect(await pg.locator('#tfbody .tfqr svg[role=img][aria-label] path').count() === 1, 'the set-up link should show as a QR code');
   await overflow('with the two-step set-up open');
   const code = n => totp.totp(totp.fromBase32(secret), Date.now() + n * 30000);
   await pg.fill('#tf-code', '000000' === code(0) ? '111111' : '000000'); await pg.click('#tfbody [data-tf=on] button');
@@ -324,6 +325,10 @@ async function twoStep(browser, w, h) {
   await pg.click('#tfbody [data-tf=on] button');
   await pg.waitForFunction(() => document.querySelectorAll('#tf-codes li').length === 10, null, { timeout: 5000 });
   const recovery = await pg.textContent('#tf-codes li >> nth=0');
+  { const [dl] = await Promise.all([pg.waitForEvent('download'), pg.click('#tfbody [data-tf=dl]')]);
+    const txt = fs.readFileSync(await dl.path(), 'utf8');
+    expect(dl.suggestedFilename() === 'logbook-monster-recovery-codes.txt' && txt.includes(recovery) && txt.split('\n').filter(l => /^[A-Z2-7]{5}-?[A-Z2-7]{5}$/i.test(l.trim())).length === 10, 'Download codes should save all ten'); }
+  expect(await pg.isVisible('#tfbody [data-tf=copy]'), 'Copy codes is offered');
   await overflow('with the recovery codes shown');
   await pg.click('#tfbody [data-tf=done]');
   await pg.waitForFunction(() => /10 recovery codes left/.test(document.querySelector('#tfbody').textContent), null, { timeout: 5000 });
@@ -372,7 +377,7 @@ async function deleteAccount(browser, w, h) {
   await pg.click('#pwbox>summary'); await pg.waitForSelector('#pw-linksf:not([hidden])');
   expect(/my coach link \(Coach Sam\)/.test(await pg.textContent('#pw-linkst')) && !(await pg.isChecked('#pw-links')), 'the box names the live link and starts unticked');
   await overflow('with the password box open');
-  await pg.goto(BASE + '/#account'); await pg.waitForSelector('#ad-del-btn');
+  await pg.goto(BASE + '/#account/security'); await pg.waitForSelector('#ad-del-btn');
   await pg.fill('#ad-del-email', 'someone@example.com'); await pg.click('#ad-del-btn');
   await pg.waitForFunction(() => /exactly to confirm/.test(document.querySelector('#ad-del').textContent) && document.querySelector('#ad-del-email').getAttribute('aria-invalid') === 'true', null, { timeout: 5000 });
   await overflow('on Account admin');
@@ -1651,7 +1656,9 @@ async function formKit(browser) {
       await pg.keyboard.press('Escape'); await pg.waitForFunction(() => !document.querySelector('#t-card').open && location.hash === '#history/timeline');
       await pg.evaluate(() => { location.hash = '#timeline'; }); await pg.waitForFunction(() => location.hash === '#history/timeline' && !document.querySelector('#v-timeline').hidden);
       /* coach link: made on Account admin, opened with no sign-in (read only: no edit controls, no AI), then switched off */
-      await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-share');
+      await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-mytabs');
+      await pg.click('#ad-mytabs a[data-myt=sharing]'); await pg.waitForSelector('#v-admin:not([hidden]) #ad-share');
+      expect(await pg.title() === 'Account admin – Sharing – Logbook Monster' && await pg.isHidden('.adbar') && await pg.isHidden('#ad-meals'), 'the Sharing tab shows only coach links');
       await pg.fill('#ad-sh-label', 'Smoke coach'); await pg.selectOption('#ad-sh-for', 'date');
       expect(!(await pg.isHidden('#ad-sh-until')), 'picking "Until a date" should show a date field');
       await pg.fill('#ad-sh-until', '2020-01-01');   /* a past date left in the hidden field mustn't hold up "Make link" */
@@ -1708,6 +1715,16 @@ async function formKit(browser) {
         expect(/Refeed day/.test(await pg.textContent('#ad-types')) && await pg.inputValue('#ad-mn-0') === 'Smoke bowl', 'the copy should have the rest day meals');
         await pg.fill(`#ad-tg-${rf}-c`, '420');
         await pg.selectOption('#ad-wd-6', rf);
+        expect(!(await pg.isHidden('#ad-mytabs .admydirty')) && await pg.getAttribute('.adbar', 'role') === null && await pg.getAttribute('#ad-status', 'role') === 'status',
+          'the Plan tab says Unsaved; only the status line is live, not the bar round the buttons');
+        /* a proxy's 502 page: said beside Save in words, not "HTTP 502", and nothing saved */
+        await pg.route('**/api/my/defaults', r => r.request().method() === 'PUT' ? r.fulfill({ status: 502, contentType: 'text/html', body: '<html>Bad gateway</html>' }) : r.continue());
+        const errs502 = errs.length;
+        await pg.click('#ad-save'); await pg.waitForSelector('#ad-saveerr:not([hidden])');
+        errs.push(...errs.splice(errs502).filter(m => !/status of 502/.test(m)));   /* the browser logs the 502 asked for */
+        { const t = await pg.textContent('#ad-saveerr'), r = await pg.evaluate(() => { const b = $('#ad-saveerr').getBoundingClientRect(); return b.top >= 0 && b.bottom <= innerHeight; });
+          expect(/The server didn’t answer – try again in a minute/.test(t) && !/HTTP/.test(t) && r, 'a 502 should be said in words, in view next to Save: ' + t); }
+        await pg.unroute('**/api/my/defaults');
         await pg.click('#ad-save');
         await pg.waitForFunction(() => /Saved/.test(document.querySelector('#ad-status').textContent), null, { timeout: 5000 });
         expect(/5 day templates/.test(await pg.textContent('#ad-planstate')), 'the new template should be saved with the plan');
@@ -1759,7 +1776,7 @@ async function formKit(browser) {
           === JSON.stringify(['"\'=HYPERLINK(""x"")"', "'+1", "'-1", "'@SUM(A1)", '"Oats, 80 g"', 'plain']), 'CSV cells starting with = + - @ get a leading apostrophe');
         /* the daily checklist: drop Cardio, add an item, save – the Dashboard follows; Weigh in and Supplements taken tick
            themselves from today's weight and supplement log */
-        await pg.waitForSelector('#ad-cl .adclrow');
+        await pg.click('#ad-mytabs a[data-myt=checklist]'); await pg.waitForSelector('#ad-cl .adclrow');
         expect(await pg.locator('#ad-cl .adclrow').count() === 7, 'the checklist editor starts with the default list');
         await pg.click('#ad-cl [data-cl=del][data-i="6"]');
         await pg.click('[data-cl=add]'); await pg.fill('#ad-cl input[data-cl=label][data-i="6"]', 'Smoke stretch');
@@ -1775,7 +1792,11 @@ async function formKit(browser) {
         expect(/Smoke creatine/.test(await pg.textContent('#d-body')), 'the supplement regime card lists the library');
         await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
         expect(/OpenRouter API key/.test(await pg.textContent('#ad-aistate')) && await pg.isDisabled('#ad-aifile'), 'PDF reading should be off without a key');
-        /* your own security log: sign-ins and coach links, read only */
+        /* your own security log: sign-ins and coach links, read only, in words (the link by its name, no raw ids or ISO dates) */
+        await pg.click('#ad-mytabs a[data-myt=security]');
+        await pg.waitForFunction(() => /Coach link made/.test(document.querySelector('#ad-mylog').textContent), null, { timeout: 5000 });
+        { const t = await pg.textContent('#ad-mylog');
+          expect(/with the password/.test(t) && /“Smoke coach” · live until/.test(t) && !/via:|id:|expires:|T\d\d:\d\d:\d\d/.test(t), 'the log detail should read as words: ' + t.slice(0, 300)); }
         await pg.waitForFunction(() => /Signed in/.test(document.querySelector('#ad-mylog').textContent) && /Coach link opened/.test(document.querySelector('#ad-mylog').textContent), null, { timeout: 5000 });
         /* super admin: no plan editor at all – AI, people and email in tabs */
         await pg.click('#acct>summary'); await pg.click('#adminlink');
@@ -1929,6 +1950,7 @@ async function formKit(browser) {
           const jpg = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, ...new Array(40).fill(32), 0xff, 0xd9])], { type: 'image/jpeg' });
           for (const d of ['2026-03-01', '2026-03-20', '2026-05-01']) await pSend('POST', `/api/photos?date=${d}&pose=front`, jpg);
         });
+        await gp.click('#ad-mytabs a[data-myt=security]'); await gp.waitForSelector('#ad-pd-from');
         await gp.fill('#ad-pd-from', '2026-03-01'); await gp.fill('#ad-pd-to', '2026-03-31');
         await gp.waitForFunction(() => /^2 photos/.test(document.querySelector('#ad-pdmsg').textContent) && !document.querySelector('#ad-pd-btn').disabled, null, { timeout: 5000 });
         await gp.click('#ad-pd-btn'); await answer(gp, true);
@@ -2002,6 +2024,12 @@ async function formKit(browser) {
           await pg.waitForFunction(() => /saved/.test(document.querySelector('#ad-capmsg').textContent), null, { timeout: 5000 });
         }
         expect(await pg.inputValue('#ad-capuser') === '100', 'saved cap should show');
+        /* a refused number stays in its box with the reason, and nothing is sent */
+        { let sent = 0; const on = r => { if (r.method() === 'PUT' && /\/api\/admin\/options$/.test(r.url())) sent++; }; pg.on('request', on);
+          await pg.evaluate(() => { document.querySelector('#ad-capmsg').textContent = ''; });
+          await tapGap(pg); await pg.fill('#ad-capuser', '-5'); await pg.click('#ad-capform button[type=submit]'); await pg.waitForTimeout(500); pg.off('request', on);
+          expect(sent === 0 && !/saved/.test(await pg.textContent('#ad-capmsg')) && await pg.getAttribute('#ad-capuser', 'aria-invalid') === 'true', 'a refused cap should not be saved'); }
+        await pg.fill('#ad-capuser', '100');
         await pg.click('#acct>summary'); await pg.click('#accountlink'); await pg.waitForSelector('#v-admin.mine:not([hidden]) #ad-meals .admeal');
         expect(!(await pg.isHidden('[data-ad=csv]')), 'plan file buttons should be back when switched on');
       }

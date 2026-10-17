@@ -29,7 +29,7 @@ function kyRot(k){
   if(el.contains(document.activeElement)&&el.querySelector('input')===document.activeElement){const m=el.querySelector('[data-ky-msg]');if(m)m.textContent=kyMsg[k];return;}
   el.innerHTML=`<h3 class="lbl">Rotate the ${R.what}</h3>
     <p class="sub">Make a new ${R.what} at ${R.where}, save it here as next and test it, then promote it. The one it replaces is kept for an hour: revoke it at ${R.where}, then Test old – it must fail. See docs/rotation.md.</p>
-    <form class="adkey" data-ky-form="${k}"><label class="f"><span class="lbl">Next ${R.what}</span><input type="password" autocomplete="new-password" spellcheck="false" data-ky-in="${k}" aria-describedby="ad-rot-${k}-msg"></label>
+    <form class="adkey" data-ky-form="${k}"><label class="f"><span class="lbl">Next ${R.what}</span><input type="password" autocomplete="off" spellcheck="false" data-ky-in="${k}" aria-describedby="ad-rot-${k}-msg"></label>
       <button class="btn" type="submit">Save as next</button></form>
     <div class="admailact"><button class="ghost" type="button" data-ky="test" data-k="${k}" data-slot="next"${s.next?'':' disabled'}>Test next</button>
       <button class="ghost" type="button" data-ky="promote" data-k="${k}"${s.next?'':' disabled'}>Promote</button>

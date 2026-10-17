@@ -113,7 +113,7 @@ router.get('/', (req, res) => {
 function tell(user, on) {
   mail.notify({ to: user.email, subject: `Logbook Monster: two-step sign-in switched ${on ? 'on' : 'off'}`,
     text: `Two-step sign-in was just switched ${on ? 'on' : 'off'} for your Logbook Monster account.\n\n`
-      + `If that wasn’t you, change your password straight away and check Account admin › Security log:\n${config.baseUrl}/#account\n` });
+      + `If that wasn’t you, change your password straight away and check Account admin › Security & data › Sign-ins and security:\n${config.baseUrl}/#account/security\n` });
 }
 /* a new secret, not in use until a code from it is confirmed. Setting up and switching on need a recent sign-in or re-check
    (NEW-SEC-01): a stolen session can't tie the account to someone else's app. */

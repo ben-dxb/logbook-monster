@@ -15,6 +15,7 @@
 <script defer src="/jobs.js"></script>
 <script defer src="/admin.js"></script>
 <script defer src="/keys.js"></script>
+<script defer src="/qr.js"></script>
 <script defer src="/gymcsv.js"></script>
 <script defer src="/exifdate.js"></script>
 <script defer src="/gym.js"></script>
@@ -233,13 +234,20 @@
 
   <!-- ===================== ADMIN =====================
        One page, two scopes: #account (account admin – anyone, their own plan, week, targets and foods)
-       and #admin (super admin – app-wide settings, in tabs: #admin/ai, #admin/people, #admin/email, #admin/options, #admin/log).
-       .admine / .adapp / .adsuper parts show for one scope only; data-adtab says which super admin tab a panel is on. -->
+       in tabs: #account (Plan), #account/checklist, #account/sharing, #account/security – and #admin (super admin – app-wide
+       settings, in tabs: #admin/ai, #admin/people, #admin/email, #admin/options, #admin/log, #admin/keys).
+       .admine / .adapp / .adsuper parts show for one scope only; data-mytab / data-adtab say which tab a part is on. -->
   <section id="v-admin" class="view" hidden>
     <section class="panel adintro">
       <h2 class="admine">Account admin</h2><h2 class="adapp">Super admin</h2>
-      <p class="admine">Your meal plan is yours alone: your foods, your day templates (training day, rest day, or any others you need – each with its meals and targets) and which template each weekday uses. Nothing here comes from anyone else’s plan.</p>
+      <p class="admine" data-mytab="plan">Your meal plan is yours alone: your foods, your day templates (training day, rest day, or any others you need – each with its meals and targets) and which template each weekday uses. Nothing here comes from anyone else’s plan.</p>
       <p class="adapp">Settings for the whole app: the AI set-up, who can sign in and the email account the app sends from. Meal plans aren’t set here – each account keeps its own on its Account admin page.</p>
+      <nav class="seg gtabs adtabs admine" id="ad-mytabs" aria-label="Account admin">
+        <a href="#account" data-myt="plan">Plan<span class="chip bad admydirty" hidden>Unsaved</span></a>
+        <a href="#account/checklist" data-myt="checklist">Checklist</a>
+        <a href="#account/sharing" data-myt="sharing">Sharing</a>
+        <a href="#account/security" data-myt="security">Security &amp; data</a>
+      </nav>
       <nav class="seg gtabs adtabs adapp" id="ad-tabs" aria-label="Super admin">
         <a href="#admin/ai" data-adt="ai">AI</a>
         <a href="#admin/people" data-adt="people">People</a>
@@ -250,15 +258,15 @@
       </nav>
       <p id="ad-keybanner" class="aderr adapp" role="alert" hidden></p>
     </section>
-    <div class="adbar admine" role="status">
-      <div id="ad-status" class="status"></div>
+    <div class="adbar admine" data-mytab="plan">
+      <div id="ad-status" class="status" role="status"></div>
       <label class="f adfrom"><span class="lbl">Takes effect from</span><input id="ad-from" type="date" data-ad="from" aria-describedby="ad-fromhint"></label>
       <span class="sb"><button class="ghost" type="button" data-ad="discard" id="ad-discard" hidden>Discard changes</button>
         <button class="btn" type="button" data-ad="save" id="ad-save" disabled>Save my plan</button></span>
       <p id="ad-fromhint" class="sub adfromhint"></p>
       <div id="ad-saveerr" class="ferrsum adsaveerr" role="alert" hidden></div>
     </div>
-    <section class="panel admine" aria-labelledby="ad-ph">
+    <section class="panel admine" aria-labelledby="ad-ph" data-mytab="plan">
       <h2 id="ad-ph">My meal plan</h2>
       <p>Your plan is a set of day templates – one for each kind of day you eat differently on. Each has its own meals and targets.
         Add, rename, duplicate or delete templates below<span class="adfiles">, or upload a plan (download it, change it in a spreadsheet and upload it again)</span>.
@@ -267,8 +275,8 @@
       <div id="ad-versions" class="adversions" hidden></div>
       <div class="adtools">
         <label class="btn adfile adfiles">Upload plan (CSV or JSON)<input id="ad-file" type="file" accept=".csv,.json,.txt,text/csv,application/json"></label>
-        <button class="ghost adfiles" type="button" data-ad="csv">Download plan (CSV)</button>
-        <button class="ghost adfiles" type="button" data-ad="json">Download whole plan (JSON)</button>
+        <button class="ghost adfiles" type="button" data-ad="csv" id="ad-csv" hidden>Download plan (CSV)</button>
+        <button class="ghost adfiles" type="button" data-ad="json" id="ad-json" hidden>Download whole plan (JSON)</button>
       </div>
       <section class="adai" aria-labelledby="ad-aih">
         <h3 class="lbl" id="ad-aih">Read a PDF with AI</h3>
@@ -291,7 +299,7 @@
       <div id="ad-tpl" class="adtpl"></div>
       <div id="ad-meals" class="admeals"></div>
     </section>
-    <section class="panel admine" aria-labelledby="ad-wh">
+    <section class="panel admine" aria-labelledby="ad-wh" data-mytab="plan">
       <h2 id="ad-wh">My week and targets</h2>
       <p>Which day template each weekday starts from. On the Daily Tracker you can switch any one day to another template.</p>
       <div id="ad-week" class="adweek"></div>
@@ -303,12 +311,12 @@
         <button type="button" data-act="pbasis" data-v="direct" aria-pressed="false">Direct protein</button></div>
       <p>Which protein auto-balance aims the protein target at. Direct protein is meat, eggs, dairy and whey only; total also counts carbs and off-plan food. Saved straight away (no need to save your plan); it’s the same switch as on the Daily Tracker. A day re-balances to it the next time you change that day – saved days don’t move on their own.</p>
     </section>
-    <section class="panel admine" aria-labelledby="ad-frh">
+    <section class="panel admine" aria-labelledby="ad-frh" data-mytab="plan">
       <h2 id="ad-frh">My free foods</h2>
       <p>Whether sauces and green veg count towards the day’s macros. Ticked, foods marked Sauce or Green veg (in the foods below, in the food library and in the starter foods) add nothing to the totals and the balancing leaves them alone. Like the rest of your plan, it applies from the “Takes effect from” date, so earlier days keep the totals they had.</p>
       <div id="ad-free" class="adfree"></div>
     </section>
-    <section class="panel admine" aria-labelledby="ad-fh">
+    <section class="panel admine" aria-labelledby="ad-fh" data-mytab="plan">
       <h2 id="ad-fh">My foods</h2>
       <p>The foods your plan uses and lets you swap between. Values per 100g (or 100ml). Direct protein is the protein counted from meat, eggs, dairy and whey. Step is how amounts are rounded; min/max are per serving; daily order caps the day's total (for delivered meals). The swap list decides which box a food can be swapped in.</p>
       <form id="ad-addfood" class="adnewfood">
@@ -322,14 +330,14 @@
       </form>
       <div id="ad-foods" class="adfoods"></div>
     </section>
-    <section class="panel admine" aria-labelledby="ad-clh">
+    <section class="panel admine" aria-labelledby="ad-clh" data-mytab="checklist">
       <h2 id="ad-clh">Daily checklist</h2>
       <p>The list you tick off each day on the Dashboard. Pick which days each item shows on; an item can also tick itself when you log a weight, a supplement or a gym set.</p>
       <div id="ad-cl" class="adcl"></div>
       <div class="gactions"><button class="ghost" type="button" data-cl="add">+ Add an item</button><button class="btn" type="button" data-cl="save" id="ad-clsave" disabled>Save checklist</button><button class="ghost" type="button" data-cl="reset">Back to the default list</button></div>
       <p id="ad-clmsg" class="sub" role="status"></p>
     </section>
-    <section class="panel admine" aria-labelledby="ad-shh">
+    <section class="panel admine" aria-labelledby="ad-shh" data-mytab="sharing">
       <h2 id="ad-shh">Share with your coach</h2>
       <p>Make a link your coach can open without a password or an account to see your days, weight, trends, supplements, gym sets and progress photos – read only, so nothing can be changed. It stops working when it runs out, or as soon as you switch it off here. Anyone holding the link sees the same, so only send it to your coach.</p>
       <form id="ad-share" class="adshare">
@@ -345,13 +353,13 @@
       <p id="ad-shmsg" class="sub" role="status"></p>
       <div id="ad-shares" class="adusers"></div>
     </section>
-    <section class="panel admine" aria-labelledby="ad-mlh">
+    <section class="panel admine" aria-labelledby="ad-mlh" data-mytab="security">
       <h2 id="ad-mlh">Sign-ins and security</h2>
       <p>Recent sign-ins to your account (and failed tries), password changes, data downloads, bulk photo deletes and your coach links being made, opened or switched off. Kept for 180 days. If you see something that wasn’t you, change your password.</p>
       <div id="ad-mylog" class="adusers"></div>
       <div class="gactions"><button class="ghost" type="button" id="ad-ml-more" hidden>Show older</button></div>
     </section>
-    <section class="panel admine" aria-labelledby="ad-pdh">
+    <section class="panel admine" aria-labelledby="ad-pdh" data-mytab="security">
       <h2 id="ad-pdh">Delete progress photos</h2>
       <p>Delete all your progress photos taken between two dates, both days included. They’re gone for good – download any you want to keep first.</p>
       <form id="ad-pdel" class="adpdel">
@@ -362,7 +370,7 @@
       <p><a class="ghost" id="ad-pd-dl" href="/api/photos/zip" download>Download all my photos</a></p>
       <p id="ad-pdmsg" class="sub" role="status"></p>
     </section>
-    <section class="panel admine" aria-labelledby="ad-delh">
+    <section class="panel admine" aria-labelledby="ad-delh" data-mytab="security">
       <h2 id="ad-delh">Delete my account</h2>
       <p>Deletes your account and everything in it, for good: days, history, weights, your meal plan, gym sets and workouts, foods, supplements, checklist,
         progress photos (the files too), coach links (they stop working) and every place you’re signed in. Foods and supplements you shared with everyone
@@ -413,8 +421,8 @@
       <label class="tog adoptfiles"><input type="checkbox" id="ad-admintotp"> Super admins must use a second step <span class="muted">– a super admin without two-step sign-in (account menu) is sent to set it up before any Super admin page works. Set up your own first.</span></label>
       <h3>AI calls a day</h3>
       <form id="ad-capform" class="adcaps">
-        <label class="f"><span class="lbl">Per account</span><input id="ad-capuser" type="number" min="0" max="1000000" step="1" inputmode="numeric" required></label>
-        <label class="f"><span class="lbl">Whole app</span><input id="ad-capall" type="number" min="0" max="1000000" step="1" inputmode="numeric" required></label>
+        <label class="f"><span class="lbl">Per account</span><input id="ad-capuser" type="number" min="0" max="1000000" step="1" inputmode="numeric" required data-keep></label>
+        <label class="f"><span class="lbl">Whole app</span><input id="ad-capall" type="number" min="0" max="1000000" step="1" inputmode="numeric" required data-keep></label>
         <button type="submit" class="btn">Save limits</button>
         <p class="muted adcapnote">0 = no limit. Counted per UTC day; your own calls count only towards the whole app’s limit.</p>
         <div id="ad-capmsg" role="status"></div>
@@ -440,7 +448,7 @@
         <label class="f"><span class="lbl">Sender name</span><input id="ad-m-name" autocomplete="off" maxlength="100" placeholder="Logbook Monster"></label>
         <label class="f"><span class="lbl">Provider</span><select id="ad-m-prov"><option value="gmail">Gmail</option><option value="outlook">Outlook / Microsoft 365</option><option value="other">Other (SMTP)</option></select></label>
         <label class="f"><span class="lbl">SMTP server</span><input id="ad-m-host" autocomplete="off" spellcheck="false" placeholder="smtp.gmail.com"></label>
-        <label class="f"><span class="lbl">Port</span><input id="ad-m-port" type="number" inputmode="numeric" min="1" max="65535" placeholder="465"></label>
+        <label class="f"><span class="lbl">Port</span><input id="ad-m-port" type="number" inputmode="numeric" min="1" max="65535" placeholder="465" data-keep></label>
         <label class="f"><span class="lbl">Security</span><select id="ad-m-tls"><option value="1">Implicit TLS (port 465)</option><option value="0">STARTTLS (port 587)</option></select></label>
         <label class="f"><span class="lbl">Username (blank = send-from address)</span><input id="ad-m-user" autocomplete="off" spellcheck="false"></label>
         <label class="f"><span class="lbl">Password / app password</span><input id="ad-m-pass" type="password" autocomplete="off" spellcheck="false"></label>
